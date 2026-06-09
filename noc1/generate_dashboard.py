@@ -276,7 +276,7 @@ def collect_smart_health():
 
 
 def collect_hyperv():
-    """Hyper-V host via WinRM / NTLM. Returns VM list + host resource summary."""
+    """Hyper-V host via WinRM/NTLM. VM list + host resource summary."""
     host = E.get("HYPERV_HOST", "").strip()
     user = E.get("HYPERV_USERNAME", "").strip()
     pwd  = E.get("HYPERV_PASSWORD", "").strip()
@@ -294,41 +294,38 @@ def collect_hyperv():
                              operation_timeout_sec=20, read_timeout_sec=25)
         ps_vms = (
             "try { $vms = Get-VM | Select-Object Name, State, CPUUsage, "
-            "@{N='MemAssignedGB';E={[math]::Round($_.MemoryAssigned/1GB,2)}}, "
-            "@{N='MemDemandGB';E={[math]::Round($_.MemoryDemand/1GB,2)}}, "
-            "@{N='UptimeHours';E={[math]::Round($_.Uptime.TotalHours,1)}}; "
+            "@{N='MemGB';E={[math]::Round($_.MemoryAssigned/1GB,2)}}; "
             "if ($vms -eq $null) { Write-Output '[]' } "
             "else { ConvertTo-Json -InputObject @($vms) -Depth 3 } "
             "} catch { Write-Output '[]' }"
         )
         r_vms = sess.run_ps(ps_vms)
         if r_vms.status_code != 0:
-            err = (r_vms.std_err or b"").decode("utf-8", "replace")[:200].strip()
-            return {**base, "state": "error", "note": f"PS: {err or 'unknown'}"}
+            err = (r_vms.std_err or b"").decode("utf-8", "replace")[:180].strip()
+            return {**base, "state": "error", "note": f"WinRM error: {err or 'unknown'}"}
         raw = (r_vms.std_out or b"").decode("utf-8", "replace").strip()
         try:
-            import json as _json
-            vms_raw = _json.loads(raw) if raw else []
+            import json as _j
+            vms_raw = _j.loads(raw) if raw else []
         except Exception:
             vms_raw = []
         if isinstance(vms_raw, dict):
             vms_raw = [vms_raw]
         ps_host = (
-            "try { $h = Get-VMHost | Select-Object LogicalProcessorCount, "
-            "@{N='MemCapGB';E={[math]::Round($_.MemoryCapacity/1GB,1)}}; "
+            "try { $h = Get-VMHost | Select-Object LogicalProcessorCount,"
+            "@{N='MemGB';E={[math]::Round($_.MemoryCapacity/1GB,0)}}; "
             "ConvertTo-Json -InputObject $h } catch { Write-Output '{}' }"
         )
         r_host = sess.run_ps(ps_host)
         host_raw = (r_host.std_out or b"").decode("utf-8", "replace").strip()
         try:
-            import json as _json
-            host_info = _json.loads(host_raw) if host_raw else {}
+            import json as _j
+            host_info = _j.loads(host_raw) if host_raw else {}
         except Exception:
             host_info = {}
         if isinstance(host_info, list):
             host_info = host_info[0] if host_info else {}
-        vms = []
-        running = stopped = 0
+        vms, running, stopped = [], 0, 0
         for vm in vms_raw:
             if not isinstance(vm, dict):
                 continue
@@ -337,20 +334,16 @@ def collect_hyperv():
                 vs, running = "Running", running + 1
             elif sr in ("3", "Off"):
                 vs, stopped = "Off", stopped + 1
-            elif sr in ("9", "Paused"):
-                vs, stopped = "Paused", stopped + 1
-            elif sr in ("6", "Saved"):
-                vs, stopped = "Saved", stopped + 1
             else:
                 vs, stopped = sr or "Unknown", stopped + 1
             vms.append({"name": str(vm.get("Name", "?")), "state": vs,
                         "cpu": float(vm.get("CPUUsage", 0) or 0),
-                        "mem_gb": float(vm.get("MemAssignedGB", 0) or 0)})
-        overall = "error" if (not vms and not host_info) else ("warn" if stopped > 0 else "ok")
-        return {"state": overall, "vm_count": len(vms), "running": running,
+                        "mem_gb": float(vm.get("MemGB", 0) or 0)})
+        state = "error" if (not vms and not host_info) else ("warn" if stopped > 0 else "ok")
+        return {"state": state, "vm_count": len(vms), "running": running,
                 "stopped": stopped, "vms": vms,
                 "host_cpus": host_info.get("LogicalProcessorCount", "?"),
-                "host_mem_gb": host_info.get("MemCapGB", "?")}
+                "host_mem_gb": host_info.get("MemGB", "?")}
     except Exception as e:
         return {**base, "state": "error", "note": f"{type(e).__name__}: {str(e)[:140]}"}
 
@@ -1715,8 +1708,8 @@ def collect_wan_health():
 
 SOURCES = [
     ("proxmox", collect_proxmox),
-    ("smart", collect_smart_health),
     ("hyperv", collect_hyperv),
+    ("smart", collect_smart_health),
     ("docker", collect_docker),
     ("pbs", collect_pbs),
     ("kuma", collect_uptime_kuma),
@@ -2121,58 +2114,54 @@ def render(data, gen_epoch, errors, trends=None):
     else:
         ha_sub = (f'{HA.get("domains",0)} domains · {HA.get("notifications",0)} notification(s)')
 
-    # Hyper-V card
+    # ---- Hyper-V card ----
     hv_vms = HV.get("vms", [])
-    hv_running = HV.get("running", 0)
+    hv_run = HV.get("running", 0)
     hv_total = HV.get("vm_count", len(hv_vms))
-    hv_avg_cpu = (sum(v.get("cpu", 0) for v in hv_vms) / len(hv_vms)) if hv_vms else None
-    hv_mem_alloc = sum(v.get("mem_gb", 0) for v in hv_vms)
-    hv_cpu_state = ("crit" if hv_avg_cpu is not None and hv_avg_cpu >= 90
-                    else "warn" if hv_avg_cpu is not None and hv_avg_cpu >= 75 else "")
-    hv_vm_state = ("crit" if HV.get("state") == "error"
-                   else "warn" if HV.get("stopped", 0) > 0 else "ok")
-    hv_body = (
-        metric(f"{hv_running}/{hv_total}", "VMs", hv_vm_state)
-        + metric(f'{hv_avg_cpu:.0f}%' if hv_avg_cpu is not None else "—", "CPU avg", hv_cpu_state)
-        + metric(f'{hv_mem_alloc:.1f} GB' if hv_vms else "—", "RAM alloc")
-    )
-    # Per-VM rows (up to 4)
+    hv_stop = HV.get("stopped", 0)
+    hv_vm_state = ("crit" if HV.get("state") in ("error",) else
+                   "warn" if hv_stop > 0 else
+                   "ok" if hv_total > 0 else "")
+    # avg CPU across running VMs
+    run_cpus = [v.get("cpu", 0) for v in hv_vms if v.get("state") == "Running"]
+    avg_cpu = (sum(run_cpus) / len(run_cpus)) if run_cpus else None
+    hv_body = (metric(f"{hv_run}/{hv_total}", "VMs", hv_vm_state)
+               + metric(f"{avg_cpu:.0f}%" if avg_cpu is not None else "—", "CPU avg",
+                        "crit" if avg_cpu and avg_cpu >= 90 else "warn" if avg_cpu and avg_cpu >= 75 else "")
+               + metric(f'{sum(v.get("mem_gb",0) for v in hv_vms):.1f} GB' if hv_vms else "—", "RAM alloc"))
     if hv_vms and HV.get("state") != "error":
         vm_rows = []
         for v in hv_vms[:4]:
-            dot_cls = "dot-ok" if v["state"] == "Running" else "dot-crit" if v["state"] == "Off" else "dot-warn"
-            cpu_txt = f' {v["cpu"]:.0f}%' if v["state"] == "Running" and v.get("cpu", 0) > 0 else f' {v["state"]}'
+            dc = "dot-ok" if v["state"] == "Running" else "dot-crit" if v["state"] == "Off" else "dot-warn"
+            tail = f'{v["cpu"]:.0f}%' if v["state"] == "Running" and v.get("cpu", 0) > 0 else v["state"]
             vm_rows.append(
                 f'<div style="font-size:10px;padding:1px 0;display:flex;align-items:center;gap:4px">'
-                f'<span class="dot {dot_cls}" style="width:6px;height:6px;min-width:6px"></span>'
-                f'<span style="opacity:.9">{esc(v["name"])}</span>'
-                f'<span style="margin-left:auto;opacity:.65">{cpu_txt}</span>'
-                f'</div>'
-            )
+                f'<span class="dot {dc}" style="width:6px;height:6px;min-width:6px"></span>'
+                f'<span>{esc(v["name"])}</span>'
+                f'<span style="margin-left:auto;opacity:.6">{tail}</span></div>')
         if len(hv_vms) > 4:
             vm_rows.append(f'<div style="font-size:10px;opacity:.5">+{len(hv_vms)-4} more</div>')
         hv_body += "".join(vm_rows)
-    hv_stopped = HV.get("stopped", 0)
     if HV.get("state") == "error":
         hv_sub = HV.get("note", "host unreachable")
-    elif hv_stopped > 0:
-        down_names = [v["name"] for v in hv_vms if v.get("state") != "Running"][:3]
-        hv_sub = f'OFF: {", ".join(down_names)}'
+    elif hv_stop > 0:
+        down = [v["name"] for v in hv_vms if v.get("state") != "Running"][:3]
+        hv_sub = f'OFF: {", ".join(down)}'
     else:
         cpus = HV.get("host_cpus", "?")
-        mem = HV.get("host_mem_gb", "?")
-        hv_sub = (f'host {cpus} vCPU · {mem} GB' if HV.get("vm_count", 0) > 0
-                  else (HV.get("note") or "all VMs running"))
+        mem  = HV.get("host_mem_gb", "?")
+        hv_sub = (f'host {cpus} vCPU · {mem} GB' if hv_total > 0
+                  else HV.get("note", "all VMs running"))
 
     row1 = (card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
             + card("PROXMOX", P.get("state", "error"), prox_body, prox_sub)
+            + card("HYPER-V", HV.get("state", "error"), hv_body, hv_sub)
             + card("HOME ASSISTANT", HA.get("state", "error"), ha_body, ha_sub)
             + card("UPTIME KUMA", K.get("state", "error"), kuma_body, kuma_sub)
             + card("DOCKER / PORTAINER", D.get("state", "error"), dock_body, dock_sub)
             + card("PBS BACKUPS", B.get("state", "error"), pbs_body, pbs_sub)
             + card("URBACKUP", UB.get("state", "error"), ub_body, ub_sub)
-            + card("SMART / DISK HEALTH", SM.get("state", "error"), smart_body, smart_sub)
-            + card("HYPER-V", HV.get("state", "error"), hv_body, hv_sub))
+            + card("SMART / DISK HEALTH", SM.get("state", "error"), smart_body, smart_sub))
 
     # ---- Row 2: security ----
     daily = trends.get("daily", {})
@@ -2494,11 +2483,6 @@ def render(data, gen_epoch, errors, trends=None):
             alerts.append(f'Storage {s["name"]} at {s["pct"]:.0f}%')
     for p in SM.get("problems", []):
         alerts.append(f"SMART: {p}")
-    if HV.get("state") == "error":
-        alerts.append(f'Hyper-V: {HV.get("note", "host unreachable")}')
-    elif HV.get("stopped", 0) > 0:
-        down_hv = [v["name"] for v in HV.get("vms", []) if v.get("state") != "Running"][:3]
-        alerts.append(f'Hyper-V stopped: {", ".join(down_hv)}')
     if WAN.get("state") in ("warn", "crit"):
         alerts.append(f'WAN: {WAN.get("status","?")} latency={WAN.get("latency","n/a")}ms uptime={_fmt_duration(WAN.get("uptime"))}')
     if D.get("bad"):
@@ -3105,13 +3089,6 @@ PAGE = """<!DOCTYPE html>
   .bell-badge {{ background:var(--crit); color:#fff; border-radius:50%;
     font-size:9px; padding:1px 4px; margin-left:3px;
     display:none; vertical-align:super; }}
-  /* ── Edit mode ── */
-  .edit-mode .row {{ outline: 1px dashed var(--green-dim); outline-offset: 4px; }}
-  .edit-mode .card {{ cursor: grab !important; user-select: none; }}
-  .edit-mode .card:active {{ cursor: grabbing !important; }}
-  .sortable-ghost {{ opacity: 0.35; background: var(--panel2) !important; outline: 2px solid var(--green) !important; }}
-  .sortable-drag {{ opacity: 0.9; box-shadow: 0 8px 24px rgba(0,255,65,0.35) !important; }}
-  #edit-btn.active {{ color: var(--green); border-color: var(--green); background: rgba(0,255,65,0.08); }}
 </style></head>
 <body>
   <div class="topbar">
@@ -3122,8 +3099,6 @@ PAGE = """<!DOCTYPE html>
       <div class="ts">UPDATED <b>{ts}</b></div>
       <div class="health h-{overall}"><span class="led"></span>{overall_txt}</div>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
-      <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
-      <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
     </div>
   </div>
@@ -3292,89 +3267,6 @@ PAGE = """<!DOCTYPE html>
   }};
   ingestCurrentAlerts();
   renderAlertHistory();
-
-  // ── Edit Mode (SortableJS) ────────────────────────────────────────────────
-  var _editActive = false;
-  var _sortables = [];
-
-  window.toggleEditMode = function() {{
-    _editActive = !_editActive;
-    document.body.classList.toggle('edit-mode', _editActive);
-    var btn = document.getElementById('edit-btn');
-    var saveBtn = document.getElementById('save-btn');
-    if (btn) {{ btn.classList.toggle('active', _editActive); btn.innerHTML = _editActive ? '&#10003; DONE' : '&#9998; EDIT'; }}
-    if (saveBtn) saveBtn.style.display = _editActive ? 'inline-block' : 'none';
-    if (_editActive) {{ enableSort(); }} else {{ disableSort(); }}
-  }};
-
-  function enableSort() {{
-    if (typeof Sortable !== 'undefined') {{ initSortables(); return; }}
-    var s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js';
-    s.onload = initSortables;
-    document.head.appendChild(s);
-  }}
-  function initSortables() {{
-    _sortables = [];
-    document.querySelectorAll('.row').forEach(function(row) {{
-      _sortables.push(Sortable.create(row, {{
-        animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag', handle: '.card',
-      }}));
-    }});
-  }}
-  function disableSort() {{
-    _sortables.forEach(function(s) {{ try {{ s.destroy(); }} catch(e) {{}} }});
-    _sortables = [];
-  }}
-
-  window.saveLayout = function() {{
-    var layout = {{}};
-    document.querySelectorAll('.section-label').forEach(function(lbl) {{
-      var name = lbl.textContent.trim();
-      var row = lbl.nextElementSibling;
-      if (!row) return;
-      var titles = [];
-      row.querySelectorAll('.card').forEach(function(c) {{
-        titles.push(c.getAttribute('data-title') || (c.querySelector('h3') ? c.querySelector('h3').textContent : ''));
-      }});
-      layout[name] = titles;
-    }});
-    fetch('/save-layout', {{
-      method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(layout)
-    }}).then(function(r) {{
-      var btn = document.getElementById('save-btn');
-      if (r.ok) {{ if (btn) {{ btn.textContent = '\\u2713 SAVED!'; setTimeout(function() {{ btn.innerHTML = '\\u2713 SAVE'; }}, 2000); }} }}
-      else {{ alert('Save failed: ' + r.status); }}
-    }}).catch(function(e) {{ alert('Error: ' + e.message); }});
-  }};
-
-  // Apply saved layout on page load (reorder DOM cards to match saved order)
-  (function applyStoredLayout() {{
-    fetch('/layout.json').then(function(r) {{ return r.ok ? r.json() : null; }}).then(function(layout) {{
-      if (!layout) return;
-      document.querySelectorAll('.section-label').forEach(function(lbl) {{
-        var name = lbl.textContent.trim();
-        var order = layout[name];
-        if (!order || !order.length) return;
-        var row = lbl.nextElementSibling;
-        if (!row) return;
-        var cardEls = Array.from(row.querySelectorAll('.card'));
-        var cardMap = {{}};
-        cardEls.forEach(function(c) {{
-          var t = c.getAttribute('data-title') || (c.querySelector('h3') ? c.querySelector('h3').textContent : '');
-          cardMap[t] = c;
-        }});
-        // Append in saved order, then remaining
-        var seen = new Set(order);
-        order.forEach(function(title) {{ if (cardMap[title]) row.appendChild(cardMap[title]); }});
-        cardEls.forEach(function(c) {{
-          var t = c.getAttribute('data-title') || '';
-          if (!seen.has(t)) row.appendChild(c);
-        }});
-      }});
-    }}).catch(function() {{ /* no layout.json yet, use default order */ }});
-  }})();
-
 }})();
 </script>
 </body></html>"""
