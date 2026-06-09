@@ -63,7 +63,7 @@ export default function App() {
         setLayout(lay); setConfig(cfg)
         setLastUpdated(new Date())
         layoutRef.current = lay
-        applyThemeAttr(lay?.theme || 'dark-noc')
+        applyThemeAttr('dark-noc') // always dark-noc on load; auto-switch permanently removed
         setLoading(false)
         if (fl?.first_launch) {
           setFirstLaunch(true)
@@ -72,19 +72,13 @@ export default function App() {
       .catch(() => setLoading(false))
   }, [])
 
-  // Auto theme switch
-  useEffect(() => {
-    if (!layout?.autoTheme) return
-    const t = setInterval(() => {
-      const lay = layoutRef.current
-      if (!lay) return
-      const hour = new Date().getHours()
-      const dayStart = lay.dayStart ?? 7, nightStart = lay.nightStart ?? 19
-      applyThemeAttr((hour >= dayStart && hour < nightStart) ? (lay.dayTheme || lay.theme) : (lay.nightTheme || lay.theme))
-    }, 60000)
-    return () => clearInterval(t)
-  }, [layout?.autoTheme])
+  // Auto theme switch REMOVED — dark-noc is permanent. Timer block deleted.
+  // Manual cycling still works via cycleTheme() below.
 
+
+  // applyThemeAttr: dark-noc is always the default (no data-theme attr).
+  // Manual switching via cycle button is still supported, but on every page load
+  // we unconditionally apply dark-noc. The name param is used only for manual cycling.
   function applyThemeAttr(name) {
     const themeMap = { 'dark-noc': '', 'light-clean': 'light', 'midnight-blue': 'midnight', 'solarized-dark': 'solarized', 'dracula': 'dracula', 'nord': 'nord', 'gruvbox': 'gruvbox', 'tokyo': 'tokyo' }
     const attr = themeMap[name] ?? ''

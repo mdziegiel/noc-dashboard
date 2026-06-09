@@ -251,13 +251,10 @@ def update_trends_for(card_type, data, now_epoch, trends):
 
 DEFAULT_LAYOUT = {
     "theme": "dark-noc",
-    "autoTheme": False,
-    "dayTheme": "light-clean",
-    "nightTheme": "dark-noc",
-    "dayStart": 7,
-    "nightStart": 19,
+    "autoTheme": False,  # permanently disabled — frontend ignores this, hardcoded dark-noc
     "cards": []
 }
+
 
 
 def load_layout():
@@ -279,12 +276,8 @@ def _bootstrap_layout_from_yaml():
     cfg = load_dashboard_config()
     theme_cfg = cfg.get("theme", {})
     layout = {
-        "theme": theme_cfg.get("preset", "dark-noc"),
-        "autoTheme": theme_cfg.get("auto_switch", True),
-        "dayTheme": theme_cfg.get("day_theme", "light-clean"),
-        "nightTheme": theme_cfg.get("night_theme", "dark-noc"),
-        "dayStart": int(theme_cfg.get("day_start", "07:00").split(":")[0]),
-        "nightStart": int(theme_cfg.get("night_start", "19:00").split(":")[0]),
+        "theme": "dark-noc",   # always dark-noc; auto_switch from yaml is permanently ignored
+        "autoTheme": False,
         "cards": []
     }
     import uuid

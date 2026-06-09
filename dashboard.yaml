@@ -27,7 +27,7 @@ refresh_minutes: 15       # generator cron interval
 # ---------------------------------------------------------------------------
 theme:
   preset: dark-noc           # dark-noc | light-clean | midnight-blue | solarized-dark | dracula | nord
-  auto_switch: true          # enable automatic day/night switching
+  auto_switch: false         # PERMANENTLY DISABLED — dark-noc is always used on page load
   day_theme: light-clean
   night_theme: dark-noc
   day_start: "07:00"
