@@ -1,0 +1,260 @@
+/* NOC Dashboard — Global styles
+   All color values come from CSS variables injected by theme.js applyTheme().
+   Dark-NOC defaults are set here as fallbacks.
+*/
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --background: #0a0a0a;
+  --card-background: #111111;
+  --card-border: #1e1e1e;
+  --accent: #00ff41;
+  --accent-secondary: #00cc33;
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0a0;
+  --text-muted: #555555;
+  --ok-color: #00ff41;
+  --warn-color: #ffaa00;
+  --error-color: #ff3333;
+  --critical-color: #ff0000;
+  --font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --font-size-base: 13px;
+  --card-border-radius: 4px;
+  --card-shadow: 0 0 8px rgba(0,255,65,0.08);
+  --section-header-color: #00ff41;
+  --graph-line-color: #00ff41;
+  --graph-fill-color: rgba(0,255,65,0.12);
+  --gauge-track-color: #1a1a1a;
+  --top-bar-background: #000000;
+  --top-bar-border: #1a1a1a;
+}
+
+html, body {
+  background: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  line-height: 1.4;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--background); }
+::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Skeleton shimmer ── */
+@keyframes skeleton-shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--card-border) 25%, #2a2a2a 50%, var(--card-border) 75%);
+  background-size: 400px 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+  border-radius: 2px;
+}
+
+/* ── Status dot animations ── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 4px currentColor; }
+  50% { box-shadow: 0 0 10px currentColor, 0 0 20px currentColor; }
+}
+
+/* ── Ticker animation ── */
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ── Edit mode overlay animation ── */
+@keyframes editModeGlow {
+  0%, 100% { border-color: var(--accent); }
+  50% { border-color: var(--accent-secondary); }
+}
+
+/* ── Slide-in panel animation ── */
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── react-grid-layout overrides ── */
+.react-grid-item.react-grid-placeholder {
+  background: var(--accent) !important;
+  opacity: 0.08 !important;
+  border: 1px dashed var(--accent) !important;
+  border-radius: var(--card-border-radius) !important;
+}
+
+.react-resizable-handle {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.edit-mode .react-resizable-handle {
+  opacity: 0.4;
+}
+
+.edit-mode .react-resizable-handle::after {
+  border-color: var(--accent) !important;
+}
+
+/* ── Drag handle highlight in edit mode ── */
+.edit-mode .card-drag-handle {
+  cursor: grab !important;
+}
+
+.edit-mode .card-drag-handle:active {
+  cursor: grabbing !important;
+}
+
+/* ── Card hover state ── */
+.noc-card:hover {
+  box-shadow: 0 0 12px rgba(0,255,65,0.12), 0 2px 8px rgba(0,0,0,0.4);
+}
+
+/* ── Metric row ── */
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--card-border);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.metric-row:last-child {
+  border-bottom: none;
+}
+
+/* ── Status badges ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.badge-ok    { background: rgba(0,255,65,0.12); color: var(--ok-color); }
+.badge-warn  { background: rgba(255,170,0,0.12); color: var(--warn-color); }
+.badge-crit  { background: rgba(255,0,0,0.12); color: var(--critical-color); }
+.badge-error { background: rgba(255,51,51,0.12); color: var(--error-color); }
+.badge-info  { background: rgba(160,160,160,0.12); color: var(--text-secondary); }
+
+/* ── Buttons ── */
+button { font-family: var(--font-family); }
+
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.btn-ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-accent {
+  background: var(--accent);
+  border: none;
+  color: #000;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  transition: opacity 0.15s;
+}
+
+.btn-accent:hover { opacity: 0.85; }
+
+.btn-danger {
+  background: none;
+  border: 1px solid var(--error-color);
+  color: var(--error-color);
+  padding: 5px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.btn-danger.confirm {
+  background: var(--error-color);
+  color: #fff;
+}
+
+/* ── Inputs ── */
+.noc-input {
+  width: 100%;
+  background: var(--background);
+  border: 1px solid var(--card-border);
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 3px;
+  font-family: var(--font-family);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.noc-input:focus { border-color: var(--accent); }
+
+.noc-select {
+  width: 100%;
+  background: var(--background);
+  border: 1px solid var(--card-border);
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 3px;
+  font-family: var(--font-family);
+  outline: none;
+  cursor: pointer;
+}
+
+/* ── Section header ── */
+.section-header {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--section-header-color);
+  padding: 8px 0 4px;
+  border-bottom: 1px solid var(--card-border);
+  margin-bottom: 4px;
+}

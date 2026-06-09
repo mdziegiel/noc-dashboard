@@ -9,14 +9,17 @@ Endpoints:
   GET  /api/themes                all themes as CSS variable maps
   GET  /api/layout                current layout.json
   POST /api/layout                save layout.json
-  GET  /api/config                dashboard.yaml top-level config (title, subtitle, etc.)
+  GET  /api/config                dashboard.yaml top-level config
+  GET  /api/ticker                aggregated alerts/stats for scrolling ticker
+  GET  /api/status-overview       counts of ok/warn/crit across all cards
+  GET  /api/events                SSE stream for live card updates
   GET  /                          React app (served from frontend/dist/)
-  GET  /{path}                    static fallback to frontend/dist/
 
 Usage:
     uvicorn server:app --host 0.0.0.0 --port 8081
 """
 
+import asyncio
 import json
 import os
 import re
@@ -34,7 +37,7 @@ except ImportError:
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse, FileResponse
+    from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
 except ImportError:
     print("ERROR: fastapi not installed. Run: pip install fastapi uvicorn", file=sys.stderr)
@@ -85,7 +88,7 @@ THEME_DEFAULTS = {
     "warn_color": "#ffaa00",
     "error_color": "#ff3333",
     "critical_color": "#ff0000",
-    "font_family": "JetBrains Mono, Fira Code, monospace",
+    "font_family": "JetBrains Mono, Fira Code, Consolas, monospace",
     "font_size_base": "13px",
     "heading_font": "JetBrains Mono, Fira Code, monospace",
     "card_border_radius": "4px",
@@ -114,7 +117,6 @@ def load_all_themes():
             themes[f.stem] = merged
         except Exception:
             pass
-    # Always have dark-noc as fallback
     if not themes:
         themes["dark-noc"] = dict(THEME_DEFAULTS)
     return themes
@@ -170,34 +172,36 @@ def get_collector_map():
 
 
 CARD_TYPE_META = {
-    "proxmox": {"label": "Proxmox", "description": "Proxmox node CPU, RAM, VMs, storage"},
-    "proxmox_storage": {"label": "Proxmox Storage", "description": "Proxmox storage pool usage donuts"},
-    "docker": {"label": "Docker", "description": "Container counts and unhealthy containers"},
-    "pbs": {"label": "Proxmox Backup Server", "description": "Backup tasks, last backup time, datastore usage"},
-    "urbackup": {"label": "URBackup", "description": "Client backup status"},
-    "uptime_kuma": {"label": "Uptime Kuma", "description": "Monitor status, cert expiry"},
-    "home_assistant": {"label": "Home Assistant", "description": "Entity counts, alerts, notifications"},
-    "smart_health": {"label": "Disk Health", "description": "SMART disk health from Proxmox"},
-    "wazuh": {"label": "Wazuh SIEM", "description": "Agent status, alerts 24h"},
-    "malware_sources": {"label": "Malware Detect", "description": "Malware feed detections"},
-    "crowdsec": {"label": "CrowdSec", "description": "Bans and detections"},
-    "cloudflare": {"label": "Cloudflare", "description": "Requests, threats, WAF events"},
-    "unifi": {"label": "UniFi", "description": "WAN status, clients, IPS alerts"},
-    "tailscale": {"label": "Tailscale", "description": "VPN device status"},
-    "nginx_proxy": {"label": "Nginx Proxy Manager", "description": "Proxy hosts and cert expiry"},
-    "adguard": {"label": "AdGuard Home", "description": "DNS query and block stats"},
-    "qnap": {"label": "NAS Storage", "description": "QNAP NAS volumes, disks, temps"},
-    "plex": {"label": "Plex", "description": "Active streams, library counts"},
-    "tautulli": {"label": "Tautulli", "description": "Plex streams, plays today, top user"},
-    "sonarr": {"label": "Sonarr", "description": "TV series, queue, missing"},
-    "radarr": {"label": "Radarr", "description": "Movies, queue, missing"},
-    "prowlarr": {"label": "Prowlarr", "description": "Indexer health"},
-    "sabnzbd": {"label": "SABnzbd", "description": "Download queue and speed"},
-    "overseerr": {"label": "Overseerr", "description": "Media requests"},
-    "limacharlie": {"label": "LimaCharlie", "description": "Endpoint sensor status"},
-    "custom_url": {"label": "Custom URL", "description": "Fetch and display custom JSON endpoint"},
-    "wan_health": {"label": "WAN Health", "description": "WAN/internet status via UniFi"},
+    "proxmox":          {"label": "Proxmox",              "description": "Proxmox node CPU, RAM, VMs, storage",      "category": "Infrastructure", "icon": "Server"},
+    "proxmox_storage":  {"label": "Proxmox Storage",      "description": "Proxmox storage pool usage donuts",         "category": "Infrastructure", "icon": "HardDrive"},
+    "docker":           {"label": "Docker",               "description": "Container counts and unhealthy containers", "category": "Infrastructure", "icon": "Box"},
+    "pbs":              {"label": "Proxmox Backup Server","description": "Backup tasks, last backup time, datastore", "category": "Infrastructure", "icon": "Archive"},
+    "urbackup":         {"label": "URBackup",             "description": "Client backup status",                      "category": "Infrastructure", "icon": "RotateCcw"},
+    "home_assistant":   {"label": "Home Assistant",       "description": "Entity counts, alerts, notifications",      "category": "Infrastructure", "icon": "Home"},
+    "smart_health":     {"label": "Disk Health",          "description": "SMART disk health from Proxmox",            "category": "Infrastructure", "icon": "Activity"},
+    "wazuh":            {"label": "Wazuh SIEM",           "description": "Agent status, alerts 24h",                  "category": "Security",       "icon": "Shield"},
+    "malware_sources":  {"label": "Malware Detect",       "description": "Malware feed detections",                   "category": "Security",       "icon": "AlertTriangle"},
+    "crowdsec":         {"label": "CrowdSec",             "description": "Bans and detections",                       "category": "Security",       "icon": "ShieldAlert"},
+    "cloudflare":       {"label": "Cloudflare",           "description": "Requests, threats, WAF events",             "category": "Security",       "icon": "Cloud"},
+    "limacharlie":      {"label": "LimaCharlie",          "description": "Endpoint sensor status",                    "category": "Security",       "icon": "Eye"},
+    "unifi":            {"label": "UniFi",                "description": "WAN status, clients, IPS alerts",           "category": "Network",        "icon": "Wifi"},
+    "wan_health":       {"label": "WAN Health",           "description": "WAN/internet status via UniFi",             "category": "Network",        "icon": "Wifi"},
+    "tailscale":        {"label": "Tailscale",            "description": "VPN device status",                         "category": "Network",        "icon": "Network"},
+    "nginx_proxy":      {"label": "Nginx Proxy Manager",  "description": "Proxy hosts and cert expiry",               "category": "Network",        "icon": "Globe"},
+    "adguard":          {"label": "AdGuard Home",         "description": "DNS query and block stats",                 "category": "Network",        "icon": "Filter"},
+    "qnap":             {"label": "NAS Storage",          "description": "QNAP NAS volumes, disks, temps",            "category": "Storage",        "icon": "Database"},
+    "plex":             {"label": "Plex",                 "description": "Active streams, library counts",            "category": "Media",          "icon": "Play"},
+    "tautulli":         {"label": "Tautulli",             "description": "Plex streams, plays today, top user",       "category": "Media",          "icon": "BarChart2"},
+    "sonarr":           {"label": "Sonarr",               "description": "TV series, queue, missing",                 "category": "Media",          "icon": "Tv"},
+    "radarr":           {"label": "Radarr",               "description": "Movies, queue, missing",                    "category": "Media",          "icon": "Film"},
+    "prowlarr":         {"label": "Prowlarr",             "description": "Indexer health",                            "category": "Media",          "icon": "Search"},
+    "sabnzbd":          {"label": "SABnzbd",              "description": "Download queue and speed",                  "category": "Media",          "icon": "Download"},
+    "overseerr":        {"label": "Overseerr",            "description": "Media requests",                            "category": "Media",          "icon": "List"},
+    "uptime_kuma":      {"label": "Uptime Kuma",          "description": "Monitor status, cert expiry",               "category": "Monitoring",     "icon": "HeartPulse"},
+    "custom_url":       {"label": "Custom URL",           "description": "Fetch and display custom JSON endpoint",    "category": "Monitoring",     "icon": "ExternalLink"},
 }
+
+CATEGORY_ORDER = ["Infrastructure", "Security", "Network", "Storage", "Media", "Monitoring"]
 
 # ── Trend history ──────────────────────────────────────────────────────────────
 
@@ -259,13 +263,11 @@ def load_layout():
         try:
             with open(LAYOUT_FILE) as f:
                 data = json.load(f)
-            # Ensure required keys exist
             for k, v in DEFAULT_LAYOUT.items():
                 data.setdefault(k, v)
             return data
         except Exception:
             pass
-    # Bootstrap from dashboard.yaml
     return _bootstrap_layout_from_yaml()
 
 
@@ -326,6 +328,198 @@ def save_layout(layout):
         json.dump(layout, f, indent=2)
 
 
+# ── Card data cache (for ticker + status overview) ─────────────────────────────
+
+_card_cache: dict = {}  # card_type -> {"data": {...}, "ts": float}
+_sse_clients: set = set()  # set of asyncio.Queue
+
+
+async def _sse_broadcast(msg: str):
+    """Push a message to all connected SSE clients."""
+    dead = set()
+    for q in list(_sse_clients):
+        try:
+            q.put_nowait(msg)
+        except asyncio.QueueFull:
+            dead.add(q)
+    _sse_clients.difference_update(dead)
+
+
+def _push_sse_from_sync(card_type: str, data: dict):
+    """Schedule SSE broadcast from a sync context (runs in uvicorn's event loop)."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            msg = json.dumps({"type": "card_update", "card_type": card_type, "data": data})
+            asyncio.run_coroutine_threadsafe(_sse_broadcast(msg), loop)
+    except Exception:
+        pass
+
+
+# ── Ticker extraction ──────────────────────────────────────────────────────────
+
+def _extract_ticker_items(cache: dict) -> tuple:
+    """Extract alert/stats items from card cache. Returns (items_list, worst_level)."""
+    items = []
+    worst = "ok"
+    level_val = {"ok": 0, "info": 0, "warn": 1, "crit": 2}
+
+    def add(text, level):
+        nonlocal worst
+        items.append({"text": text, "level": level})
+        if level_val.get(level, 0) > level_val.get(worst, 0):
+            worst = level
+
+    now = time.time()
+    STALE = 900  # 15 min
+
+    for card_type, entry in cache.items():
+        data = entry.get("data", {})
+        ts = entry.get("ts", 0)
+        if now - ts > STALE:
+            continue
+        state = data.get("state", "ok")
+
+        if card_type == "proxmox":
+            vms_off = data.get("vms_offline", 0)
+            if vms_off:
+                add(f"Proxmox: {vms_off} VM(s) offline", "crit")
+            cpu = data.get("cpu")
+            if cpu is not None:
+                if cpu > 90:
+                    add(f"Proxmox CPU critical: {cpu:.0f}%", "crit")
+                elif cpu > 75:
+                    add(f"Proxmox CPU high: {cpu:.0f}%", "warn")
+
+        elif card_type == "proxmox_storage":
+            for pool in (data.get("pools") or []):
+                pct = pool.get("pct", 0)
+                name = pool.get("name", "storage")
+                if pct > 90:
+                    add(f"Storage {name} at {pct:.0f}%", "crit")
+                elif pct > 80:
+                    add(f"Storage {name} at {pct:.0f}%", "warn")
+
+        elif card_type == "docker":
+            for c in (data.get("unhealthy") or [])[:3]:
+                add(f"Docker unhealthy: {c}", "crit")
+            for c in (data.get("stopped") or [])[:3]:
+                add(f"Docker stopped: {c}", "warn")
+
+        elif card_type == "wazuh":
+            high = data.get("high_24h", 0)
+            alerts = data.get("alerts_24h", 0)
+            if high > 0:
+                add(f"Wazuh: {high} high-severity alert(s) in 24h", "crit")
+            elif alerts > 100:
+                add(f"Wazuh: {alerts} alerts in 24h", "warn")
+            for a in (data.get("agents") or []):
+                if a.get("status") not in ("active", "Active"):
+                    add(f"Wazuh agent offline: {a.get('name', a.get('id', '?'))}", "warn")
+
+        elif card_type == "crowdsec":
+            bans = data.get("active_bans", 0) or data.get("bans", 0)
+            if bans > 200:
+                add(f"CrowdSec: {bans} active bans", "warn")
+            d24 = data.get("decisions_24h", 0) or data.get("detections_24h", 0)
+            if d24 > 1000:
+                add(f"CrowdSec: {d24} detections in 24h", "warn")
+
+        elif card_type == "uptime_kuma":
+            for m in (data.get("down") or [])[:4]:
+                add(f"Down: {m}", "crit")
+            for m in (data.get("degraded") or [])[:2]:
+                add(f"Degraded: {m}", "warn")
+
+        elif card_type == "pbs":
+            failed = data.get("failed_tasks", 0)
+            if failed:
+                add(f"PBS: {failed} failed backup task(s) in 24h", "crit")
+
+        elif card_type == "urbackup":
+            for c in (data.get("clients_with_issues") or [])[:3]:
+                name = c if isinstance(c, str) else c.get("name", str(c))
+                add(f"URBackup: {name} has issues", "warn")
+            for c in (data.get("overdue") or [])[:2]:
+                name = c if isinstance(c, str) else c.get("name", str(c))
+                add(f"URBackup: {name} backup overdue", "warn")
+
+        elif card_type in ("unifi", "wan_health"):
+            wan_st = data.get("wan_status") or data.get("wan_state")
+            if wan_st and wan_st.lower() in ("down", "error", "offline"):
+                add("WAN: Internet connection DOWN", "crit")
+            ips = data.get("ips_alerts_24h", 0) or data.get("ips_events", 0)
+            if ips > 20:
+                add(f"UniFi IPS: {ips} alerts in 24h", "warn")
+
+        elif card_type == "cloudflare":
+            threats = data.get("threats_24h", 0) or data.get("threats", 0)
+            if threats > 2000:
+                add(f"Cloudflare: {threats} threats blocked in 24h", "warn")
+
+        elif card_type == "nginx_proxy":
+            for c in (data.get("expired_certs") or data.get("cert_invalid") or [])[:3]:
+                add(f"Cert INVALID: {c}", "crit")
+            for c in (data.get("expiring_soon") or [])[:2]:
+                add(f"Cert expiring soon: {c}", "warn")
+
+        elif card_type == "smart_health":
+            for d in (data.get("failed") or []):
+                add(f"SMART FAIL: {d}", "crit")
+            for d in (data.get("warning") or [])[:2]:
+                add(f"SMART warn: {d}", "warn")
+
+        elif card_type == "malware_sources":
+            det = data.get("total_detections", 0) or data.get("detections", 0)
+            if det > 0:
+                add(f"Malware feed: {det} detection(s)", "warn")
+
+        elif card_type == "qnap":
+            for nas in (data.get("nas") or [data] if data.get("volume_pct") else []):
+                pct = nas.get("volume_pct", 0)
+                n = nas.get("name", "NAS")
+                if pct > 90:
+                    add(f"{n}: volume at {pct:.0f}%", "crit")
+                elif pct > 80:
+                    add(f"{n}: volume at {pct:.0f}%", "warn")
+
+        elif card_type == "limacharlie":
+            det = data.get("detections_24h", 0)
+            if det > 30:
+                add(f"LimaCharlie: {det} detection(s) in 24h", "warn")
+
+        elif card_type == "home_assistant":
+            alerts = data.get("alerts", 0) or data.get("persistent_notifications", 0)
+            if alerts > 5:
+                add(f"Home Assistant: {alerts} active alert(s)", "warn")
+
+        elif state in ("crit", "critical", "error"):
+            label = CARD_TYPE_META.get(card_type, {}).get("label", card_type)
+            add(f"{label}: {state.upper()}", "crit")
+        elif state == "warn":
+            label = CARD_TYPE_META.get(card_type, {}).get("label", card_type)
+            add(f"{label}: WARNING", "warn")
+
+    # Positive stats when all clear
+    if not items:
+        total = len(cache)
+        if total > 0:
+            add(f"All {total} monitored service(s) nominal", "ok")
+        prox = cache.get("proxmox", {}).get("data", {})
+        if prox.get("cpu") is not None:
+            add(f"Proxmox: CPU {prox['cpu']:.0f}% · RAM {prox.get('mem_pct', 0):.0f}%", "ok")
+        ag = cache.get("adguard", {}).get("data", {})
+        if ag.get("block_pct"):
+            add(f"AdGuard: blocking {ag['block_pct']:.1f}% of queries", "ok")
+        uk = cache.get("uptime_kuma", {}).get("data", {})
+        if uk.get("up_count"):
+            add(f"Uptime Kuma: {uk['up_count']} monitors UP", "ok")
+        if not items:
+            add("NOC Dashboard — MRDTech // ANTON — All Systems Nominal", "ok")
+
+    return items, worst
+
+
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="NOC Dashboard API", docs_url="/api/docs")
@@ -337,7 +531,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Lazy-loaded collector map (avoids import cost at startup for health checks)
 _collector_map = None
 
 
@@ -394,13 +587,12 @@ def api_config():
 
 @app.get("/api/data/{card_type}")
 def api_data(card_type: str, request: Request):
-    """Run collector and return live data. Cached for TTL seconds."""
+    """Run collector and return live data."""
     collectors = get_collectors()
     fn = collectors.get(card_type)
     if fn is None:
         raise HTTPException(status_code=404, detail=f"no collector for '{card_type}'")
 
-    # Build card_cfg from query params (graph_field, thresholds JSON, etc.)
     card_cfg = {"type": card_type}
     qp = dict(request.query_params)
     if "thresholds" in qp:
@@ -423,7 +615,10 @@ def api_data(card_type: str, request: Request):
         data = {"state": "error", "note": str(e)[:200]}
         elapsed = 0
 
-    # Update trends (fire and forget — non-blocking write)
+    # Cache for ticker + status overview
+    _card_cache[card_type] = {"data": data, "ts": now}
+
+    # Update trends
     try:
         trends = load_trends()
         if data.get("state") not in ("error",):
@@ -432,7 +627,7 @@ def api_data(card_type: str, request: Request):
     except Exception:
         pass
 
-    # Include trend data in response so frontend can render sparklines
+    # Include trend data in response
     try:
         trend_data = {}
         trends = load_trends()
@@ -446,7 +641,77 @@ def api_data(card_type: str, request: Request):
 
     data["_elapsed"] = elapsed
     data["_ts"] = int(now)
+
+    # Push to SSE clients (non-blocking)
+    _push_sse_from_sync(card_type, data)
+
     return data
+
+
+@app.get("/api/ticker")
+def api_ticker():
+    """Aggregated alerts and stats for the scrolling ticker bar."""
+    items, worst = _extract_ticker_items(_card_cache)
+    return {"items": items, "worst": worst, "ts": int(time.time())}
+
+
+@app.get("/api/status-overview")
+def api_status_overview():
+    """Counts of ok/warn/crit across all recently-seen cards."""
+    now = time.time()
+    STALE = 900
+    counts = {"ok": 0, "warn": 0, "crit": 0, "error": 0, "unknown": 0}
+    for card_type, entry in _card_cache.items():
+        if now - entry.get("ts", 0) > STALE:
+            continue
+        state = entry.get("data", {}).get("state", "unknown")
+        if state in ("crit", "critical"):
+            counts["crit"] += 1
+        elif state == "warn":
+            counts["warn"] += 1
+        elif state == "ok":
+            counts["ok"] += 1
+        elif state == "error":
+            counts["error"] += 1
+        else:
+            counts["unknown"] += 1
+    worst = "ok"
+    if counts["crit"] + counts["error"] > 0:
+        worst = "crit"
+    elif counts["warn"] > 0:
+        worst = "warn"
+    return {**counts, "worst": worst, "total": sum(counts.values()), "ts": int(time.time())}
+
+
+@app.get("/api/events")
+async def api_sse():
+    """Server-Sent Events stream for live card data updates."""
+    q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    _sse_clients.add(q)
+
+    async def stream():
+        try:
+            yield f"data: {json.dumps({'type': 'connected', 'ts': int(time.time())})}\n\n"
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=25)
+                    yield f"data: {msg}\n\n"
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'ts': int(time.time())})}\n\n"
+        except Exception:
+            pass
+        finally:
+            _sse_clients.discard(q)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 @app.get("/api/health")
@@ -457,7 +722,6 @@ def api_health():
 # ── Static file serving (React app) ───────────────────────────────────────────
 
 if FRONTEND_DIST.exists():
-    # Mount static assets (js, css, etc.)
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
 
     @app.get("/")
@@ -466,7 +730,6 @@ if FRONTEND_DIST.exists():
 
     @app.get("/{path:path}")
     def serve_spa(path: str):
-        # For SPA routing — anything not matching /api/* returns index.html
         if path.startswith("api/"):
             raise HTTPException(status_code=404)
         file_path = FRONTEND_DIST / path
@@ -476,12 +739,7 @@ if FRONTEND_DIST.exists():
 else:
     @app.get("/")
     def serve_no_frontend():
-        return JSONResponse({"error": "Frontend not built. Run: cd frontend && npm run build"}, status_code=503)
-
-
-# ── Dev entrypoint ────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8081))
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
+        return JSONResponse(
+            {"error": "Frontend not built. Run: cd frontend && npm run build"},
+            status_code=503
+        )

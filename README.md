@@ -1,48 +1,58 @@
-# NOC Dashboard
+# NOC Dashboard v2
 
-**An interactive, drag-and-drop React + FastAPI homelab NOC dashboard.**
+**An interactive, Homarr-inspired React + FastAPI homelab NOC dashboard with true dark-terminal aesthetic.**
 
-Deploy it, load your credentials, and get a fully live NOC dashboard — drag cards around, resize them, add or remove card types on the fly, customize every card with a settings panel. Layout persists automatically.
+Deploy it, load your credentials, and get a fully live NOC dashboard — drag cards around in edit mode, resize them, add or remove card types with a categorized picker, customize every card with a settings panel. Layout persists automatically.
 
 ---
 
-![NOC Dashboard — Dark Theme](screenshots/dark-noc.png)
+![NOC Dashboard — Dark NOC Theme](screenshots/dark-noc.png)
 
-*Dark NOC theme — real MRDTech homelab data*
+*Dark NOC theme — true black background, green accents, terminal/NOC room aesthetic*
+
+---
+
+![NOC Dashboard — Edit Mode](screenshots/dark-noc-edit.png)
+
+*Edit mode — drag handles, X remove buttons, gear settings highlighted, bottom banner*
 
 ---
 
 ![NOC Dashboard — Light Clean Theme](screenshots/light-clean.png)
 
-*Light Clean theme — same data, professional corporate look*
+*Light Clean theme — same live data, professional corporate look*
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Docker Container                   │
-│                                                     │
-│  ┌──────────────────────────────────────────────┐  │
-│  │  FastAPI (uvicorn) — server.py               │  │
-│  │                                              │  │
-│  │  /api/data/{card_type}  ← Python collectors  │  │
-│  │  /api/layout            ← layout.json CRUD   │  │
-│  │  /api/themes            ← YAML theme loader  │  │
-│  │  /api/card-types        ← card registry      │  │
-│  │  /api/config            ← dashboard.yaml     │  │
-│  │  /                      ← React SPA (static) │  │
-│  └──────────────────────────────────────────────┘  │
-│                                                     │
-│  ┌──────────────────────────────────────────────┐  │
-│  │  React frontend (pre-built, served static)   │  │
-│  │  • react-grid-layout (drag + resize)         │  │
-│  │  • 27 card types, lazy-loaded chunks         │  │
-│  │  • recharts sparklines + area + donuts       │  │
-│  │  • 6 themes via CSS variables                │  │
-│  └──────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    Docker Container                     │
+│                                                         │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  FastAPI (uvicorn) — server.py                     │ │
+│  │                                                    │ │
+│  │  /api/data/{card_type}  ← Python collectors        │ │
+│  │  /api/layout            ← layout.json CRUD         │ │
+│  │  /api/themes            ← YAML theme loader        │ │
+│  │  /api/card-types        ← card registry + icons    │ │
+│  │  /api/config            ← dashboard.yaml           │ │
+│  │  /api/ticker            ← aggregated alert feed    │ │
+│  │  /api/status-overview   ← ok/warn/crit counts      │ │
+│  │  /api/events            ← SSE live card updates    │ │
+│  │  /                      ← React SPA (static)       │ │
+│  └────────────────────────────────────────────────────┘ │
+│                                                         │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  React frontend (pre-built, served static)         │ │
+│  │  • react-grid-layout (drag + resize)               │ │
+│  │  • 27 card types, lazy-loaded chunks               │ │
+│  │  • recharts sparklines + area + donuts             │ │
+│  │  • 6 themes via CSS variables                      │ │
+│  │  • SSE live updates — no page reloads              │ │
+│  └────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
 ```
 
 One container. One port (8081). No external databases.
@@ -51,17 +61,79 @@ One container. One port (8081). No external databases.
 
 ## Features
 
-- **Interactive drag-and-drop grid** — grab any card by the header, drop it anywhere. Drag edges and corners to resize.
-- **27 card types** — Proxmox, Docker/Portainer, PBS, Wazuh SIEM, CrowdSec, UniFi/WAN, Cloudflare, AdGuard, Tailscale, Uptime Kuma, Home Assistant, QNAP, Plex, Tautulli, Sonarr, Radarr, Prowlarr, SABnzbd, Overseerr, Nginx Proxy Manager, URBackup, LimaCharlie, Custom URL, and more.
-- **Add Card panel** — click `+` in the top bar to browse all card types with search filter. Click to add.
-- **Per-card settings** — click ⚙ on any card to configure: title, refresh interval, graph type, graph color, JSON thresholds, remove.
-- **Layout auto-save** — every drag, resize, add, or remove persists to `state/layout.json` within 500ms.
-- **6 built-in themes** — `dark-noc`, `light-clean`, `midnight-blue`, `solarized-dark`, `dracula`, `nord`.
-- **Auto day/night switching** — swaps theme at configurable hour (default: 07:00 day, 19:00 night).
-- **Manual theme toggle** — click the theme button in the top bar to cycle through all themes.
-- **Graph support** — sparkline, area, gauge, donut charts. Trend history (48h) stored in `state/trends.json`.
-- **Graceful degradation** — one failed collector never kills the page. Cards show error state with message.
-- **Docker-ready** — `docker compose up -d`. Done.
+### Visual Design — NOC Room Aesthetic
+- **True black background** — `#0a0a0a`, not washed-out dark grey
+- **Bright green accents** — `#00ff41` matrix green, with glow effects
+- **Monospace everywhere** — JetBrains Mono / Fira Code / Consolas
+- **Colored left stripe** on each card indicating status (green/yellow/red)
+- **Status dots** on card headers with blink animation on critical
+- **Section headers** in accent color, uppercase, small monospace font
+- **Compact, information-dense cards** — no empty space
+
+### Scrolling Ticker Bar
+- Always-on scrolling info bar below the top bar (same pattern as NOC 1)
+- Aggregates alerts and stats from all collectors into a live feed
+- Color-coded by severity: critical (red), warning (amber), OK (green)
+- ALERT badge pulses red when critical issues are present
+- Auto-refreshes every 2 minutes with latest data
+
+### Status Overview
+- Next to the title: **"11 OK · 11 Warn · 2 Crit"** with colored dots
+- One-glance health of the entire monitored environment
+- Updates every 30 seconds from `/api/status-overview`
+
+### Edit Mode — Homarr-Inspired
+- **Clean view mode** by default — cards look polished, no visual clutter
+- Click **✎ EDIT** in the top bar to enter edit mode:
+  - Drag handles appear on card headers
+  - Cards become draggable and resizable
+  - ⚙ gear icon highlighted in accent color
+  - ✕ remove button visible on each card
+  - **+** Add Card button appears in the top bar
+  - Bottom banner reminds you edit mode is active
+- Click **✓ EDITING** to exit — layout auto-saves
+
+### Add Card Panel
+- **Categorized grid** of all 27 card types: Infrastructure, Security, Network, Storage, Media, Monitoring
+- Each card type shows its icon, label, and description
+- Category tabs for filtering + global search
+- Click any card type to add it to the dashboard
+
+### Card Settings Panel
+- **Title** — custom label
+- **Icon picker** — 25 curated icons (Server, Shield, Cloud, Database, Film, etc.)
+- **Graph toggle** — on/off
+- **Graph type** — Sparkline, Area, Gauge, Donut
+- **Graph color** — color picker + hex input
+- **Refresh interval** — per-card polling rate in seconds
+- **Thresholds** — JSON warn/crit values
+- **Notes** — free text notes about the card
+- **Remove** — with two-step confirmation
+
+### Live Updates via SSE
+- `/api/events` Server-Sent Events stream pushes card data as collectors complete
+- Cards update individually on their refresh cycle — the page never flashes
+- SSE auto-reconnects after disconnect (5s backoff)
+
+### 27 Card Types
+- **Infrastructure**: Proxmox, Proxmox Storage, Docker/Portainer, PBS, URBackup, Home Assistant, Disk Health
+- **Security**: Wazuh SIEM, CrowdSec, Cloudflare WAF, Malware Detect, LimaCharlie
+- **Network**: UniFi, WAN Health, Tailscale, Nginx Proxy Manager, AdGuard Home
+- **Storage**: QNAP NAS
+- **Media**: Plex, Tautulli, Sonarr, Radarr, Prowlarr, SABnzbd, Overseerr
+- **Monitoring**: Uptime Kuma, Custom URL
+
+### 6 Themes
+| Theme | Style |
+|-------|-------|
+| `dark-noc` | True black `#0a0a0a` + matrix green — default night |
+| `light-clean` | White + blue — professional corporate |
+| `midnight-blue` | Deep navy + cyan |
+| `solarized-dark` | Classic solarized palette |
+| `dracula` | Purple + pink + green |
+| `nord` | Muted blues + arctic tones |
+
+Auto day/night switching at configurable hours. Manual cycle button in top bar.
 
 ---
 
@@ -85,7 +157,7 @@ docker compose up -d --build
 
 Open http://your-host:8081
 
-The React app loads, fetches your layout from `state/layout.json` (bootstrapped from `dashboard.yaml` on first run), and starts polling the collectors.
+The React app loads, fetches your layout from `state/layout.json` (bootstrapped from `dashboard.yaml` on first run), and starts polling the collectors. The SSE stream connects for live updates.
 
 ---
 
@@ -145,35 +217,35 @@ card_background: "#16213e"
 
 ## Card Types
 
-| Type | Label | Data Source |
-|------|-------|-------------|
-| `proxmox` | Proxmox | Proxmox API — CPU, RAM, VMs, storage |
-| `proxmox_storage` | Proxmox Storage | Proxmox API — storage pool donuts |
-| `docker` | Docker | Portainer API — container counts, unhealthy |
-| `pbs` | PBS | Proxmox Backup Server API |
-| `urbackup` | URBackup | URBackup API |
-| `uptime_kuma` | Uptime Kuma | Prometheus metrics |
-| `home_assistant` | Home Assistant | HA REST API |
-| `smart_health` | Disk Health | Proxmox SMART via API |
-| `wazuh` | Wazuh SIEM | Wazuh API — agents, alerts 24h |
-| `malware_sources` | Malware Detect | Feed detection counts |
-| `crowdsec` | CrowdSec | CrowdSec LAPI |
-| `cloudflare` | Cloudflare | CF API — requests, threats, WAF |
-| `unifi` | UniFi | UniFi API — WAN, clients, IPS |
-| `wan_health` | WAN Health | UniFi API — WAN/internet status |
-| `tailscale` | Tailscale | Tailscale API |
-| `nginx_proxy` | Nginx Proxy | NPM API — hosts, cert expiry |
-| `adguard` | AdGuard Home | AdGuard API — DNS stats |
-| `qnap` | NAS Storage | QNAP QTS API |
-| `plex` | Plex | Plex API — streams, libraries |
-| `tautulli` | Tautulli | Tautulli API |
-| `sonarr` | Sonarr | Sonarr v3 API |
-| `radarr` | Radarr | Radarr v3 API |
-| `prowlarr` | Prowlarr | Prowlarr API |
-| `sabnzbd` | SABnzbd | SABnzbd API |
-| `overseerr` | Overseerr | Overseerr API |
-| `limacharlie` | LimaCharlie | LC REST API |
-| `custom_url` | Custom URL | Any JSON endpoint |
+| Type | Label | Category | Data Source |
+|------|-------|----------|-------------|
+| `proxmox` | Proxmox | Infrastructure | Proxmox API |
+| `proxmox_storage` | Proxmox Storage | Infrastructure | Proxmox API |
+| `docker` | Docker | Infrastructure | Portainer API |
+| `pbs` | PBS | Infrastructure | PBS API |
+| `urbackup` | URBackup | Infrastructure | URBackup API |
+| `home_assistant` | Home Assistant | Infrastructure | HA REST API |
+| `smart_health` | Disk Health | Infrastructure | Proxmox SMART |
+| `wazuh` | Wazuh SIEM | Security | Wazuh API |
+| `malware_sources` | Malware Detect | Security | Feed counts |
+| `crowdsec` | CrowdSec | Security | CrowdSec LAPI |
+| `cloudflare` | Cloudflare | Security | CF API |
+| `limacharlie` | LimaCharlie | Security | LC REST API |
+| `unifi` | UniFi | Network | UniFi API |
+| `wan_health` | WAN Health | Network | UniFi API |
+| `tailscale` | Tailscale | Network | Tailscale API |
+| `nginx_proxy` | Nginx Proxy | Network | NPM API |
+| `adguard` | AdGuard Home | Network | AdGuard API |
+| `qnap` | NAS Storage | Storage | QNAP QTS API |
+| `plex` | Plex | Media | Plex API |
+| `tautulli` | Tautulli | Media | Tautulli API |
+| `sonarr` | Sonarr | Media | Sonarr v3 API |
+| `radarr` | Radarr | Media | Radarr v3 API |
+| `prowlarr` | Prowlarr | Media | Prowlarr API |
+| `sabnzbd` | SABnzbd | Media | SABnzbd API |
+| `overseerr` | Overseerr | Media | Overseerr API |
+| `uptime_kuma` | Uptime Kuma | Monitoring | Prometheus metrics |
+| `custom_url` | Custom URL | Monitoring | Any JSON endpoint |
 
 ---
 
@@ -192,8 +264,11 @@ GET  /api/data/{card_type}   Run collector, return live JSON
 GET  /api/layout             Current layout config
 POST /api/layout             Save layout config
 GET  /api/themes             All themes as CSS variable maps
-GET  /api/card-types         Registry of all card types
+GET  /api/card-types         Registry of all card types (with icon + category)
 GET  /api/config             Dashboard title/subtitle
+GET  /api/ticker             Aggregated alert/stats items for ticker bar
+GET  /api/status-overview    Counts of ok/warn/crit across all cards
+GET  /api/events             SSE stream for live card data pushes
 GET  /api/health             Health check
 ```
 
@@ -201,68 +276,16 @@ GET  /api/health             Health check
 
 ## Development
 
-### Backend only
-
 ```bash
-pip install -r requirements.txt
-cp ~/.hermes/.env .env   # or wherever your creds are
-uvicorn server:app --reload --port 8081
-```
+# Backend (in project root)
+uvicorn server:app --host 0.0.0.0 --port 8081 --reload
 
-### Frontend dev server (hot reload)
-
-```bash
-cd frontend
-npm install
-npm run dev   # proxies /api/* to localhost:8081
-```
-
-### Full rebuild
-
-```bash
-cd frontend && npm run build && cd ..
-uvicorn server:app --port 8081
-```
-
----
-
-## Project Structure
-
-```
-noc-dashboard/
-├── server.py              # FastAPI app — all API routes
-├── collectors/            # One .py per data source
-│   ├── proxmox.py
-│   ├── wazuh.py
-│   ├── docker_portainer.py
-│   └── ...
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx        # Root — loads layout, themes, config
-│   │   ├── components/
-│   │   │   ├── CardGrid.jsx      # react-grid-layout wrapper
-│   │   │   ├── CardWrapper.jsx   # Fetcher + header + settings trigger
-│   │   │   ├── TopBar.jsx        # Title, theme toggle, Add Card button
-│   │   │   ├── AddCardPanel.jsx  # Browse + search all card types
-│   │   │   ├── SettingsPanel.jsx # Per-card config drawer
-│   │   │   ├── shared.jsx        # MetricRow, Sparkline, DonutGauge, etc.
-│   │   │   └── cards/            # One .jsx per card type (lazy-loaded)
-│   │   ├── api.js         # fetch helpers
-│   │   └── theme.js       # applyTheme, resolveTheme
-│   ├── dist/              # Built output (committed)
-│   └── package.json
-├── themes/                # YAML theme definitions
-├── state/
-│   ├── layout.json        # Persisted card layout (auto-created)
-│   └── trends.json        # Trend history for sparklines
-├── dashboard.yaml         # Initial layout + theme config
-├── Dockerfile             # Multi-stage: Node build + Python runtime
-├── docker-compose.yml
-└── .env.example
+# Frontend (in frontend/)
+npm run dev   # Vite dev server on :5173, proxies /api to :8081
 ```
 
 ---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
