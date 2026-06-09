@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  noc-dashboard:
+    image: noc-dashboard:latest
+    build: .
+    container_name: noc-dashboard
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./dashboard.yaml:/app/dashboard.yaml:ro
+      - ./themes:/app/themes:ro
+      - ./state:/app/state
+      - ./output:/app/output
+    env_file:
+      - .env
+    environment:
+      - REFRESH_MINUTES=15
+      - PORT=8081

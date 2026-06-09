@@ -1,0 +1,281 @@
+# =============================================================================
+# NOC Dashboard Configuration
+# Edit this file to customize your dashboard. No code changes needed.
+# Documentation: https://github.com/mdziegiel/noc-dashboard/blob/main/README.md
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Dashboard identity
+# ---------------------------------------------------------------------------
+top_bar:
+  title: "MRDTech Homelab"
+  subtitle: "NOC // ANTON"
+  show_updated: true
+  show_overall_status: true
+  overall_status_logic: worst   # worst | avg | majority
+  show_theme_toggle: true
+  logo: ""                      # path to logo image, or "" for none
+
+# ---------------------------------------------------------------------------
+# Refresh intervals
+# ---------------------------------------------------------------------------
+refresh_seconds: 60       # browser auto-reload interval
+refresh_minutes: 15       # generator cron interval
+
+# ---------------------------------------------------------------------------
+# Theme
+# ---------------------------------------------------------------------------
+theme:
+  preset: dark-noc           # dark-noc | light-clean | midnight-blue | solarized-dark | dracula | nord
+  auto_switch: true          # enable automatic day/night switching
+  day_theme: light-clean
+  night_theme: dark-noc
+  day_start: "07:00"
+  night_start: "19:00"
+  overrides: {}              # inline per-key overrides, e.g. accent: "#ff0000"
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+output:
+  dir: "./output"
+  file: "index.html"
+
+# ---------------------------------------------------------------------------
+# Sections and Cards
+# All layout, content, and data source config lives here.
+# ---------------------------------------------------------------------------
+sections:
+
+  # ── INFRASTRUCTURE ────────────────────────────────────────────────────────
+  - name: "Infrastructure"
+    cards:
+
+      - type: proxmox
+        title: "PROXMOX"
+        size: normal
+        show: [vms, cpu, ram, storage, down_vms]
+        thresholds:
+          cpu_warn: 75
+          cpu_critical: 90
+          storage_warn: 80
+          storage_critical: 90
+        graph: true
+        graph_type: sparkline
+        graph_field: cpu
+        graph_hours: 24
+        notes: ""
+
+      - type: docker
+        title: "DOCKER"
+        size: normal
+        show: [running, total, bad]
+        graph: false
+        notes: ""
+
+      - type: pbs
+        title: "BACKUP SERVER"
+        size: normal
+        show: [ok, fail, last_backup, datastores]
+        thresholds:
+          last_backup_warn_hours: 26
+        graph: false
+        notes: ""
+
+      - type: urbackup
+        title: "URBACKUP"
+        size: normal
+        show: [online, total, clients]
+        graph: false
+        notes: ""
+
+  # ── MONITORING ────────────────────────────────────────────────────────────
+  - name: "Monitoring"
+    cards:
+
+      - type: uptime_kuma
+        title: "UPTIME KUMA"
+        size: wide
+        show: [up, total, down, certs]
+        thresholds:
+          cert_warn_days: 30
+          cert_critical_days: 7
+        graph: false
+        notes: ""
+
+      - type: home_assistant
+        title: "HOME ASSISTANT"
+        size: normal
+        show: [entities, alerts, notifications, unavailable]
+        graph: false
+        notes: ""
+
+      - type: smart_health
+        title: "DISK HEALTH"
+        size: normal
+        show: [checked, passed, warn, fail, problems]
+        graph: false
+        notes: ""
+
+  # ── SECURITY ──────────────────────────────────────────────────────────────
+  - name: "Security"
+    cards:
+
+      - type: wazuh
+        title: "WAZUH SIEM"
+        size: normal
+        show: [agents, alerts_24h, high_24h, down_agents]
+        thresholds:
+          high_alert_warn: 1
+        graph: true
+        graph_type: sparkline
+        graph_field: alerts_24h
+        graph_hours: 24
+        notes: ""
+
+      - type: malware_sources
+        title: "MALWARE DETECT"
+        size: normal
+        show: [sources, detections]
+        graph: false
+        notes: ""
+
+      - type: crowdsec
+        title: "CROWDSEC"
+        size: normal
+        show: [bans, local_bans, detections_24h, top_scenarios]
+        graph: false
+        notes: ""
+
+      - type: cloudflare
+        title: "CLOUDFLARE"
+        size: normal
+        show: [requests, threats, bytes, waf]
+        thresholds:
+          threat_warn: 1
+        graph: false
+        notes: ""
+
+      - type: unifi
+        title: "UNIFI"
+        size: wide
+        show: [wan, clients, devices, ssids, ips_24h, pia, monthly]
+        thresholds:
+          ips_warn: 1
+        graph: false
+        notes: ""
+
+      - type: tailscale
+        title: "TAILSCALE"
+        size: normal
+        show: [online, total, offline, exit_nodes, key_expiry]
+        thresholds:
+          key_expiry_warn_days: 30
+        graph: false
+        notes: ""
+
+      - type: nginx_proxy
+        title: "NGINX PROXY MGR"
+        size: normal
+        show: [hosts, enabled, disabled, certs_expiring]
+        thresholds:
+          cert_warn_days: 14
+        graph: false
+        notes: ""
+
+      - type: adguard
+        title: "ADGUARD HOME"
+        size: normal
+        show: [queries, blocked, block_pct, avg_ms]
+        graph: true
+        graph_type: sparkline
+        graph_field: block_pct
+        graph_hours: 24
+        notes: ""
+
+  # ── STORAGE ───────────────────────────────────────────────────────────────
+  - name: "Storage"
+    cards:
+
+      - type: qnap
+        title: "NAS STORAGE"
+        size: wide
+        show: [volumes, temps, fans, disks]
+        thresholds:
+          volume_warn: 80
+          volume_critical: 90
+          temp_warn: 55
+        graph: false
+        notes: ""
+
+      - type: proxmox_storage
+        title: "PROXMOX STORAGE"
+        size: normal
+        show: [datastores]
+        graph_type: donut
+        graph: true
+        notes: ""
+
+  # ── MEDIA ─────────────────────────────────────────────────────────────────
+  - name: "Media"
+    cards:
+
+      - type: plex
+        title: "PLEX"
+        size: normal
+        show: [streams, movies, shows]
+        graph: false
+        notes: ""
+
+      - type: tautulli
+        title: "TAUTULLI"
+        size: normal
+        show: [streams, plays_today, top_user]
+        graph: false
+        notes: ""
+
+      - type: sonarr
+        title: "SONARR"
+        size: normal
+        show: [total, monitored, queue, missing]
+        graph: false
+        notes: ""
+
+      - type: radarr
+        title: "RADARR"
+        size: normal
+        show: [total, monitored, queue, missing]
+        graph: false
+        notes: ""
+
+      - type: prowlarr
+        title: "PROWLARR"
+        size: normal
+        show: [total, enabled, healthy, failing]
+        graph: false
+        notes: ""
+
+      - type: sabnzbd
+        title: "SABNZBD"
+        size: normal
+        show: [status, slots, speed, day_gb]
+        graph: false
+        notes: ""
+
+      - type: overseerr
+        title: "OVERSEERR"
+        size: normal
+        show: [pending, approved, available, total]
+        graph: false
+        notes: ""
+
+  # ── SECURITY (ENDPOINT) ───────────────────────────────────────────────────
+  - name: "Endpoint Security"
+    cards:
+
+      - type: limacharlie
+        title: "LIMACHARLIE"
+        size: normal
+        show: [total, online, offline, detections_24h, top]
+        graph: false
+        notes: ""
