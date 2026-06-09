@@ -2783,6 +2783,57 @@ def render(data, gen_epoch, errors, trends=None):
         # Cloud
         "aws": "AWS Health", "gcp": "GCP Status",
         "digitalocean": "DigitalOcean", "linode": "Linode/Akamai",
+        # Email Security
+        "proofpoint": "Proofpoint", "mimecast": "Mimecast",
+        "barracuda": "Barracuda", "msdefender_email": "Defender for Office 365",
+        # DNS/Web Security
+        "cisco_umbrella": "Cisco Umbrella", "zscaler": "Zscaler",
+        "cf_gateway": "Cloudflare Gateway",
+        # DNS
+        "technitium": "Technitium DNS", "blocky": "Blocky DNS", "coredns": "CoreDNS",
+        # Endpoint Security
+        "crowdstrike": "CrowdStrike", "sentinelone": "SentinelOne",
+        "sophos_central": "Sophos Central", "msdefender_ep": "Defender for Endpoint",
+        "eset": "ESET", "bitdefender": "Bitdefender GravityZone",
+        "malwarebytes": "Malwarebytes ThreatDown",
+        # Firewall
+        "fortigate": "Fortinet FortiGate", "paloalto": "Palo Alto NGFW",
+        "checkpoint": "Check Point", "watchguard": "WatchGuard",
+        "sonicwall": "SonicWall", "cisco_asa": "Cisco ASA",
+        # SIEM
+        "splunk": "Splunk", "elastic": "Elastic/ELK",
+        "graylog": "Graylog", "datadog": "Datadog",
+        # Vulnerability
+        "qualys": "Qualys", "rapid7": "Rapid7 InsightVM",
+        "openvas": "Greenbone/OpenVAS",
+        # Identity
+        "okta": "Okta", "duo": "Duo Security",
+        "jumpcloud": "JumpCloud", "onelogin": "OneLogin",
+        # Backup
+        "veeam": "Veeam", "acronis": "Acronis",
+        "commvault": "Commvault", "datto": "Datto BCDR",
+        # Ticketing
+        "servicenow": "ServiceNow", "zendesk": "Zendesk",
+        "freshdesk": "Freshdesk", "connectwise_psa": "ConnectWise Manage",
+        # RMM
+        "cw_automate": "ConnectWise Automate", "datto_rmm": "Datto RMM",
+        "ninjarmm": "NinjaRMM", "atera": "Atera",
+        # Containers
+        "kubernetes": "Kubernetes", "rancher": "Rancher",
+        "nomad": "HashiCorp Nomad",
+        # Databases
+        "mysql": "MySQL", "postgresql": "PostgreSQL",
+        "redis": "Redis", "mongodb": "MongoDB", "mariadb": "MariaDB",
+        # Monitoring
+        "zabbix": "Zabbix", "nagios": "Nagios",
+        "checkmk": "Checkmk", "librenms": "LibreNMS",
+        "prtg": "PRTG", "uptimerobot": "Uptime Robot",
+        # Storage
+        "minio": "MinIO", "ceph": "Ceph",
+        # Self-hosted
+        "paperless": "Paperless-ngx", "vaultwarden": "Vaultwarden",
+        "gotify": "Gotify", "ntfy": "ntfy",
+        "bookstack": "BookStack", "wikijs": "Wiki.js",
     }
     integ_list = []
     active_keys = set()
@@ -4725,6 +4776,38 @@ PAGE = """<!DOCTYPE html>
     {{ id:'cloud',      label:'Cloud',
       keys:['aws','gcp','digitalocean','linode'] }},
     {{ id:'custom',     label:'Custom', keys:['custom'] }},
+    {{ id:'email_sec',  label:'Email Security',
+      keys:['proofpoint','mimecast','barracuda','msdefender_email'] }},
+    {{ id:'dns_web',    label:'DNS & Web Security',
+      keys:['cisco_umbrella','zscaler','cf_gateway'] }},
+    {{ id:'dns_alt',    label:'DNS Servers',
+      keys:['technitium','blocky','coredns'] }},
+    {{ id:'endpoint',   label:'Endpoint Security',
+      keys:['crowdstrike','sentinelone','sophos_central','msdefender_ep','eset','bitdefender','malwarebytes'] }},
+    {{ id:'firewall',   label:'Firewall',
+      keys:['fortigate','paloalto','checkpoint','watchguard','sonicwall','cisco_asa'] }},
+    {{ id:'siem',       label:'SIEM',
+      keys:['splunk','elastic','graylog','datadog'] }},
+    {{ id:'vuln',       label:'Vulnerability',
+      keys:['qualys','rapid7','openvas'] }},
+    {{ id:'identity',   label:'Identity',
+      keys:['okta','duo','jumpcloud','onelogin'] }},
+    {{ id:'backup',     label:'Backup',
+      keys:['veeam','acronis','commvault','datto'] }},
+    {{ id:'ticketing',  label:'Ticketing',
+      keys:['servicenow','zendesk','freshdesk','connectwise_psa'] }},
+    {{ id:'rmm',        label:'RMM',
+      keys:['cw_automate','datto_rmm','ninjarmm','atera'] }},
+    {{ id:'containers', label:'Containers',
+      keys:['kubernetes','rancher','nomad'] }},
+    {{ id:'databases',  label:'Databases',
+      keys:['mysql','postgresql','redis','mongodb','mariadb'] }},
+    {{ id:'mon_ext',    label:'Monitoring Platforms',
+      keys:['zabbix','nagios','checkmk','librenms','prtg','uptimerobot'] }},
+    {{ id:'storage_ext',label:'Storage',
+      keys:['minio','ceph'] }},
+    {{ id:'selfhosted', label:'Self-Hosted',
+      keys:['paperless','vaultwarden','gotify','ntfy','bookstack','wikijs'] }},
   ];
 
   function _integByKey(k) {{ return INTEGRATIONS.find(function(i){{return i.key===k;}}); }}
