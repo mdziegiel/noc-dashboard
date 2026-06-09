@@ -16,7 +16,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "system_status"
     },
     {
       "id": "c6bb36bd-4a2c-465f-a973-69af605daa27",
@@ -31,7 +32,8 @@
         "graph": true,
         "graph_type": "sparkline",
         "graph_field": "cpu"
-      }
+      },
+      "section": "system_status"
     },
     {
       "id": "5e46200c-58aa-4f94-94c0-a50fa2958f1c",
@@ -43,7 +45,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "system_status"
     },
     {
       "id": "4d81ad42-3e54-4b0b-938d-0cedbbc6b40f",
@@ -55,7 +58,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "system_status"
     },
     {
       "id": "5deb32d3-4223-462d-9b51-61c2a72d5eb9",
@@ -67,7 +71,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "system_status"
     },
     {
       "id": "d7feeb06-ba14-4452-86c3-cae2d47c7e0f",
@@ -79,7 +84,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "system_status"
     },
     {
       "id": "0482a2b9-29c7-4b73-9ae0-07409790ad35",
@@ -91,7 +97,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "system_status"
     },
     {
       "id": "213b6850-3f8b-4586-b1a5-b1be5477be4f",
@@ -103,7 +110,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "system_status"
     },
     {
       "id": "62d27dc1-bbda-469c-b6a5-8184028332f6",
@@ -115,7 +123,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "security_network"
     },
     {
       "id": "a1a19458-63ac-4031-bf7f-4647367aa2d7",
@@ -127,7 +136,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "security_network"
     },
     {
       "id": "9a926e8f-3411-43b5-90df-207b49e90df0",
@@ -139,7 +149,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "security_network"
     },
     {
       "id": "397982f7-2e67-4834-a481-39955b726eb9",
@@ -154,7 +165,8 @@
         "graph": true,
         "graph_type": "sparkline",
         "graph_field": "alerts_24h"
-      }
+      },
+      "section": "security_network"
     },
     {
       "id": "04b4f9b7-b9d5-41c2-907f-8647901a82e2",
@@ -166,7 +178,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "security_network"
     },
     {
       "id": "8ff56897-a691-40ca-abe2-6c99d3784544",
@@ -178,7 +191,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "security_network"
     },
     {
       "id": "415d8c6a-768e-4cb3-a6cc-ef85feb30c30",
@@ -193,7 +207,8 @@
         "graph": true,
         "graph_type": "sparkline",
         "graph_field": "block_pct"
-      }
+      },
+      "section": "security_network"
     },
     {
       "id": "0b244c6e-e790-4f27-94f8-1927e0cbbad5",
@@ -205,7 +220,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "security_network"
     },
     {
       "id": "f4ea0626-9e4e-4341-9bf1-1624fa2e7d5d",
@@ -217,7 +233,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "media_downloads"
     },
     {
       "id": "7cd166cd-983f-4bf6-92a8-59c684be184f",
@@ -229,7 +246,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "media_downloads"
     },
     {
       "id": "642d0eac-c147-4945-8fc7-0a8750dfa508",
@@ -241,7 +259,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "media_downloads"
     },
     {
       "id": "3297d030-8905-4704-b394-f24a719483bf",
@@ -253,7 +272,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "media_downloads"
     },
     {
       "id": "c9d17c5a-4a80-474f-9f4b-0734b9c9fc55",
@@ -265,7 +285,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "media_downloads"
     },
     {
       "id": "8e6293e4-6bf2-4c85-b666-49ec91cd8973",
@@ -277,7 +298,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "media_downloads"
     },
     {
       "id": "54832a5e-9764-4c84-9eef-206e55d6498d",
@@ -289,7 +311,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 60
-      }
+      },
+      "section": "media_downloads"
     },
     {
       "id": "851ff58c-5228-412e-9012-454842f5683a",
@@ -301,7 +324,8 @@
       "h": 3,
       "config": {
         "refresh_seconds": 120
-      }
+      },
+      "section": "qnap_storage"
     },
     {
       "id": "962c20ff-afd4-4c07-a17a-fd722b87de8f",
@@ -315,7 +339,8 @@
         "refresh_seconds": 120,
         "graph": true,
         "graph_type": "donut"
-      }
+      },
+      "section": "proxmox_storage"
     },
     {
       "id": "b6ded5cd-d2f5-4f6d-921e-9e801f20df01",
@@ -327,7 +352,50 @@
       "h": 3,
       "config": {
         "refresh_seconds": 300
-      }
+      },
+      "section": "security_network"
+    }
+  ],
+  "sections": [
+    {
+      "id": "system_status",
+      "label": "System Status",
+      "collapsed": false
+    },
+    {
+      "id": "security_network",
+      "label": "Security & Network",
+      "collapsed": false
+    },
+    {
+      "id": "media_downloads",
+      "label": "Media & Downloads",
+      "collapsed": false
+    },
+    {
+      "id": "qnap_storage",
+      "label": "QNAP Storage Appliances",
+      "collapsed": false
+    },
+    {
+      "id": "proxmox_storage",
+      "label": "Proxmox Storage Utilization",
+      "collapsed": false,
+      "panelbox": true
+    },
+    {
+      "id": "uptime_history",
+      "label": "Uptime History (last 24h)",
+      "collapsed": false,
+      "panelbox": true,
+      "historyPanel": true
+    },
+    {
+      "id": "certs_alerts",
+      "label": "Certificates & Active Alerts",
+      "collapsed": false,
+      "twocol": true,
+      "certsPanel": true
     }
   ]
 }

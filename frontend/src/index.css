@@ -369,6 +369,16 @@
   .edit-active .card:active { cursor: grabbing !important; }
   .sortable-ghost { opacity: 0.35; background: var(--panel2) !important; outline: 2px solid var(--green) !important; }
   .sortable-drag { opacity: 0.9; box-shadow: 0 8px 24px rgba(0,255,65,0.35) !important; }
+  /* ── Section management ── */
+  .section-label-row { display: flex; align-items: center; gap: 8px; }
+  .section-label-edit { border-bottom-style: dashed; border-bottom-color: var(--green-dim); background: rgba(0,255,65,0.03); border-radius: 2px; padding-left: 4px; padding-right: 4px; }
+  .section-collapse-btn:hover { color: var(--green) !important; }
+  .section-drag-handle:hover { color: var(--green) !important; }
+  .section-drag-handle { cursor: grab !important; }
+  .noc-section-block { margin-bottom: 4px; }
+  /* Section sortable ghost/drag */
+  .sortable-section-ghost { opacity: 0.3; outline: 2px dashed var(--green) !important; border-radius: 4px; background: var(--panel2) !important; }
+  .sortable-section-drag { opacity: 0.95; box-shadow: 0 12px 32px rgba(0,255,65,0.25) !important; }
   /* ── Card edit overlay (gear/remove buttons) ── */
   .noc-card-edit-overlay {
     position: absolute; top: 4px; right: 4px;

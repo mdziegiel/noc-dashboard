@@ -5,24 +5,41 @@ import AddCardPanel from './components/AddCardPanel.jsx'
 import SettingsPanel from './components/SettingsPanel.jsx'
 import IntegrationsPage from './components/IntegrationsPage.jsx'
 
-// Section definitions matching generate_dashboard.py exactly (same order, same names)
-// Special sections (proxmox_storage_panel, uptime_history_panel, certs_alerts_panel)
-// are rendered as panelbox/twocol — not card grids.
-const SECTION_ORDER = [
-  { label: 'System Status', types: ['wan_health','proxmox','home_assistant','uptime_kuma','docker','pbs','urbackup','smart_health'] },
-  { label: 'Security & Network', types: ['unifi','nginx_proxy','cloudflare','wazuh','crowdsec','limacharlie','adguard','adguard2','tailscale','malware_sources'] },
-  { label: 'Media & Downloads', types: ['plex','tautulli','sonarr','radarr','sabnzbd','overseerr','prowlarr'] },
-  { label: 'QNAP Storage Appliances', types: ['qnap'] },
-  { label: 'Proxmox Storage Utilization', types: ['proxmox_storage'], panelbox: true },
-  { label: 'Uptime History (last 24h)', types: ['uptime_kuma_detail'], panelbox: true, historyPanel: true },
-  { label: 'Certificates & Active Alerts', types: ['custom_url'], twocol: true, certsPanel: true },
+// Default sections — mirrors NOC 1 / generate_dashboard.py. Used as fallback
+// when layout.json has no sections array (old layouts get migrated by server, but
+// we keep this for the rare case where the client sees an unmigrated layout).
+const DEFAULT_SECTIONS_DEF = [
+  { id: 'system_status',    label: 'System Status',               collapsed: false },
+  { id: 'security_network', label: 'Security & Network',          collapsed: false },
+  { id: 'media_downloads',  label: 'Media & Downloads',           collapsed: false },
+  { id: 'qnap_storage',     label: 'QNAP Storage Appliances',     collapsed: false },
+  { id: 'proxmox_storage',  label: 'Proxmox Storage Utilization', collapsed: false, panelbox: true },
+  { id: 'uptime_history',   label: 'Uptime History (last 24h)',   collapsed: false, panelbox: true, historyPanel: true },
+  { id: 'certs_alerts',     label: 'Certificates & Active Alerts', collapsed: false, twocol: true, certsPanel: true },
 ]
 
-function cardSection(type) {
-  for (const s of SECTION_ORDER) {
-    if (s.types.includes(type)) return s.label
-  }
-  return 'System Status'
+// Legacy type→section mapping for layouts that still have no card.section field
+const TYPE_TO_SECTION = {
+  wan_health: 'system_status', wan_health_sec: 'security_network',
+  proxmox: 'system_status', home_assistant: 'system_status',
+  uptime_kuma: 'system_status', docker: 'system_status',
+  pbs: 'system_status', urbackup: 'system_status', smart_health: 'system_status',
+  unifi: 'security_network', nginx_proxy: 'security_network',
+  cloudflare: 'security_network', wazuh: 'security_network',
+  crowdsec: 'security_network', limacharlie: 'security_network',
+  adguard: 'security_network', adguard2: 'security_network',
+  tailscale: 'security_network', malware_sources: 'security_network',
+  plex: 'media_downloads', tautulli: 'media_downloads',
+  sonarr: 'media_downloads', radarr: 'media_downloads',
+  sabnzbd: 'media_downloads', overseerr: 'media_downloads', prowlarr: 'media_downloads',
+  qnap: 'qnap_storage',
+  proxmox_storage: 'proxmox_storage',
+  uptime_kuma_detail: 'uptime_history',
+  custom_url: 'certs_alerts',
+}
+
+function cardSectionId(card) {
+  return card.section || TYPE_TO_SECTION[card.type] || 'system_status'
 }
 
 function formatDate(d) {
@@ -128,7 +145,6 @@ function UptimeHistoryPanel({ data }) {
 
 // Certs & Alerts twocol panel — exact 9969 structure
 function CertsAlertsPanel({ nginxData, uptimeData, alertItems }) {
-  // Gather certs from nginx_proxy and uptime_kuma
   const allCerts = []
   if (nginxData?.cert_list) {
     for (const c of nginxData.cert_list) allCerts.push(c)
@@ -179,6 +195,109 @@ function CertsAlertsPanel({ nginxData, uptimeData, alertItems }) {
   )
 }
 
+// ── Section header component ─────────────────────────────────────────────────
+// In view mode: plain label with collapse toggle.
+// In edit mode: inline rename, drag handle, delete button.
+function SectionHeader({ section, editMode, onRename, onDelete, onToggleCollapse, dragHandleRef }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(section.label)
+  const inputRef = useRef(null)
+
+  useEffect(() => { setDraft(section.label) }, [section.label])
+  useEffect(() => { if (editing && inputRef.current) inputRef.current.focus() }, [editing])
+
+  function commitRename() {
+    setEditing(false)
+    const trimmed = draft.trim()
+    if (trimmed && trimmed !== section.label) onRename(section.id, trimmed)
+    else setDraft(section.label)
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') commitRename()
+    if (e.key === 'Escape') { setEditing(false); setDraft(section.label) }
+  }
+
+  return (
+    <div
+      className={`section-label section-label-row${editMode ? ' section-label-edit' : ''}`}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: editMode ? 'default' : 'pointer' }}
+    >
+      {/* Collapse toggle — always visible */}
+      <button
+        className="section-collapse-btn"
+        onClick={() => !editMode && onToggleCollapse(section.id)}
+        title={section.collapsed ? 'Expand section' : 'Collapse section'}
+        style={{
+          background: 'none', border: 'none', color: 'var(--green-dim)',
+          cursor: 'pointer', padding: '0 2px', fontSize: 11, lineHeight: 1,
+          opacity: editMode ? 0.4 : 1,
+          flexShrink: 0,
+        }}
+      >
+        {section.collapsed ? '▶' : '▼'}
+      </button>
+
+      {editMode && (
+        /* Drag handle — only in edit mode; SortableJS uses data-section-drag attr */
+        <span
+          ref={dragHandleRef}
+          className="section-drag-handle"
+          title="Drag to reorder section"
+          style={{
+            cursor: 'grab', color: 'var(--muted)', fontSize: 13,
+            flexShrink: 0, userSelect: 'none', lineHeight: 1,
+          }}
+        >⠿</span>
+      )}
+
+      {editMode && editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={handleKeyDown}
+          className="section-rename-input"
+          style={{
+            background: 'transparent', border: 'none',
+            borderBottom: '1px solid var(--green)', outline: 'none',
+            color: 'var(--green-dim)', fontSize: 11, letterSpacing: '3px',
+            textTransform: 'uppercase', fontFamily: 'inherit', fontWeight: 600,
+            padding: '0 2px', flex: 1, minWidth: 80,
+          }}
+          maxLength={60}
+        />
+      ) : (
+        <span
+          style={{ flex: 1, textTransform: 'uppercase', letterSpacing: '3px', fontSize: 11 }}
+          onClick={() => editMode && setEditing(true)}
+          title={editMode ? 'Click to rename' : undefined}
+        >
+          {section.label}
+          {editMode && (
+            <span style={{ marginLeft: 6, color: 'var(--muted)', fontSize: 10, fontStyle: 'italic', letterSpacing: '1px', textTransform: 'none' }}>
+              (click to rename)
+            </span>
+          )}
+        </span>
+      )}
+
+      {editMode && (
+        <button
+          onClick={() => onDelete(section.id)}
+          title="Delete section"
+          style={{
+            background: 'none', border: '1px solid var(--crit)', color: 'var(--crit)',
+            borderRadius: 3, cursor: 'pointer', fontSize: 10, padding: '1px 6px',
+            lineHeight: 1.4, flexShrink: 0,
+          }}
+        >✕ DELETE</button>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   const [layout, setLayout] = useState(null)
   const [config, setConfig] = useState({})
@@ -191,9 +310,12 @@ export default function App() {
   const [cardData, setCardData] = useState({})
   const [settingsCard, setSettingsCard] = useState(null)
   const [overallHealth, setOverallHealth] = useState('ok')
+  // addCardTargetSection: when clicking "+ ADD" on a specific section
+  const [addCardTargetSection, setAddCardTargetSection] = useState(null)
   const saveTimerRef = useRef(null)
   const layoutRef = useRef(null)
-  const sortablesRef = useRef([])
+  const sortablesRef = useRef([])          // card sortables
+  const sectionSortableRef = useRef(null)  // section sortable
 
   useEffect(() => {
     Promise.all([fetchLayout(), fetchConfig(), fetchFirstLaunch()])
@@ -201,21 +323,13 @@ export default function App() {
         setLayout(lay); setConfig(cfg)
         setLastUpdated(new Date())
         layoutRef.current = lay
-        applyThemeAttr('dark-noc') // always dark-noc on load; auto-switch permanently removed
+        applyThemeAttr('dark-noc')
         setLoading(false)
-        if (fl?.first_launch) {
-          setFirstLaunch(true)
-        }
+        if (fl?.first_launch) setFirstLaunch(true)
       })
       .catch(() => setLoading(false))
   }, [])
 
-  // Auto theme switch REMOVED — dark-noc is permanent. Timer block deleted.
-  // Manual cycling still works via cycleTheme() below.
-
-  // applyThemeAttr: dark-noc is always the default (no data-theme attr).
-  // Manual switching via cycle button is still supported, but on every page load
-  // we unconditionally apply dark-noc. The name param is used only for manual cycling.
   function applyThemeAttr(name) {
     const themeMap = { 'dark-noc': '', 'light-clean': 'light', 'midnight-blue': 'midnight', 'solarized-dark': 'solarized', 'dracula': 'dracula', 'nord': 'nord', 'gruvbox': 'gruvbox', 'tokyo': 'tokyo' }
     const attr = themeMap[name] ?? ''
@@ -233,7 +347,6 @@ export default function App() {
     debouncedSave(newLayout)
   }
 
-  // Compute overall health from card data
   useEffect(() => {
     let worst = 'ok'
     for (const v of Object.values(cardData)) {
@@ -272,33 +385,101 @@ export default function App() {
 
   const handleAddCard = useCallback((cardType, cardTypeInfo) => {
     const cards = layoutRef.current?.cards || []
+    const targetSection = addCardTargetSection
+      || (layoutRef.current?.sections?.[0]?.id)
+      || 'system_status'
     const newCard = {
       id: `${cardType}_${Date.now()}`, type: cardType,
       title: cardTypeInfo?.label || cardType.toUpperCase().replace(/_/g,' '),
+      section: targetSection,
       x: 0, y: 0, w: 1, h: 3, config: { refresh_seconds: 60 }
     }
     const newLayout = { ...layoutRef.current, cards: [...cards, newCard] }
     setLayout(newLayout); layoutRef.current = newLayout
     debouncedSave(newLayout)
-  }, [debouncedSave])
+  }, [debouncedSave, addCardTargetSection])
 
-  // SortableJS edit mode
+  // ── Section management handlers ────────────────────────────────────────────
+
+  const getSections = useCallback(() => {
+    return layoutRef.current?.sections || DEFAULT_SECTIONS_DEF
+  }, [])
+
+  const handleAddSection = useCallback(() => {
+    const sections = getSections()
+    const id = `section_${Date.now()}`
+    const newSection = { id, label: 'New Section', collapsed: false }
+    const newLayout = { ...layoutRef.current, sections: [...sections, newSection] }
+    setLayout(newLayout); layoutRef.current = newLayout
+    debouncedSave(newLayout)
+  }, [debouncedSave, getSections])
+
+  const handleRenameSection = useCallback((sectionId, newLabel) => {
+    const sections = getSections().map(s => s.id === sectionId ? { ...s, label: newLabel } : s)
+    const newLayout = { ...layoutRef.current, sections }
+    setLayout(newLayout); layoutRef.current = newLayout
+    debouncedSave(newLayout)
+  }, [debouncedSave, getSections])
+
+  const handleToggleCollapse = useCallback((sectionId) => {
+    const sections = getSections().map(s => s.id === sectionId ? { ...s, collapsed: !s.collapsed } : s)
+    const newLayout = { ...layoutRef.current, sections }
+    setLayout(newLayout); layoutRef.current = newLayout
+    debouncedSave(newLayout)
+  }, [debouncedSave, getSections])
+
+  const handleDeleteSection = useCallback((sectionId) => {
+    const sections = getSections().filter(s => s.id !== sectionId)
+    // Move orphaned cards to first remaining section or 'unsorted'
+    const fallback = sections[0]?.id || 'unsorted'
+    const cards = (layoutRef.current?.cards || []).map(c =>
+      c.section === sectionId ? { ...c, section: fallback } : c
+    )
+    // Add unsorted section if needed and it doesn't exist
+    let finalSections = sections
+    if (fallback === 'unsorted' && !sections.find(s => s.id === 'unsorted')) {
+      finalSections = [{ id: 'unsorted', label: 'Unsorted', collapsed: false }, ...sections]
+    }
+    const newLayout = { ...layoutRef.current, sections: finalSections, cards }
+    setLayout(newLayout); layoutRef.current = newLayout
+    debouncedSave(newLayout)
+  }, [debouncedSave, getSections])
+
+  // SortableJS — card reordering within sections + section reordering
   useEffect(() => {
     if (!editMode) {
       sortablesRef.current.forEach(s => { try { s.destroy() } catch(e){} })
       sortablesRef.current = []
+      if (sectionSortableRef.current) { try { sectionSortableRef.current.destroy() } catch(e){} sectionSortableRef.current = null }
       return
     }
     function initSortables() {
+      // Destroy old card sortables
       sortablesRef.current.forEach(s => { try { s.destroy() } catch(e){} })
       sortablesRef.current = []
+      // Card sortables — one per .noc-row; cross-section drag via group name
       document.querySelectorAll('.noc-row').forEach(row => {
         const s = window.Sortable?.create(row, {
-          animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
-          onEnd: () => { saveOrderFromDOM() }
+          group: 'noc-cards',
+          animation: 150,
+          ghostClass: 'sortable-ghost',
+          dragClass: 'sortable-drag',
+          onEnd: (evt) => { saveCardOrderFromDOM(evt) }
         })
         if (s) sortablesRef.current.push(s)
       })
+      // Section sortable — .noc-sections-container
+      if (sectionSortableRef.current) { try { sectionSortableRef.current.destroy() } catch(e){} sectionSortableRef.current = null }
+      const sectionsContainer = document.querySelector('.noc-sections-container')
+      if (sectionsContainer) {
+        sectionSortableRef.current = window.Sortable?.create(sectionsContainer, {
+          handle: '.section-drag-handle',
+          animation: 200,
+          ghostClass: 'sortable-section-ghost',
+          dragClass: 'sortable-section-drag',
+          onEnd: () => { saveSectionOrderFromDOM() }
+        })
+      }
     }
     if (typeof window.Sortable !== 'undefined') {
       initSortables()
@@ -311,22 +492,41 @@ export default function App() {
     return () => {
       sortablesRef.current.forEach(s => { try { s.destroy() } catch(e){} })
       sortablesRef.current = []
+      if (sectionSortableRef.current) { try { sectionSortableRef.current.destroy() } catch(e){} sectionSortableRef.current = null }
     }
-  }, [editMode])
+  }, [editMode, layout?.sections?.length])  // re-init if section count changes
 
-  function saveOrderFromDOM() {
+  function saveCardOrderFromDOM(evt) {
+    // Read card order + section assignment from DOM
     const cards = []
-    let y = 0
-    document.querySelectorAll('.noc-row .noc-card-slot').forEach(slot => {
-      const id = slot.dataset.cardId
-      const card = layoutRef.current?.cards?.find(c => c.id === id)
-      if (card) cards.push({ ...card, y: y++ })
+    document.querySelectorAll('.noc-section-block').forEach(block => {
+      const sectionId = block.dataset.sectionId
+      block.querySelectorAll('.noc-card-slot').forEach(slot => {
+        const id = slot.dataset.cardId
+        const card = layoutRef.current?.cards?.find(c => c.id === id)
+        if (card) cards.push({ ...card, section: sectionId })
+      })
     })
-    if (cards.length) {
-      const newLayout = { ...layoutRef.current, cards }
+    const extraCards = (layoutRef.current?.cards || []).filter(c => !cards.find(x => x.id === c.id))
+    if (cards.length || extraCards.length) {
+      const newLayout = { ...layoutRef.current, cards: [...cards, ...extraCards] }
       layoutRef.current = newLayout
       debouncedSave(newLayout)
     }
+  }
+
+  function saveSectionOrderFromDOM() {
+    const ids = []
+    document.querySelectorAll('.noc-section-block').forEach(block => {
+      ids.push(block.dataset.sectionId)
+    })
+    const oldSections = layoutRef.current?.sections || DEFAULT_SECTIONS_DEF
+    const reordered = ids.map(id => oldSections.find(s => s.id === id)).filter(Boolean)
+    // Append any not in DOM
+    oldSections.forEach(s => { if (!reordered.find(r => r.id === s.id)) reordered.push(s) })
+    const newLayout = { ...layoutRef.current, sections: reordered }
+    setLayout(newLayout); layoutRef.current = newLayout
+    debouncedSave(newLayout)
   }
 
   if (loading) {
@@ -334,18 +534,19 @@ export default function App() {
   }
 
   const cards = layout?.cards || []
+  const sections = layout?.sections?.length ? layout.sections : DEFAULT_SECTIONS_DEF
 
-  // Group cards into sections preserving order within each section
+  // Group cards by section id
   const sectionMap = {}
-  SECTION_ORDER.forEach(s => { sectionMap[s.label] = [] })
-  const extraCards = []
+  sections.forEach(s => { sectionMap[s.id] = [] })
+  const unsortedCards = []
   for (const card of cards) {
-    const sec = cardSection(card.type)
-    if (sectionMap[sec] !== undefined) sectionMap[sec].push(card)
-    else extraCards.push(card)
+    const sid = cardSectionId(card)
+    if (sectionMap[sid] !== undefined) sectionMap[sid].push(card)
+    else unsortedCards.push(card)
   }
 
-  // Ticker items from card data
+  // Ticker items
   const tickerItems = []
   for (const card of cards) {
     const d = cardData[card.type]
@@ -354,18 +555,123 @@ export default function App() {
     if (st === 'crit' || st === 'critical' || st === 'error') tickerItems.push({ text: d.note || d.error || `${card.title} CRITICAL`, level: 'crit' })
     else if (st === 'warn') tickerItems.push({ text: d.note || `${card.title} warning`, level: 'warn' })
   }
-  // Duplicate ticker items for seamless scroll (matches 9969)
   const tickerDisplay = [...tickerItems, ...tickerItems]
   const tickerWorst = tickerItems.some(i => i.level === 'crit') ? 'crit' : tickerItems.some(i => i.level === 'warn') ? 'warn' : 'ok'
   const themeLabel = (layout?.theme || 'dark-noc').toUpperCase().replace(/-/g,' ')
   const overallTxt = overallHealth === 'crit' ? 'CRITICAL' : overallHealth === 'warn' ? 'WARNING' : 'ALL SYSTEMS OK'
-
-  // Alert items for Certs & Alerts panel
   const alertItems = tickerItems
+
+  // Helper: render one section block
+  function renderSection(section, isExtra = false) {
+    const sectionCards = isExtra ? unsortedCards : (sectionMap[section.id] || [])
+
+    // In edit mode, always render even if empty (user may want to add cards)
+    if (!editMode && sectionCards.length === 0 && !section.panelbox && !section.historyPanel && !section.certsPanel) return null
+
+    const collapsed = section.collapsed
+
+    return (
+      <div
+        key={section.id}
+        className="noc-section-block"
+        data-section-id={section.id}
+        style={{ marginBottom: collapsed && !editMode ? 0 : undefined }}
+      >
+        <SectionHeader
+          section={section}
+          editMode={editMode}
+          onRename={handleRenameSection}
+          onDelete={handleDeleteSection}
+          onToggleCollapse={handleToggleCollapse}
+        />
+
+        {/* Edit mode: per-section Add Card button */}
+        {editMode && !collapsed && (
+          <div style={{ marginBottom: 6 }}>
+            <button
+              className="theme-btn"
+              onClick={() => { setAddCardTargetSection(section.id); setShowAdd(true) }}
+              style={{ fontSize: 10, padding: '2px 8px', background: 'transparent', color: 'var(--green-dim)', border: '1px dashed var(--green-dim)' }}
+            >
+              + Add Card to Section
+            </button>
+          </div>
+        )}
+
+        {!collapsed && (
+          <>
+            {/* Proxmox Storage — panelbox with donut gauges */}
+            {section.panelbox && !section.historyPanel && !section.certsPanel && (() => {
+              const pxCard = sectionCards[0]
+              const pxData = pxCard ? cardData[pxCard.type] : null
+              return (
+                <>
+                  <ProxmoxStoragePanel data={pxData} />
+                  {pxCard && (
+                    <div style={{display:'none'}}>
+                      <CardWrapper card={pxCard} onUpdate={handleUpdateCard} onRemove={handleRemoveCard} onData={handleCardData} editMode={false} />
+                    </div>
+                  )}
+                </>
+              )
+            })()}
+
+            {/* Uptime History — panelbox with hbar rows */}
+            {section.historyPanel && (() => {
+              const ukCard = sectionCards[0]
+              const ukData = ukCard ? cardData[ukCard.type] : cardData['uptime_kuma']
+              return (
+                <>
+                  <UptimeHistoryPanel data={ukData} />
+                  {ukCard && (
+                    <div style={{display:'none'}}>
+                      <CardWrapper card={ukCard} onUpdate={handleUpdateCard} onRemove={handleRemoveCard} onData={handleCardData} editMode={false} />
+                    </div>
+                  )}
+                </>
+              )
+            })()}
+
+            {/* Certs & Alerts — twocol panelboxes */}
+            {section.certsPanel && (
+              <CertsAlertsPanel
+                nginxData={cardData['nginx_proxy']}
+                uptimeData={cardData['uptime_kuma']}
+                alertItems={alertItems}
+              />
+            )}
+
+            {/* Normal card grid */}
+            {!section.panelbox && !section.historyPanel && !section.certsPanel && (
+              <div className={`row noc-row${editMode ? ' edit-active' : ''}`}>
+                {sectionCards.map(card => (
+                  <div key={card.id} className="noc-card-slot" data-card-id={card.id}>
+                    <CardWrapper
+                      card={card}
+                      onUpdate={handleUpdateCard}
+                      onRemove={handleRemoveCard}
+                      onOpenSettings={editMode ? setSettingsCard : null}
+                      onData={handleCardData}
+                      editMode={editMode}
+                    />
+                  </div>
+                ))}
+                {editMode && sectionCards.length === 0 && (
+                  <div style={{ color: 'var(--muted)', fontSize: 11, padding: '12px 4px', fontStyle: 'italic', letterSpacing: '1px' }}>
+                    Empty section — drag cards here or click + Add Card to Section
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div>
-      {/* Topbar — exact structure from generate_dashboard.py */}
+      {/* Topbar */}
       <div className="topbar">
         <div className="brand">
           <h1>{config?.title || 'MRDTech Homelab'}</h1>
@@ -386,15 +692,20 @@ export default function App() {
             {editMode ? '✓ DONE' : '✎ EDIT'}
           </button>
           {editMode && (
-            <button className="theme-btn" onClick={() => setShowAdd(true)} title="Add card" style={{ background:'var(--green)', color:'#000', border:'none', fontWeight:700 }}>
-              + ADD
-            </button>
+            <>
+              <button className="theme-btn" onClick={() => { setAddCardTargetSection(null); setShowAdd(true) }} title="Add card" style={{ background:'var(--green)', color:'#000', border:'none', fontWeight:700 }}>
+                + ADD CARD
+              </button>
+              <button className="theme-btn" onClick={handleAddSection} title="Add section" style={{ background:'transparent', color:'var(--green)', border:'1px solid var(--green)', fontWeight:600 }}>
+                + ADD SECTION
+              </button>
+            </>
           )}
           <button className="theme-btn" onClick={cycleTheme} title="Cycle theme">◐ {themeLabel}</button>
         </div>
       </div>
 
-      {/* Ticker — duplicated content for seamless loop, exact 9969 structure */}
+      {/* Ticker */}
       <div className="ticker-bar">
         <div className={`tk-badge tb-${tickerWorst}`}>{tickerWorst === 'crit' ? 'ALERT' : tickerWorst === 'warn' ? 'WARN' : 'OK'}</div>
         <div className="tk-track">
@@ -411,94 +722,15 @@ export default function App() {
         </div>
       </div>
 
-      {/* Main content — section-label + row structure matching 9969 exactly */}
+      {/* Main content */}
       <div className="wrap">
-        {SECTION_ORDER.map(section => {
-          const sectionCards = sectionMap[section.label] || []
-
-          // Proxmox Storage Utilization — panelbox with donut gauges
-          if (section.panelbox && !section.historyPanel && !section.certsPanel) {
-            const pxCard = sectionCards[0]
-            const pxData = pxCard ? cardData[pxCard.type] : null
-            return (
-              <React.Fragment key={section.label}>
-                <div className="section-label">{section.label}</div>
-                <ProxmoxStoragePanel data={pxData} />
-                {/* Still fetch data for the storage card */}
-                {pxCard && (
-                  <div style={{display:'none'}}>
-                    <CardWrapper card={pxCard} onUpdate={handleUpdateCard} onRemove={handleRemoveCard} onData={handleCardData} editMode={false} />
-                  </div>
-                )}
-              </React.Fragment>
-            )
-          }
-
-          // Uptime History — panelbox with hbar rows
-          if (section.historyPanel) {
-            const ukCard = sectionCards[0]
-            const ukData = ukCard ? cardData[ukCard.type] : cardData['uptime_kuma']
-            return (
-              <React.Fragment key={section.label}>
-                <div className="section-label">{section.label}</div>
-                <UptimeHistoryPanel data={ukData} />
-                {ukCard && (
-                  <div style={{display:'none'}}>
-                    <CardWrapper card={ukCard} onUpdate={handleUpdateCard} onRemove={handleRemoveCard} onData={handleCardData} editMode={false} />
-                  </div>
-                )}
-              </React.Fragment>
-            )
-          }
-
-          // Certificates & Active Alerts — twocol panelboxes
-          if (section.certsPanel) {
-            return (
-              <React.Fragment key={section.label}>
-                <div className="section-label">{section.label}</div>
-                <CertsAlertsPanel
-                  nginxData={cardData['nginx_proxy']}
-                  uptimeData={cardData['uptime_kuma']}
-                  alertItems={alertItems}
-                />
-              </React.Fragment>
-            )
-          }
-
-          // Normal card sections
-          if (sectionCards.length === 0) return null
-          return (
-            <React.Fragment key={section.label}>
-              <div className="section-label">{section.label}</div>
-              <div className={`row noc-row${editMode ? ' edit-active' : ''}`}>
-                {sectionCards.map(card => (
-                  <div key={card.id} className="noc-card-slot" data-card-id={card.id}>
-                    <CardWrapper
-                      card={card}
-                      onUpdate={handleUpdateCard}
-                      onRemove={handleRemoveCard}
-                      onOpenSettings={editMode ? setSettingsCard : null}
-                      onData={handleCardData}
-                      editMode={editMode}
-                    />
-                  </div>
-                ))}
-              </div>
-            </React.Fragment>
-          )
-        })}
-        {extraCards.length > 0 && (
-          <>
-            <div className="section-label">Other</div>
-            <div className="row noc-row">
-              {extraCards.map(card => (
-                <div key={card.id} className="noc-card-slot" data-card-id={card.id}>
-                  <CardWrapper card={card} onUpdate={handleUpdateCard} onRemove={handleRemoveCard} onOpenSettings={editMode ? setSettingsCard : null} onData={handleCardData} editMode={editMode} />
-                </div>
-              ))}
-            </div>
-          </>
-        )}
+        <div className="noc-sections-container">
+          {sections.map(section => renderSection(section))}
+          {unsortedCards.length > 0 && renderSection(
+            { id: '__unsorted__', label: 'Other', collapsed: false },
+            true
+          )}
+        </div>
       </div>
 
       <footer>MRDTECH INFRASTRUCTURE MONITORING · AUTO-REFRESH 60s · REGEN 15m</footer>
@@ -514,35 +746,36 @@ export default function App() {
 
       {editMode && (
         <div style={{ position:'fixed', bottom:16, left:'50%', transform:'translateX(-50%)', background:'rgba(0,0,0,0.9)', border:'1px solid var(--green)', borderRadius:4, padding:'6px 20px', fontSize:11, color:'var(--green)', letterSpacing:'0.1em', zIndex:1000, pointerEvents:'none', fontFamily:'inherit' }}>
-          EDIT MODE — Drag cards to reorder · ⚙ to configure · ✕ to remove
+          EDIT MODE — Drag cards to reorder · ⠿ Drag section header to reorder sections · Click section name to rename · ✕ to remove
         </div>
       )}
 
       {showAdd && (
-        <AddCardPanel onAdd={(type, info) => { handleAddCard(type, info); setShowAdd(false) }} onClose={() => setShowAdd(false)} />
+        <AddCardPanel
+          onAdd={(type, info) => { handleAddCard(type, info); setShowAdd(false) }}
+          onClose={() => setShowAdd(false)}
+        />
       )}
+
       {settingsCard && (
-        <SettingsPanel card={settingsCard} onSave={updates => { handleUpdateCard(settingsCard.id, updates); setSettingsCard(null) }} onRemove={id => { handleRemoveCard(id); setSettingsCard(null) }} onClose={() => setSettingsCard(null)} />
+        <SettingsPanel
+          card={settingsCard}
+          onSave={(updates) => { handleUpdateCard(settingsCard.id, updates); setSettingsCard(null) }}
+          onRemove={() => { handleRemoveCard(settingsCard.id); setSettingsCard(null) }}
+          onClose={() => setSettingsCard(null)}
+          sections={sections}
+        />
       )}
+
       {showIntegrations && (
-        <IntegrationsPage onClose={() => { setShowIntegrations(false); setFirstLaunch(false) }} />
+        <IntegrationsPage onClose={() => setShowIntegrations(false)} />
       )}
+
       {firstLaunch && !showIntegrations && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 400,
-          background: 'rgba(0,0,0,0.88)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          animation: 'fadeIn 0.2s ease',
-        }}>
-          <div style={{
-            background: 'var(--panel)', border: '1px solid var(--green)',
-            borderRadius: 6, padding: '36px 48px', maxWidth: 460, textAlign: 'center',
-            boxShadow: '0 0 40px rgba(0,255,65,0.15)',
-          }}>
-            <div style={{ fontSize: 28, marginBottom: 12 }}>⚡</div>
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }}>
+          <div style={{ background:'var(--panel)', border:'1px solid var(--line)', borderRadius:8, padding:'32px 40px', maxWidth:440, textAlign:'center' }}>
             <div style={{
-              fontSize: 16, fontWeight: 700, color: 'var(--green)',
-              letterSpacing: '0.06em', marginBottom: 10,
+              color: 'var(--green)', fontSize: 16, letterSpacing: '0.06em', marginBottom: 10,
             }}>
               Welcome to NOC Dashboard
             </div>

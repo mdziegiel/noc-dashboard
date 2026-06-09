@@ -255,9 +255,58 @@ def update_trends_for(card_type, data, now_epoch, trends):
 DEFAULT_LAYOUT = {
     "theme": "dark-noc",
     "autoTheme": False,  # permanently disabled — frontend ignores this, hardcoded dark-noc
-    "cards": []
+    "cards": [],
+    "sections": [],
 }
 
+# Default section definitions — mirrors NOC 1 / generate_dashboard.py structure.
+# id is stable (used as card.section foreign key). label is user-editable.
+DEFAULT_SECTIONS = [
+    {"id": "system_status",    "label": "System Status",                  "collapsed": False},
+    {"id": "security_network", "label": "Security & Network",             "collapsed": False},
+    {"id": "media_downloads",  "label": "Media & Downloads",              "collapsed": False},
+    {"id": "qnap_storage",     "label": "QNAP Storage Appliances",        "collapsed": False},
+    {"id": "proxmox_storage",  "label": "Proxmox Storage Utilization",    "collapsed": False, "panelbox": True},
+    {"id": "uptime_history",   "label": "Uptime History (last 24h)",      "collapsed": False, "panelbox": True, "historyPanel": True},
+    {"id": "certs_alerts",     "label": "Certificates & Active Alerts",   "collapsed": False, "twocol": True, "certsPanel": True},
+]
+
+# Type → section id mapping used during migration of old layouts (no card.section field)
+TYPE_TO_SECTION = {
+    "wan_health": "system_status", "wan_health_sec": "security_network",
+    "proxmox": "system_status", "home_assistant": "system_status",
+    "uptime_kuma": "system_status", "docker": "system_status",
+    "pbs": "system_status", "urbackup": "system_status",
+    "smart_health": "system_status",
+    "unifi": "security_network", "nginx_proxy": "security_network",
+    "cloudflare": "security_network", "wazuh": "security_network",
+    "crowdsec": "security_network", "limacharlie": "security_network",
+    "adguard": "security_network", "adguard2": "security_network",
+    "tailscale": "security_network", "malware_sources": "security_network",
+    "plex": "media_downloads", "tautulli": "media_downloads",
+    "sonarr": "media_downloads", "radarr": "media_downloads",
+    "sabnzbd": "media_downloads", "overseerr": "media_downloads",
+    "prowlarr": "media_downloads",
+    "qnap": "qnap_storage",
+    "proxmox_storage": "proxmox_storage",
+    "uptime_kuma_detail": "uptime_history",
+    "custom_url": "certs_alerts",
+}
+
+
+
+def _migrate_layout(data):
+    """Add sections[] + card.section fields to old layouts. Returns (data, changed)."""
+    import copy
+    changed = False
+    if not data.get("sections"):
+        data["sections"] = copy.deepcopy(DEFAULT_SECTIONS)
+        changed = True
+    for card in data.get("cards", []):
+        if not card.get("section"):
+            card["section"] = TYPE_TO_SECTION.get(card.get("type", ""), "system_status")
+            changed = True
+    return data, changed
 
 
 def load_layout():
@@ -268,19 +317,36 @@ def load_layout():
                 data = json.load(f)
             for k, v in DEFAULT_LAYOUT.items():
                 data.setdefault(k, v)
+            data, changed = _migrate_layout(data)
+            if changed:
+                save_layout(data)
             return data
         except Exception:
             pass
     return _bootstrap_layout_from_yaml()
 
 
+# Map yaml section names → section ids (for _bootstrap_layout_from_yaml)
+YAML_SECTION_TO_ID = {
+    "System Status": "system_status",
+    "Security & Network": "security_network",
+    "Media & Downloads": "media_downloads",
+    "QNAP Storage Appliances": "qnap_storage",
+    "Proxmox Storage Utilization": "proxmox_storage",
+    "Uptime History (last 24h)": "uptime_history",
+    "Certificates & Active Alerts": "certs_alerts",
+}
+
+
 def _bootstrap_layout_from_yaml():
     """Generate an initial layout.json from dashboard.yaml sections/cards."""
+    import copy
     cfg = load_dashboard_config()
     theme_cfg = cfg.get("theme", {})
     layout = {
         "theme": "dark-noc",   # always dark-noc; auto_switch from yaml is permanently ignored
         "autoTheme": False,
+        "sections": copy.deepcopy(DEFAULT_SECTIONS),
         "cards": []
     }
     import uuid
@@ -293,6 +359,7 @@ def _bootstrap_layout_from_yaml():
     x, y, col = 0, 0, 0
     COLS = 4
     for section in cfg.get("sections", []):
+        section_id = YAML_SECTION_TO_ID.get(section.get("name", ""), "system_status")
         for card in section.get("cards", []):
             size = card.get("size", "normal")
             w, h = SIZE_TO_WH.get(size, (1, 2))
@@ -303,6 +370,7 @@ def _bootstrap_layout_from_yaml():
                 "id": str(uuid.uuid4()),
                 "type": card.get("type", ""),
                 "title": card.get("title", card.get("type", "").upper()),
+                "section": section_id,
                 "x": x, "y": y, "w": w, "h": h,
                 "config": {
                     "graph": card.get("graph", False),

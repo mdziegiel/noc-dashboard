@@ -61,9 +61,10 @@ const labelStyle = {
   marginBottom: 4,
 }
 
-export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
+export default function SettingsPanel({ card, onSave, onRemove, onClose, sections }) {
   const [title, setTitle]             = useState(card.title || '')
   const [icon, setIcon]               = useState(card.config?.icon || '')
+  const [section, setSection]         = useState(card.section || '')
   const [graph, setGraph]             = useState(card.config?.graph ?? true)
   const [graphType, setGraphType]     = useState(card.config?.graph_type || 'sparkline')
   const [graphColor, setGraphColor]   = useState(card.config?.graph_color || '')
@@ -82,6 +83,7 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
     }
     onSave({
       title,
+      section: section || undefined,
       config: {
         ...card.config,
         icon: icon || undefined,
@@ -167,6 +169,22 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
             <label style={labelStyle}>Title</label>
             <input className="noc-input" value={title} onChange={e => setTitle(e.target.value)} />
           </div>
+
+          {/* Section assignment */}
+          {sections && sections.length > 0 && (
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Section</label>
+              <select
+                className="noc-select"
+                value={section}
+                onChange={e => setSection(e.target.value)}
+              >
+                {sections.map(s => (
+                  <option key={s.id} value={s.id}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Icon picker */}
           <div style={fieldStyle}>
