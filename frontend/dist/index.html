@@ -385,36 +385,8 @@
     <script>
 
 (function() {
-  var THEMES = ['dark','light','midnight','solarized','dracula','nord','gruvbox','tokyo'];
-  var LABELS = {dark:'DARK',light:'LIGHT',midnight:'MIDNIGHT',solarized:'SOLAR',dracula:'DRACULA',nord:'NORD',gruvbox:'GRUVBOX',tokyo:'TOKYO'};
-  var DAY_START   = 7;
-  var NIGHT_START = 19;
-  var DAY_THEME   = 'light';
-  var NIGHT_THEME = 'dark';
-
-  function applyTheme(t) {
-    document.documentElement.setAttribute('data-theme', t);
-    var btn = document.getElementById('theme-btn');
-    if (btn) btn.textContent = '◐ ' + (LABELS[t] || t.toUpperCase());
-  }
-
-  function autoTheme() {
-    if (localStorage.getItem('theme-pin')) return;
-    var h = new Date().getHours();
-    applyTheme(h >= DAY_START && h < NIGHT_START ? DAY_THEME : NIGHT_THEME);
-  }
-
-  window.toggleTheme = function() {
-    var cur = document.documentElement.getAttribute('data-theme') || NIGHT_THEME;
-    var idx = THEMES.indexOf(cur);
-    var next = THEMES[(idx + 1) % THEMES.length];
-    applyTheme(next);
-    localStorage.setItem('theme-pin', next);
-  };
-
-  var pin = localStorage.getItem('theme-pin');
-  if (pin && THEMES.indexOf(pin) !== -1) { applyTheme(pin); } else { autoTheme(); }
-  setInterval(autoTheme, 60000);
+  /* Auto-theme permanently disabled. dark-noc is the default.
+     Theme switching is manual only via the cycle button in the top bar (React). */
 
   window.focusCard = function(el) {
     var title = el.getAttribute('data-title');
