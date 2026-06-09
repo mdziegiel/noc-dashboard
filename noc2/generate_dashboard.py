@@ -4145,7 +4145,7 @@ PAGE = """<!DOCTYPE html>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
       <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
-      {{cc_btn}}
+      {cc_btn}
       <button id="settings-btn" class="theme-btn" onclick="toggleSettings()" title="Integrations &amp; Settings">&#9881;</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
     </div>
