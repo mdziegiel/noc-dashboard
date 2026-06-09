@@ -5,8 +5,8 @@ import 'react-resizable/css/styles.css'
 import CardWrapper from './CardWrapper.jsx'
 
 const COLS = 4
-const ROW_HEIGHT = 60
-const MARGIN = [12, 12]
+const ROW_HEIGHT = 52
+const MARGIN = [8, 8]
 
 export default function CardGrid({ layout, onLayoutChange, onUpdateCard, onRemoveCard, editMode, sseData }) {
   const cards = layout?.cards || []
@@ -66,7 +66,7 @@ export default function CardGrid({ layout, onLayoutChange, onUpdateCard, onRemov
   return (
     <div
       ref={containerRef}
-      style={{ padding: `${MARGIN[1]}px ${MARGIN[0]}px 80px` }}
+      style={{ padding: `${MARGIN[1]}px ${MARGIN[0]}px 40px` }}
     >
       <GridLayout
         className="layout"

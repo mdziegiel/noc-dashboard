@@ -4,6 +4,7 @@ import { applyTheme, resolveTheme } from './theme.js'
 import TopBar from './components/TopBar.jsx'
 import TickerBar from './components/TickerBar.jsx'
 import CardGrid from './components/CardGrid.jsx'
+import AlertHistoryPanel, { useAlertHistory } from './components/AlertHistoryPanel.jsx'
 
 export default function App() {
   const [layout, setLayout] = useState(null)
@@ -12,8 +13,11 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null)
   const [loading, setLoading] = useState(true)
   const [editMode, setEditMode] = useState(false)
+  const [alertPanelOpen, setAlertPanelOpen] = useState(false)
   const saveTimerRef = useRef(null)
   const layoutRef = useRef(null)
+
+  const { history: alertHistory, addAlerts, clear: clearAlerts } = useAlertHistory()
 
   // SSE connection for live card-data pushes
   const sseRef = useRef(null)
@@ -83,6 +87,55 @@ export default function App() {
       if (reconnectTimer) clearTimeout(reconnectTimer)
     }
   }, [])
+
+  // Dynamic favicon — updates color based on health status
+  useEffect(() => {
+    async function syncFavicon() {
+      try {
+        const r = await fetch('/api/status-overview')
+        if (!r.ok) return
+        const d = await r.json()
+        const { ok = 0, warn = 0, crit = 0, error = 0 } = d
+        let color = '#00ff41'
+        if (crit + error > 0) color = '#ff0000'
+        else if (warn > 0) color = '#ffaa00'
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="${color}"/></svg>`
+        let link = document.querySelector('link[rel="icon"]')
+        if (!link) {
+          link = document.createElement('link')
+          link.rel = 'icon'
+          link.type = 'image/svg+xml'
+          document.head.appendChild(link)
+        }
+        link.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
+      } catch {}
+    }
+    syncFavicon()
+    const t = setInterval(syncFavicon, 30000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Poll status-overview for alert history entries
+  useEffect(() => {
+    async function pollAlerts() {
+      try {
+        const r = await fetch('/api/status-overview')
+        if (!r.ok) return
+        const d = await r.json()
+        const { warn = 0, crit = 0, error = 0 } = d
+        const total_bad = warn + crit + error
+        if (total_bad > 0) {
+          const parts = []
+          if (crit + error > 0) parts.push(`${crit + error} critical`)
+          if (warn > 0) parts.push(`${warn} warning`)
+          addAlerts([`Dashboard health: ${parts.join(', ')}`])
+        }
+      } catch {}
+    }
+    pollAlerts()
+    const t = setInterval(pollAlerts, 30000)
+    return () => clearInterval(t)
+  }, [addAlerts])
 
   const debouncedSave = useCallback((newLayout) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -181,6 +234,8 @@ export default function App() {
         lastUpdated={lastUpdated}
         editMode={editMode}
         onEditModeToggle={() => setEditMode(m => !m)}
+        alertCount={alertHistory.length}
+        onBellClick={() => setAlertPanelOpen(o => !o)}
       />
       <TickerBar />
       <CardGrid
@@ -212,6 +267,14 @@ export default function App() {
           EDIT MODE — Drag cards · Resize · Click ⚙ to configure · Click ✕ to remove
         </div>
       )}
+
+      {/* Alert history slide-out panel */}
+      <AlertHistoryPanel
+        open={alertPanelOpen}
+        onClose={() => setAlertPanelOpen(false)}
+        history={alertHistory}
+        onClear={clearAlerts}
+      />
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { fetchCardData } from '../api.js'
 import SettingsPanel from './SettingsPanel.jsx'
+import FocusModal from './FocusModal.jsx'
 
 // ── Icon map — lucide SVG paths, rendered inline ───────────────────────────────
 // Instead of importing lucide-react bundle, use curated SVG paths to keep bundle lean.
@@ -153,6 +154,7 @@ export default function CardWrapper({ card, onUpdate, onRemove, editMode, sseDat
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [focused, setFocused] = useState(false)
   const timerRef = useRef(null)
   const CardComp = useCardComponent(card.type)
 
@@ -215,9 +217,9 @@ export default function CardWrapper({ card, onUpdate, onRemove, editMode, sseDat
           display: 'flex',
           alignItems: 'center',
           gap: 6,
-          padding: '5px 10px',
+          padding: '4px 8px',
           borderBottom: '1px solid var(--card-border, #1e1e1e)',
-          minHeight: 28,
+          minHeight: 24,
           flexShrink: 0,
           cursor: editMode ? 'grab' : 'default',
           background: editMode ? 'rgba(0,255,65,0.03)' : 'transparent',
@@ -250,6 +252,23 @@ export default function CardWrapper({ card, onUpdate, onRemove, editMode, sseDat
         }}>
           {card.title || card.type}
         </span>
+
+        {/* Expand button — only outside edit mode */}
+        {!editMode && (
+          <button
+            onClick={() => setFocused(true)}
+            title="Expand card"
+            style={{
+              background: 'none', border: 'none',
+              color: 'var(--text-muted, #555)', cursor: 'pointer',
+              fontSize: 11, lineHeight: 1, padding: '0 2px',
+              flexShrink: 0, display: 'flex', alignItems: 'center',
+              opacity: 0.6, transition: 'color 0.15s, opacity 0.15s',
+            }}
+          >
+            &#x26F6;
+          </button>
+        )}
 
         {/* Gear (always visible) */}
         <button
@@ -301,7 +320,7 @@ export default function CardWrapper({ card, onUpdate, onRemove, editMode, sseDat
       {/* Card body */}
       <div style={{
         flex: 1,
-        padding: '8px 10px',
+        padding: '6px 8px',
         overflowY: 'auto',
         overflowX: 'hidden',
       }}>
@@ -332,6 +351,16 @@ export default function CardWrapper({ card, onUpdate, onRemove, editMode, sseDat
           onSave={handleSave}
           onRemove={onRemove}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {/* Focus modal */}
+      {focused && (
+        <FocusModal
+          card={card}
+          data={data}
+          CardComp={CardComp}
+          onClose={() => setFocused(false)}
         />
       )}
     </div>

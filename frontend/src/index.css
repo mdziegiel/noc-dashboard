@@ -25,7 +25,7 @@
   --error-color: #ff3333;
   --critical-color: #ff0000;
   --font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
-  --font-size-base: 13px;
+  --font-size-base: 12px;
   --card-border-radius: 4px;
   --card-shadow: 0 0 8px rgba(0,255,65,0.08);
   --section-header-color: #00ff41;
@@ -140,10 +140,10 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding: 2px 0;
+  padding: 1px 0;
   border-bottom: 1px solid var(--card-border);
   font-size: 11px;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .metric-row:last-child {
@@ -254,7 +254,7 @@ button { font-family: var(--font-family); }
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--section-header-color);
-  padding: 8px 0 4px;
+  padding: 6px 0 3px;
   border-bottom: 1px solid var(--card-border);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }

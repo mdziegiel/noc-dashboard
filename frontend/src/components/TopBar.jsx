@@ -51,7 +51,7 @@ function StatusOverview({ overview }) {
   )
 }
 
-export default function TopBar({ config, themes, currentTheme, onThemeChange, onAddCard, lastUpdated, editMode, onEditModeToggle }) {
+export default function TopBar({ config, themes, currentTheme, onThemeChange, onAddCard, lastUpdated, editMode, onEditModeToggle, alertCount, onBellClick }) {
   const [showAdd, setShowAdd] = useState(false)
   const [overview, setOverview] = useState(null)
   const themeNames = Object.keys(themes || {})
@@ -122,6 +122,28 @@ export default function TopBar({ config, themes, currentTheme, onThemeChange, on
 
         {/* Right: updated time, edit mode, theme, add */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Bell / alert history */}
+          <button
+            className="btn-ghost"
+            onClick={onBellClick}
+            title="Alert history"
+            style={{ fontSize: 14, padding: '3px 8px', position: 'relative' }}
+          >
+            &#128276;
+            {alertCount > 0 && (
+              <span style={{
+                position: 'absolute', top: -4, right: -4,
+                background: 'var(--critical-color, #ff0000)',
+                color: '#fff', borderRadius: '50%', fontSize: 9,
+                width: 14, height: 14, display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
+                fontWeight: 700,
+              }}>
+                {alertCount > 9 ? '9+' : alertCount}
+              </span>
+            )}
+          </button>
+
           {lastUpdated && (
             <span style={{ fontSize: 10, color: 'var(--text-muted, #555)', letterSpacing: '0.04em' }}>
               {formatTime(lastUpdated)}
