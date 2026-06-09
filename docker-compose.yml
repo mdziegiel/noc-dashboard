@@ -11,12 +11,6 @@ services:
     volumes:
       # Persistent layout + trend state
       - ./state:/app/state
-      # Override dashboard config at runtime without rebuild
-      - ./dashboard.yaml:/app/dashboard.yaml:ro
-      # Override themes at runtime without rebuild
-      - ./themes:/app/themes:ro
-    env_file:
-      - .env
     environment:
       - PORT=8081
       - WORKERS=2
