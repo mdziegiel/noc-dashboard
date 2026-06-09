@@ -1128,6 +1128,20 @@ def collect_radarr():
             "queue": queue, "missing": missing}
 
 
+def collect_lidarr():
+    base, key = _arr_base("LIDARR")
+    if not base or not key:
+        return {"state": "degraded", "note": "LIDARR not configured"}
+    h = {"X-Api-Key": key}
+    artists = jget(f"{base}/api/v1/artist", h)
+    monitored = sum(1 for a in artists if a.get("monitored"))
+    queue = jget(f"{base}/api/v1/queue?page=1&pageSize=1", h).get("totalRecords", 0)
+    missing = jget(f"{base}/api/v1/wanted/missing?page=1&pageSize=1", h).get("totalRecords", 0)
+    state = "warn" if (queue > 0 or missing > 0) else "ok"
+    return {"state": state, "total": len(artists), "monitored": monitored,
+            "queue": queue, "missing": missing}
+
+
 def collect_prowlarr():
     base, key = _arr_base("PROWLARR")
     if not base or not key:
@@ -1732,6 +1746,7 @@ SOURCES = [
     ("tautulli", collect_tautulli),
     ("sonarr", collect_sonarr),
     ("radarr", collect_radarr),
+    ("lidarr", collect_lidarr),
     ("sabnzbd", collect_sabnzbd),
     ("overseerr", collect_overseerr),
     ("prowlarr", collect_prowlarr),
@@ -1985,6 +2000,7 @@ def render(data, gen_epoch, errors, trends=None):
     SB = data.get("sabnzbd", {})
     OV = data.get("overseerr", {})
     PR = data.get("prowlarr", {})
+    LI = data.get("lidarr", {})
     LC = data.get("limacharlie", {})
     SM = data.get("smart", {})
     WAN = data.get("wan", {})
@@ -2448,13 +2464,23 @@ def render(data, gen_epoch, errors, trends=None):
     pr_sub = (PR.get("note") or PR.get("error")
               or f'{PR.get("enabled",0)}/{PR.get("total",0)} enabled')
 
+    # Lidarr
+    lid_body = (metric("Monitored", f'{LI.get("monitored",0):,}')
+                + metric("Queue", LI.get("queue", 0),
+                        "warn" if LI.get("queue", 0) else "")
+                + metric("Missing", LI.get("missing", 0),
+                        "warn" if LI.get("missing", 0) else ""))
+    lid_sub = (LI.get("note") or LI.get("error")
+               or f'{LI.get("total",0):,} artists total')
+
     media_row = (card("PLEX", PX.get("state", "error"), plex_body, plex_sub)
                  + card("TAUTULLI", TA.get("state", "error"), tau_body, tau_sub)
                  + card("SONARR", SO.get("state", "error"), son_body, son_sub)
                  + card("RADARR", RA.get("state", "error"), rad_body, rad_sub)
                  + card("SABNZBD", SB.get("state", "error"), sab_body, sab_sub)
                  + card("OVERSEERR", OV.get("state", "error"), ov_body, ov_sub)
-                 + card("PROWLARR", PR.get("state", "error"), pr_body, pr_sub))
+                 + card("PROWLARR", PR.get("state", "error"), pr_body, pr_sub)
+                 + card("LIDARR", LI.get("state", "error"), lid_body, lid_sub))
 
     # ---- Row 3: storage gauges ----
     gauges = "".join(donut(s["name"], s["pct"]) for s in P.get("storage", []))
@@ -2728,7 +2754,7 @@ def render(data, gen_epoch, errors, trends=None):
         "npm": "Nginx Proxy Mgr", "tailscale": "Tailscale", "wgdashboard": "WGDashboard",
         "limacharlie": "LimaCharlie (LC)", "plex": "Plex", "tautulli": "Tautulli",
         "sonarr": "Sonarr", "radarr": "Radarr", "sabnzbd": "SABnzbd",
-        "overseerr": "Overseerr", "prowlarr": "Prowlarr",
+        "overseerr": "Overseerr", "prowlarr": "Prowlarr", "lidarr": "Lidarr",
     }
     COMING_SOON = {
         # Homelab
@@ -3844,7 +3870,7 @@ PAGE = """<!DOCTYPE html>
       keys:['zerotier','twingate','netbird','headscale','pangolin'] }},
     {{ id:'storage',    label:'Storage', keys:['qnap','truenas','unraid','synology'] }},
     {{ id:'media',      label:'Media',
-      keys:['plex','tautulli','sonarr','radarr','sabnzbd','overseerr','prowlarr','jellyfin','emby'] }},
+      keys:['plex','tautulli','sonarr','radarr','lidarr','sabnzbd','overseerr','prowlarr','jellyfin','emby'] }},
     {{ id:'monitoring', label:'Monitoring', keys:['homeassistant','netdata','glances','speedtest_tracker','node_exporter'] }},
     {{ id:'homelab',    label:'Homelab Apps',
       keys:['nextcloud','gitea','traefik','caddy','authentik','authelia','pihole'] }},
