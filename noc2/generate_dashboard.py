@@ -3129,8 +3129,40 @@ PAGE = """<!DOCTYPE html>
   /* ── Settings / integrations overlay ── */
   .settings-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.88);
     backdrop-filter:blur(4px); z-index:9500; overflow-y:auto; }}
-  .settings-overlay.open {{ display:block; }}
-  .settings-box {{ max-width:960px; margin:32px auto; background:var(--panel);
+  .settings-overlay.open {{ display:flex; align-items:stretch; }}
+  .settings-shell {{ display:flex; width:100%; height:100%; background:var(--panel);
+    box-shadow:0 0 60px rgba(0,0,0,.8); overflow:hidden; }}
+  .settings-sidebar {{ width:210px; flex-shrink:0; background:var(--panel2);
+    border-right:1px solid var(--line); overflow-y:auto; display:flex;
+    flex-direction:column; }}
+  .settings-sidebar-hdr {{ padding:16px 14px 10px; border-bottom:1px solid var(--line); }}
+  .settings-sidebar-title {{ font-size:11px; font-weight:700; letter-spacing:3px;
+    color:var(--green); text-transform:uppercase; }}
+  .settings-sidebar-sub {{ font-size:9px; color:var(--muted); margin-top:2px; }}
+  .sidebar-cat {{ padding:10px 14px 3px; font-size:9px; letter-spacing:2px;
+    color:var(--green-dim); text-transform:uppercase; font-weight:700; }}
+  .sidebar-item {{ display:flex; align-items:center; justify-content:space-between;
+    padding:6px 14px; cursor:pointer; font-size:11px; color:var(--txt);
+    border-left:2px solid transparent; transition:background .1s; }}
+  .sidebar-item:hover {{ background:rgba(0,255,65,.06); color:var(--green); }}
+  .sidebar-item.active {{ background:rgba(0,255,65,.09); color:var(--green);
+    border-left-color:var(--green); font-weight:700; }}
+  .sidebar-dot {{ width:6px; height:6px; border-radius:50%; flex-shrink:0; background:var(--degr); }}
+  .sidebar-dot.ok {{ background:var(--green); box-shadow:0 0 4px var(--green); }}
+  .sidebar-dot.warn {{ background:var(--warn); }}
+  .sidebar-dot.error, .sidebar-dot.crit {{ background:var(--crit); }}
+  .settings-content {{ flex:1; overflow-y:auto; padding:26px 30px; position:relative; }}
+  .settings-close {{ position:absolute; top:12px; right:16px; background:none;
+    border:none; color:var(--muted); font-size:22px; cursor:pointer; z-index:1; }}
+  .settings-close:hover {{ color:var(--green); }}
+  .settings-welcome {{ color:var(--muted); font-size:12px; padding-top:60px;
+    text-align:center; letter-spacing:1px; }}
+  .settings-welcome-icon {{ font-size:32px; display:block; margin-bottom:12px; opacity:.3; }}
+  .integ-form-title {{ font-size:13px; font-weight:700; letter-spacing:2px;
+    color:var(--green); margin-bottom:6px; text-transform:uppercase; }}
+  .integ-form-status {{ display:inline-flex; align-items:center; gap:6px; font-size:10px;
+    letter-spacing:1px; text-transform:uppercase; margin-bottom:18px; padding:4px 10px;
+    border-radius:3px; background:var(--panel2); border:1px solid var(--line); }}
     border:1px solid var(--line); border-radius:8px; padding:24px 28px;
     box-shadow:0 8px 40px rgba(0,0,0,.7); }}
   .settings-title {{ font-size:13px; font-weight:700; letter-spacing:3px;
@@ -3242,18 +3274,21 @@ PAGE = """<!DOCTYPE html>
   </div>
   <!-- Settings / Integrations overlay -->
   <div id="settings-overlay" class="settings-overlay" onclick="settingsOverlayClick(event)">
-    <div class="settings-box">
-      <button class="settings-close" onclick="toggleSettings()">&times;</button>
-      <div class="settings-title">&#9881; Integrations &amp; Settings</div>
-      <div class="settings-sub">Click an integration to configure credentials &mdash; Test Connection verifies before saving &mdash; changes trigger an immediate dashboard regen.</div>
-      <div id="integ-grid" class="integ-grid"></div>
-      <div id="integ-form" class="integ-form">
-        <div id="integ-form-title" class="integ-form-title"></div>
-        <div id="form-grid" class="form-grid"></div>
-        <div class="form-actions">
-          <button class="btn-test" id="btn-test" onclick="testConnection()">&#9654; Test Connection</button>
-          <button class="btn-save" id="btn-save" onclick="saveConfig()">&#10003; Save &amp; Apply</button>
-          <span id="test-result" class="test-result" style="display:none"></span>
+    <div class="settings-shell">
+      <div class="settings-sidebar">
+        <div class="settings-sidebar-hdr">
+          <div class="settings-sidebar-title">&#9881; Settings</div>
+          <div class="settings-sidebar-sub">Integrations &amp; credentials</div>
+        </div>
+        <div id="settings-sidebar-list"></div>
+      </div>
+      <div class="settings-content">
+        <button class="settings-close" onclick="toggleSettings()">&times;</button>
+        <div id="settings-right">
+          <div class="settings-welcome">
+            <span class="settings-welcome-icon">&#9881;</span>
+            Select an integration from the sidebar to configure credentials.
+          </div>
         </div>
       </div>
     </div>
@@ -3479,77 +3514,105 @@ PAGE = """<!DOCTYPE html>
 
   /* ── Settings / Integrations page ── */
   var INTEGRATIONS = {integrations_json};
-  var _fieldDefs = null;    // loaded once from /api/integration-fields
-  var _currentCfg = null;   // loaded once from /api/current-config
+  var _fieldDefs = null;
+  var _currentCfg = null;
   var _selectedType = null;
+
+  var CATEGORIES = [
+    {{ id:'infra',      label:'Infrastructure',
+      keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
+    {{ id:'security',   label:'Security',
+      keys:['wazuh','crowdsec','limacharlie','cloudflare','malware_sources'] }},
+    {{ id:'network',    label:'Network',
+      keys:['unifi','wan','npm','adguard','adguard2','tailscale','wgdashboard'] }},
+    {{ id:'storage',    label:'Storage', keys:['qnap'] }},
+    {{ id:'media',      label:'Media',
+      keys:['plex','tautulli','sonarr','radarr','sabnzbd','overseerr','prowlarr'] }},
+    {{ id:'monitoring', label:'Monitoring', keys:['homeassistant'] }},
+  ];
+
+  function _integByKey(k) {{ return INTEGRATIONS.find(function(i){{return i.key===k;}}); }}
+  function _stateColor(s) {{
+    return s==='ok'?'ok':s==='warn'?'warn':(s==='error'||s==='crit')?'error':'degraded';
+  }}
 
   function _loadFieldDefs(cb) {{
     if (_fieldDefs) {{ cb(_fieldDefs); return; }}
-    fetch('/api/integration-fields')
-      .then(function(r) {{ return r.json(); }})
-      .then(function(d) {{ _fieldDefs = d; cb(d); }})
-      .catch(function() {{ cb({{}}); }});
+    fetch('/api/integration-fields').then(function(r){{return r.json();}})
+      .then(function(d){{_fieldDefs=d;cb(d);}}).catch(function(){{cb({{}});}});
   }}
-
   function _loadCurrentCfg(cb) {{
-    fetch('/api/current-config')
-      .then(function(r) {{ return r.json(); }})
-      .then(function(d) {{ _currentCfg = d; cb(d); }})
-      .catch(function() {{ cb({{}}); }});
+    fetch('/api/current-config').then(function(r){{return r.json();}})
+      .then(function(d){{_currentCfg=d;cb(d);}}).catch(function(){{cb({{}});}});
   }}
 
-  function renderIntegGrid() {{
-    var grid = document.getElementById('integ-grid');
-    if (!grid) return;
-    grid.innerHTML = INTEGRATIONS.map(function(integ) {{
-      var badge = integ.state === 'ok' ? '✓ OK'
-        : integ.state === 'warn' ? '⚠ WARN'
-        : integ.state === 'degraded' ? '— NOT CONFIGURED'
-        : '✕ ERROR';
-      return '<div class="integ-card s-' + integ.state + '" data-type="' + integ.key + '" data-label="' + integ.label.replace(/"/g,'&quot;') + '">'
-        + '<div class="integ-name">' + integ.label + '</div>'
-        + '<div class="integ-badge ' + integ.state + '">' + badge + '</div>'
-        + '</div>';
-    }}).join('');
-    // Attach click via event delegation on the grid
-    grid.onclick = function(e) {{
-      var card = e.target.closest('.integ-card');
-      if (card) selectInteg(card.dataset.type, card.dataset.label || card.dataset.type);
+  function buildSidebar() {{
+    var list = document.getElementById('settings-sidebar-list');
+    if (!list) return;
+    var html = '';
+    CATEGORIES.forEach(function(cat) {{
+      var items = cat.keys.filter(function(k){{return !!_integByKey(k);}});
+      if (!items.length) return;
+      html += '<div class="sidebar-cat">'+cat.label+'</div>';
+      items.forEach(function(key) {{
+        var integ = _integByKey(key);
+        if (!integ) return;
+        var sc = _stateColor(integ.state);
+        html += '<div class="sidebar-item" data-key="'+key+'">'
+          +'<span>'+integ.label+'</span>'
+          +'<span class="sidebar-dot '+sc+'"></span>'
+          +'</div>';
+      }});
+    }});
+    list.innerHTML = html;
+    list.onclick = function(e) {{
+      var item = e.target.closest('.sidebar-item');
+      if (item) selectInteg(item.dataset.key);
     }};
   }}
 
-  function selectInteg(itype, label) {{
-    _selectedType = itype;
-    // Highlight selected card
-    document.querySelectorAll('.integ-card').forEach(function(c) {{
-      c.classList.toggle('selected', c.dataset.type === itype);
+  function selectInteg(key) {{
+    _selectedType = key;
+    var integ = _integByKey(key);
+    if (!integ) return;
+    document.querySelectorAll('.sidebar-item').forEach(function(el){{
+      el.classList.toggle('active', el.dataset.key===key);
     }});
-    var form = document.getElementById('integ-form');
-    var formTitle = document.getElementById('integ-form-title');
-    var formGrid = document.getElementById('form-grid');
-    if (!form || !formGrid) return;
-    formTitle.textContent = '⚙ Configure: ' + label;
-    formGrid.innerHTML = '<div style="color:var(--muted);font-size:11px">Loading fields…</div>';
-    form.classList.add('open');
-    // Hide test result
-    var tr = document.getElementById('test-result');
-    if (tr) {{ tr.style.display='none'; tr.className='test-result'; tr.textContent=''; }}
-    // Load field defs and current config
+    var right = document.getElementById('settings-right');
+    var sc = _stateColor(integ.state);
+    var statusLabel = integ.state==='ok'?'&#10003; Connected'
+      :integ.state==='warn'?'&#9888; Warning'
+      :integ.state==='degraded'?'&#8212; Not Configured':'&#10005; Error';
+    var statusColor = integ.state==='ok'?'var(--green)':integ.state==='warn'?'var(--warn)'
+      :integ.state==='degraded'?'var(--degr)':'var(--crit)';
+    right.innerHTML = '<div class="integ-form-title">'+integ.label+'</div>'
+      +'<div class="integ-form-status" style="color:'+statusColor+';border-color:'+statusColor+'">'
+      +'<span class="sidebar-dot '+sc+'"></span>&nbsp;'+statusLabel
+      +(integ.note?' &mdash; <span style="font-weight:normal;text-transform:none;color:var(--muted)">'+integ.note+'</span>':'')
+      +'</div>'
+      +'<div id="form-grid" class="form-grid"><div style="color:var(--muted);font-size:11px">Loading&hellip;</div></div>'
+      +'<div class="form-actions">'
+      +'<button class="btn-test" id="btn-test" onclick="testConnection()">&#9654; Test Connection</button>'
+      +'<button class="btn-save" id="btn-save" onclick="saveConfig()">&#10003; Save &amp; Apply</button>'
+      +'<span id="test-result" class="test-result" style="display:none"></span>'
+      +'</div>';
     _loadFieldDefs(function(defs) {{
       _loadCurrentCfg(function(cfg) {{
-        var fields = defs[itype] || [];
+        var fields = defs[key]||[];
+        var fg = document.getElementById('form-grid');
+        if (!fg) return;
         if (!fields.length) {{
-          formGrid.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:8px">No configurable fields for this integration.</div>';
+          fg.innerHTML='<div style="color:var(--muted);font-size:11px;padding:8px">No configurable fields.</div>';
           return;
         }}
-        formGrid.innerHTML = fields.map(function(f) {{
-          var val = (cfg[f.key] && cfg[f.key] !== '••••••••') ? '' : '';
-          var ph = f.type === 'password' ? '(unchanged — enter new value to change)' : (f.label || f.key);
+        fg.innerHTML = fields.map(function(f) {{
+          var isSet = cfg[f.key] && cfg[f.key]!=='&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;';
+          var ph = f.type==='password'?(isSet?'(set — enter new to change)':'enter password'):(f.label||f.key);
           return '<div class="form-field">'
-            + '<label for="field-' + f.key + '">' + (f.label || f.key) + '</label>'
-            + '<input id="field-' + f.key + '" name="' + f.key + '" type="' + f.type + '" '
-            + 'placeholder="' + ph + '" autocomplete="off" data-key="' + f.key + '">'
-            + '</div>';
+            +'<label for="field-'+f.key+'">'+(f.label||f.key)+'</label>'
+            +'<input id="field-'+f.key+'" type="'+f.type+'" placeholder="'+ph+'" '
+            +'autocomplete="off" data-key="'+f.key+'">'
+            +'</div>';
         }}).join('');
       }});
     }});
@@ -3557,102 +3620,70 @@ PAGE = """<!DOCTYPE html>
 
   function _getFormValues() {{
     var vals = {{}};
-    document.querySelectorAll('#form-grid input[data-key]').forEach(function(inp) {{
-      if (inp.value.trim()) vals[inp.dataset.key] = inp.value.trim();
+    document.querySelectorAll('#form-grid input[data-key]').forEach(function(inp){{
+      if (inp.value.trim()) vals[inp.dataset.key]=inp.value.trim();
     }});
     return vals;
   }}
 
   window.testConnection = function() {{
     if (!_selectedType) return;
-    var btn = document.getElementById('btn-test');
-    var tr = document.getElementById('test-result');
-    btn.disabled = true;
-    tr.style.display = 'inline-block';
-    tr.className = 'test-result testing';
-    tr.textContent = '⟳ Testing…';
-    fetch('/test-connection', {{
-      method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify({{type: _selectedType, creds: _getFormValues()}})
-    }})
-    .then(function(r) {{ return r.json(); }})
-    .then(function(d) {{
-      btn.disabled = false;
-      tr.className = 'test-result ' + (d.ok ? 'ok' : 'error');
+    var btn=document.getElementById('btn-test'), tr=document.getElementById('test-result');
+    if (!btn||!tr) return;
+    btn.disabled=true; tr.style.display='inline-block';
+    tr.className='test-result testing'; tr.textContent='⧙ Testing…';
+    fetch('/test-connection',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify({{type:_selectedType,creds:_getFormValues()}})}})
+    .then(function(r){{return r.json();}})
+    .then(function(d){{
+      btn.disabled=false;
+      tr.className='test-result '+(d.ok?'ok':'error');
       if (d.ok) {{
-        var detail = Object.entries(d.detail || {{}}).map(function(e) {{ return e[0]+': '+e[1]; }}).join(' · ');
-        tr.textContent = '✓ Connected' + (detail ? ' — ' + detail : '');
-      }} else {{
-        tr.textContent = '✕ ' + (d.note || d.error || 'Connection failed');
-      }}
+        var detail=Object.entries(d.detail||{{}}).slice(0,4)
+          .map(function(e){{return e[0].replace(/_/g,' ')+': '+e[1];}}).join(' · ');
+        tr.textContent='✓ Connected'+(detail?' — '+detail:'');
+      }} else {{ tr.textContent='✕ '+(d.note||d.error||'Connection failed'); }}
     }})
-    .catch(function(e) {{
-      btn.disabled = false;
-      tr.className = 'test-result error';
-      tr.textContent = '✕ Request failed: ' + e.message;
-    }});
+    .catch(function(e){{btn.disabled=false;tr.className='test-result error';tr.textContent='✕ '+e.message;}});
   }};
 
   window.saveConfig = function() {{
     if (!_selectedType) return;
-    var vals = _getFormValues();
-    if (!Object.keys(vals).length) {{
-      alert('No values entered — nothing to save.');
-      return;
-    }}
-    var btn = document.getElementById('btn-save');
-    btn.disabled = true;
-    btn.textContent = '⟳ Saving…';
-    fetch('/save-config', {{
-      method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify(vals)
+    var vals=_getFormValues();
+    if (!Object.keys(vals).length){{alert('No values entered.');return;}}
+    var btn=document.getElementById('btn-save'), tr=document.getElementById('test-result');
+    if (!btn) return;
+    btn.disabled=true; btn.textContent='⧙ Saving…';
+    fetch('/save-config',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(vals)}})
+    .then(function(r){{return r.json();}})
+    .then(function(d){{
+      btn.disabled=false; btn.textContent='✓ Save & Apply'; _currentCfg=null;
+      if (tr){{tr.style.display='inline-block';tr.className='test-result ok';tr.textContent='✓ Saved — regen started';}}
     }})
-    .then(function(r) {{ return r.json(); }})
-    .then(function(d) {{
-      btn.disabled = false;
-      btn.textContent = '✓ Save & Apply';
-      if (d.ok) {{
-        _currentCfg = null; // invalidate cache
-        var tr = document.getElementById('test-result');
-        tr.style.display = 'inline-block';
-        tr.className = 'test-result ok';
-        tr.textContent = '✓ Saved ' + (d.saved||[]).join(', ') + ' — regen started';
-      }} else {{
-        alert('Save failed: ' + (d.error||'unknown'));
-      }}
-    }})
-    .catch(function(e) {{
-      btn.disabled = false;
-      btn.textContent = '✓ Save & Apply';
-      alert('Save failed: ' + e.message);
-    }});
+    .catch(function(e){{btn.disabled=false;btn.textContent='✓ Save & Apply';alert('Save failed: '+e.message);}});
   }};
 
   window.toggleSettings = function() {{
-    var ov = document.getElementById('settings-overlay');
-    var isOpen = ov.classList.toggle('open');
+    var ov=document.getElementById('settings-overlay');
+    var isOpen=ov.classList.toggle('open');
     if (isOpen) {{
-      renderIntegGrid();
-      document.body.style.overflow = 'hidden';
-      // Close form
-      var f = document.getElementById('integ-form');
-      if (f) f.classList.remove('open');
-      _selectedType = null;
-    }} else {{
-      document.body.style.overflow = '';
-    }}
+      buildSidebar(); document.body.style.overflow='hidden';
+      _selectedType=null;
+      var right=document.getElementById('settings-right');
+      if (right) right.innerHTML='<div class="settings-welcome">'
+        +'<span class="settings-welcome-icon">&#9881;</span>'
+        +'Select an integration from the sidebar to configure credentials.</div>';
+    }} else {{ document.body.style.overflow=''; }}
   }};
 
   window.settingsOverlayClick = function(e) {{
-    if (e.target === document.getElementById('settings-overlay')) window.toggleSettings();
+    if (e.target===document.getElementById('settings-overlay')) window.toggleSettings();
   }};
 
   document.addEventListener('keydown', function(e) {{
-    if (e.key === 'Escape') {{
-      var ov = document.getElementById('settings-overlay');
-      if (ov && ov.classList.contains('open')) {{ window.toggleSettings(); return; }}
+    if (e.key==='Escape') {{
+      var ov=document.getElementById('settings-overlay');
+      if (ov&&ov.classList.contains('open')){{window.toggleSettings();return;}}
     }}
   }});
 
