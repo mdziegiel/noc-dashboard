@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NOC Dashboard</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        background: var(--background, #0a0a0a);
+        color: var(--text-primary, #e0e0e0);
+        font-family: var(--font-family, 'JetBrains Mono', 'Fira Code', monospace);
+        font-size: var(--font-size-base, 13px);
+        min-height: 100vh;
+      }
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.2; }
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .skeleton {
+        background: linear-gradient(90deg, var(--card-border, #1e1e1e) 25%, var(--card-background, #111) 50%, var(--card-border, #1e1e1e) 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s infinite;
+        border-radius: 2px;
+      }
+      @keyframes shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-YjcIbMzh.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BOltB2Hq.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

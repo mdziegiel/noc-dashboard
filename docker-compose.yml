@@ -9,12 +9,14 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - ./dashboard.yaml:/app/dashboard.yaml:ro
-      - ./themes:/app/themes:ro
+      # Persistent layout + trend state
       - ./state:/app/state
-      - ./output:/app/output
+      # Override dashboard config at runtime without rebuild
+      - ./dashboard.yaml:/app/dashboard.yaml:ro
+      # Override themes at runtime without rebuild
+      - ./themes:/app/themes:ro
     env_file:
       - .env
     environment:
-      - REFRESH_MINUTES=15
       - PORT=8081
+      - WORKERS=2
