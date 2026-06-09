@@ -2717,12 +2717,37 @@ def render(data, gen_epoch, errors, trends=None):
     else:
         hist_block = '<div class="empty">Collecting uptime history&hellip; bars populate after a few regen cycles.</div>'
 
+    # Build integration status for settings page
+    LABELS = {
+        "proxmox": "Proxmox", "smart": "SMART/Disk Health", "hyperv": "Hyper-V",
+        "docker": "Docker/Portainer", "pbs": "PBS Backups", "kuma": "Uptime Kuma",
+        "crowdsec": "CrowdSec", "wazuh": "Wazuh SIEM", "malware_sources": "Malware Detect",
+        "unifi": "UniFi UDM-SE", "wan": "WAN/Internet", "adguard": "AdGuard · DNS1",
+        "adguard2": "AdGuard · DNS2", "urbackup": "URBackup", "qnap": "QNAP NAS",
+        "homeassistant": "Home Assistant", "cloudflare": "Cloudflare",
+        "npm": "Nginx Proxy Mgr", "tailscale": "Tailscale", "wgdashboard": "WGDashboard",
+        "limacharlie": "LimaCharlie (LC)", "plex": "Plex", "tautulli": "Tautulli",
+        "sonarr": "Sonarr", "radarr": "Radarr", "sabnzbd": "SABnzbd",
+        "overseerr": "Overseerr", "prowlarr": "Prowlarr",
+    }
+    integ_list = []
+    for key, val in data.items():
+        label = LABELS.get(key, key.title())
+        state = val.get("state", "error") if isinstance(val, dict) else "error"
+        note = ""
+        if isinstance(val, dict):
+            note = (val.get("error") or val.get("note") or "")[:120]
+        integ_list.append({"key": key, "label": label, "state": state, "note": note})
+    integ_list.sort(key=lambda x: (0 if x["state"] == "ok" else 1 if x["state"] == "warn" else 2, x["label"]))
+    integrations_json = json.dumps(integ_list)
+
     return PAGE.format(
         ts=esc(ts), overall=overall, overall_txt=overall_txt,
         ticker_bar=ticker_bar,
         row1=row1, row2=row2, media_row=media_row, row3=row3,
         qnap_cards=qnap_cards, kuma_history=hist_block,
-        cert_tiles=cert_tiles, alert_block=alert_block)
+        cert_tiles=cert_tiles, alert_block=alert_block,
+        integrations_json=integrations_json)
 
 
 PAGE = """<!DOCTYPE html>
@@ -3094,6 +3119,43 @@ PAGE = """<!DOCTYPE html>
   .bell-badge {{ background:var(--crit); color:#fff; border-radius:50%;
     font-size:9px; padding:1px 4px; margin-left:3px;
     display:none; vertical-align:super; }}
+  /* ── Edit mode ── */
+  .edit-mode .row {{ outline:1px dashed var(--green-dim); outline-offset:4px; }}
+  .edit-mode .card {{ cursor:grab !important; }}
+  .edit-mode .card:active {{ cursor:grabbing !important; }}
+  .sortable-ghost {{ opacity:0.35; outline:2px solid var(--green) !important; }}
+  .sortable-drag {{ opacity:0.9; box-shadow:0 8px 24px rgba(0,255,65,0.35) !important; }}
+  #edit-btn.active {{ color:var(--green); border-color:var(--green); background:rgba(0,255,65,0.08); }}
+  /* ── Settings / integrations overlay ── */
+  .settings-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.88);
+    backdrop-filter:blur(4px); z-index:9500; overflow-y:auto; }}
+  .settings-overlay.open {{ display:block; }}
+  .settings-box {{ max-width:1100px; margin:40px auto; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; padding:28px 32px;
+    box-shadow:0 8px 40px rgba(0,0,0,.7); }}
+  .settings-title {{ font-size:14px; font-weight:700; letter-spacing:3px;
+    color:var(--green); margin-bottom:6px; text-transform:uppercase; }}
+  .settings-sub {{ font-size:11px; color:var(--muted); margin-bottom:24px; letter-spacing:1px; }}
+  .settings-close {{ float:right; background:none; border:none; color:var(--muted);
+    font-size:22px; cursor:pointer; line-height:1; padding:0; margin-top:-4px; }}
+  .settings-close:hover {{ color:var(--green); }}
+  .integ-grid {{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }}
+  @media(max-width:900px) {{ .integ-grid {{ grid-template-columns:repeat(2,1fr); }} }}
+  .integ-card {{ background:var(--panel2); border:1px solid var(--line);
+    border-radius:5px; padding:10px 12px; border-left:3px solid var(--degr); }}
+  .integ-card.s-ok {{ border-left-color:var(--green); }}
+  .integ-card.s-warn {{ border-left-color:var(--warn); }}
+  .integ-card.s-crit, .integ-card.s-error {{ border-left-color:var(--crit); }}
+  .integ-card.s-degraded {{ border-left-color:var(--degr); }}
+  .integ-name {{ font-size:11px; font-weight:700; letter-spacing:1px;
+    color:var(--txt); margin-bottom:4px; }}
+  .integ-state {{ font-size:10px; letter-spacing:1px; text-transform:uppercase; }}
+  .integ-state.ok {{ color:var(--green); }}
+  .integ-state.warn {{ color:var(--warn); }}
+  .integ-state.error, .integ-state.crit {{ color:var(--crit); }}
+  .integ-state.degraded {{ color:var(--degr); }}
+  .integ-note {{ font-size:9px; color:var(--muted); margin-top:3px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 </style></head>
 <body>
   <div class="topbar">
@@ -3104,6 +3166,9 @@ PAGE = """<!DOCTYPE html>
       <div class="ts">UPDATED <b>{ts}</b></div>
       <div class="health h-{overall}"><span class="led"></span>{overall_txt}</div>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
+      <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
+      <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
+      <button id="settings-btn" class="theme-btn" onclick="toggleSettings()" title="Integrations &amp; Settings">&#9881;</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
     </div>
   </div>
@@ -3143,6 +3208,15 @@ PAGE = """<!DOCTYPE html>
     </div>
     <ul id="alert-feed" class="alert-feed"></ul>
     <div class="alert-panel-empty" id="alert-empty">No alert history recorded yet.</div>
+  </div>
+  <!-- Settings / Integrations overlay -->
+  <div id="settings-overlay" class="settings-overlay" onclick="settingsOverlayClick(event)">
+    <div class="settings-box">
+      <button class="settings-close" onclick="toggleSettings()">&times;</button>
+      <div class="settings-title">&#9881; Integrations &amp; Settings</div>
+      <div class="settings-sub">Integration status as of last dashboard generation &mdash; credentials configured via container environment variables.</div>
+      <div id="integ-grid" class="integ-grid"></div>
+    </div>
   </div>
   <footer>MRDTECH INFRASTRUCTURE MONITORING · AUTO-REFRESH 60s · REGEN 15m</footer>
 <script>
@@ -3272,6 +3346,137 @@ PAGE = """<!DOCTYPE html>
   }};
   ingestCurrentAlerts();
   renderAlertHistory();
+
+  /* ── Edit mode + SortableJS layout persistence ── */
+  var LAYOUT_KEY = 'noc-layout';
+  var _sortables = [];
+
+  function destroySortables() {{
+    _sortables.forEach(function(s) {{ try {{ s.destroy(); }} catch(e) {{}} }});
+    _sortables = [];
+  }}
+
+  function initSortables() {{
+    destroySortables();
+    document.querySelectorAll('.row').forEach(function(row) {{
+      if (typeof Sortable !== 'undefined') {{
+        _sortables.push(Sortable.create(row, {{
+          animation: 150,
+          ghostClass: 'sortable-ghost',
+          dragClass: 'sortable-drag',
+          onEnd: function() {{
+            // Persist immediately after each drag
+            persistLayout();
+          }}
+        }}));
+      }}
+    }});
+  }}
+
+  function persistLayout() {{
+    var layout = {{}};
+    document.querySelectorAll('.section-label').forEach(function(lbl) {{
+      var section = lbl.textContent.trim();
+      var row = lbl.nextElementSibling;
+      if (row && row.classList.contains('row')) {{
+        layout[section] = Array.from(row.children).map(function(card) {{
+          return card.querySelector('h3') ? card.querySelector('h3').textContent.trim() : '';
+        }}).filter(Boolean);
+      }}
+    }});
+    try {{ localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); }} catch(e) {{}}
+  }}
+
+  function applyStoredLayout() {{
+    var stored;
+    try {{ stored = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); }} catch(e) {{ return; }}
+    if (!stored) return;
+    document.querySelectorAll('.section-label').forEach(function(lbl) {{
+      var section = lbl.textContent.trim();
+      if (!stored[section]) return;
+      var row = lbl.nextElementSibling;
+      if (!row || !row.classList.contains('row')) return;
+      var order = stored[section];
+      var cards = Array.from(row.children);
+      order.forEach(function(title) {{
+        var card = cards.find(function(c) {{
+          var h3 = c.querySelector('h3');
+          return h3 && h3.textContent.trim() === title;
+        }});
+        if (card) row.appendChild(card);
+      }});
+    }});
+  }}
+
+  window.toggleEditMode = function() {{
+    var body = document.body;
+    var editBtn = document.getElementById('edit-btn');
+    var saveBtn = document.getElementById('save-btn');
+    var isEdit = body.classList.toggle('edit-mode');
+    if (editBtn) {{ editBtn.classList.toggle('active', isEdit); editBtn.textContent = isEdit ? '✕ EDITING' : '✎ EDIT'; }}
+    if (saveBtn) saveBtn.style.display = isEdit ? 'inline-block' : 'none';
+    if (isEdit) {{
+      if (typeof Sortable === 'undefined') {{
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js';
+        s.onload = function() {{ initSortables(); }};
+        document.head.appendChild(s);
+      }} else {{
+        initSortables();
+      }}
+    }} else {{
+      destroySortables();
+    }}
+  }};
+
+  window.saveLayout = function() {{
+    persistLayout();
+    window.toggleEditMode();
+  }};
+
+  // Apply saved layout on page load (before user edits)
+  applyStoredLayout();
+
+  /* ── Settings / Integrations page ── */
+  var INTEGRATIONS = {integrations_json};
+
+  function renderIntegGrid() {{
+    var grid = document.getElementById('integ-grid');
+    if (!grid) return;
+    grid.innerHTML = INTEGRATIONS.map(function(integ) {{
+      var stateLabel = integ.state === 'ok' ? '✓ OK'
+        : integ.state === 'warn' ? '⚠ WARN'
+        : integ.state === 'degraded' ? '— DEGRADED'
+        : '✕ ' + integ.state.toUpperCase();
+      var note = integ.note ? '<div class="integ-note" title="' + integ.note.replace(/"/g,'&quot;') + '">' + integ.note + '</div>' : '';
+      return '<div class="integ-card s-' + integ.state + '">'
+        + '<div class="integ-name">' + integ.label + '</div>'
+        + '<div class="integ-state ' + integ.state + '">' + stateLabel + '</div>'
+        + note
+        + '</div>';
+    }}).join('');
+  }}
+
+  window.toggleSettings = function() {{
+    var ov = document.getElementById('settings-overlay');
+    var isOpen = ov.classList.toggle('open');
+    if (isOpen) {{ renderIntegGrid(); document.body.style.overflow = 'hidden'; }}
+    else {{ document.body.style.overflow = ''; }}
+  }};
+
+  window.settingsOverlayClick = function(e) {{
+    if (e.target === document.getElementById('settings-overlay')) window.toggleSettings();
+  }};
+
+  // Escape key closes settings too
+  var _prevKeydown = document.onkeydown;
+  document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{
+      var ov = document.getElementById('settings-overlay');
+      if (ov && ov.classList.contains('open')) {{ window.toggleSettings(); }}
+    }}
+  }});
+
 }})();
 </script>
 </body></html>"""
