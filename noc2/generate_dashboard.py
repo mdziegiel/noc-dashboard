@@ -2730,7 +2730,36 @@ def render(data, gen_epoch, errors, trends=None):
         "sonarr": "Sonarr", "radarr": "Radarr", "sabnzbd": "SABnzbd",
         "overseerr": "Overseerr", "prowlarr": "Prowlarr",
     }
+    COMING_SOON = {
+        # Homelab
+        "pihole": "Pi-hole", "pfsense": "pfSense", "opnsense": "OPNsense",
+        "truenas": "TrueNAS", "unraid": "Unraid", "synology": "Synology DSM",
+        "jellyfin": "Jellyfin", "emby": "Emby", "nextcloud": "Nextcloud",
+        "gitea": "Gitea", "traefik": "Traefik", "caddy": "Caddy",
+        "authentik": "Authentik", "authelia": "Authelia",
+        "speedtest_tracker": "Speedtest Tracker", "glances": "Glances", "netdata": "Netdata",
+        # VPN
+        "zerotier": "ZeroTier", "twingate": "Twingate", "netbird": "Netbird",
+        "headscale": "Headscale", "pangolin": "Pangolin",
+        # Hypervisors
+        "vmware": "VMware ESXi/vCenter", "xcpng": "XCP-ng", "libvirt": "libvirt/KVM",
+        # Microsoft
+        "intune": "Microsoft Intune", "entra": "Entra ID",
+        "m365": "M365 Health", "azure_vms": "Azure VMs",
+        "exchange": "Exchange Online", "sharepoint": "SharePoint",
+        # Security
+        "sophos": "Sophos", "meraki": "Cisco Meraki",
+        # Networking
+        "mikrotik": "MikroTik", "openwrt": "OpenWrt", "snmp": "SNMP Generic",
+        # Hardware
+        "ipmi": "IPMI", "ilo": "HPE iLO", "idrac": "Dell iDRAC",
+        "node_exporter": "Prometheus node_exporter",
+        # Cloud
+        "aws": "AWS Health", "gcp": "GCP Status",
+        "digitalocean": "DigitalOcean", "linode": "Linode/Akamai",
+    }
     integ_list = []
+    active_keys = set()
     for key, val in data.items():
         label = LABELS.get(key, key.title())
         state = val.get("state", "error") if isinstance(val, dict) else "error"
@@ -2738,6 +2767,13 @@ def render(data, gen_epoch, errors, trends=None):
         if isinstance(val, dict):
             note = (val.get("error") or val.get("note") or "")[:120]
         integ_list.append({"key": key, "label": label, "state": state, "note": note})
+        active_keys.add(key)
+    # Append coming-soon items not already active
+    for key, label in COMING_SOON.items():
+        if key not in active_keys:
+            integ_list.append({"key": key, "label": label, "state": "coming_soon", "note": ""})
+    # Custom placeholder
+    integ_list.append({"key": "custom", "label": "Custom Integration", "state": "custom", "note": ""})
     integ_list.sort(key=lambda x: (0 if x["state"] == "ok" else 1 if x["state"] == "warn" else 2, x["label"]))
     integrations_json = json.dumps(integ_list)
 
@@ -3201,6 +3237,24 @@ PAGE = """<!DOCTYPE html>
   .test-result.ok {{ color:var(--green); background:rgba(0,255,65,.08); }}
   .test-result.error {{ color:var(--crit); background:rgba(255,59,59,.08); }}
   .test-result.testing {{ color:var(--muted); }}
+  .badge-soon {{ font-size:8px; font-weight:700; letter-spacing:1px;
+    text-transform:uppercase; padding:1px 5px; border-radius:2px;
+    background:rgba(100,100,100,.18); color:var(--muted); border:1px solid var(--line);
+    flex-shrink:0; }}
+  .badge-custom {{ font-size:8px; font-weight:700; letter-spacing:1px;
+    text-transform:uppercase; padding:1px 5px; border-radius:2px;
+    background:rgba(0,255,65,.10); color:var(--green); border:1px solid var(--green-dim);
+    flex-shrink:0; }}
+  .sidebar-item.coming-soon {{ opacity:.6; }}
+  .sidebar-item.coming-soon:hover {{ opacity:.85; }}
+  .coming-soon-panel {{ padding:24px; text-align:center; }}
+  .coming-soon-icon {{ font-size:28px; display:block; margin-bottom:10px; opacity:.35; }}
+  .coming-soon-title {{ font-size:14px; font-weight:700; letter-spacing:2px; color:var(--txt);
+    text-transform:uppercase; margin-bottom:6px; }}
+  .coming-soon-msg {{ font-size:11px; color:var(--muted); line-height:1.6; }}
+  .custom-panel {{ padding:4px 0 12px; }}
+  .custom-panel-note {{ font-size:11px; color:var(--muted); margin-bottom:16px;
+    padding:8px 10px; background:var(--panel2); border-radius:4px; border-left:3px solid var(--green-dim); }}
 </style></head>
 <body>
   <div class="topbar">
@@ -3513,13 +3567,26 @@ PAGE = """<!DOCTYPE html>
     {{ id:'infra',      label:'Infrastructure',
       keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
     {{ id:'security',   label:'Security',
-      keys:['wazuh','crowdsec','limacharlie','cloudflare','malware_sources'] }},
+      keys:['wazuh','crowdsec','limacharlie','cloudflare','malware_sources','sophos','meraki'] }},
     {{ id:'network',    label:'Network',
-      keys:['unifi','wan','npm','adguard','adguard2','tailscale','wgdashboard'] }},
-    {{ id:'storage',    label:'Storage', keys:['qnap'] }},
+      keys:['unifi','wan','npm','adguard','adguard2','tailscale','wgdashboard','mikrotik','openwrt','snmp'] }},
+    {{ id:'vpn',        label:'VPN',
+      keys:['zerotier','twingate','netbird','headscale','pangolin'] }},
+    {{ id:'storage',    label:'Storage', keys:['qnap','truenas','unraid','synology'] }},
     {{ id:'media',      label:'Media',
-      keys:['plex','tautulli','sonarr','radarr','sabnzbd','overseerr','prowlarr'] }},
-    {{ id:'monitoring', label:'Monitoring', keys:['homeassistant'] }},
+      keys:['plex','tautulli','sonarr','radarr','sabnzbd','overseerr','prowlarr','jellyfin','emby'] }},
+    {{ id:'monitoring', label:'Monitoring', keys:['homeassistant','netdata','glances','speedtest_tracker','node_exporter'] }},
+    {{ id:'homelab',    label:'Homelab Apps',
+      keys:['nextcloud','gitea','traefik','caddy','authentik','authelia','pihole'] }},
+    {{ id:'hypervisors',label:'Hypervisors',
+      keys:['vmware','xcpng','libvirt','pfsense','opnsense'] }},
+    {{ id:'microsoft',  label:'Microsoft',
+      keys:['intune','entra','m365','azure_vms','exchange','sharepoint'] }},
+    {{ id:'hardware',   label:'Hardware',
+      keys:['ipmi','ilo','idrac'] }},
+    {{ id:'cloud',      label:'Cloud',
+      keys:['aws','gcp','digitalocean','linode'] }},
+    {{ id:'custom',     label:'Custom', keys:['custom'] }},
   ];
 
   function _integByKey(k) {{ return INTEGRATIONS.find(function(i){{return i.key===k;}}); }}
@@ -3542,17 +3609,33 @@ PAGE = """<!DOCTYPE html>
     if (!list) return;
     var html = '';
     CATEGORIES.forEach(function(cat) {{
-      var items = cat.keys.filter(function(k){{return !!_integByKey(k);}});
+      var items = cat.keys.filter(function(k) {{
+        if (k === 'custom') return true;
+        var i = _integByKey(k);
+        return !!i;
+      }});
       if (!items.length) return;
       html += '<div class="sidebar-cat">'+cat.label+'</div>';
       items.forEach(function(key) {{
+        if (key === 'custom') {{
+          html += '<div class="sidebar-item" data-key="custom">'\
+            +'<span>Custom Integration</span>'\
+            +'<span class="badge-custom">+NEW</span>'\
+            +'</div>';
+          return;
+        }}
         var integ = _integByKey(key);
         if (!integ) return;
-        var sc = _stateColor(integ.state);
-        html += '<div class="sidebar-item" data-key="'+key+'">'
-          +'<span>'+integ.label+'</span>'
-          +'<span class="sidebar-dot '+sc+'"></span>'
-          +'</div>';
+        var isSoon = integ.state === 'coming_soon';
+        var sc = isSoon ? 'degraded' : _stateColor(integ.state);
+        html += '<div class="sidebar-item'+(isSoon?' coming-soon':'')+'" data-key="'+key+'">'\
+          +'<span>'+integ.label+'</span>';
+        if (isSoon) {{
+          html += '<span class="badge-soon">Soon</span>';
+        }} else {{
+          html += '<span class="sidebar-dot '+sc+'"></span>';
+        }}
+        html += '</div>';
       }});
     }});
     list.innerHTML = html;
@@ -3564,28 +3647,72 @@ PAGE = """<!DOCTYPE html>
 
   function selectInteg(key) {{
     _selectedType = key;
-    var integ = _integByKey(key);
-    if (!integ) return;
-    document.querySelectorAll('.sidebar-item').forEach(function(el){{
-      el.classList.toggle('active', el.dataset.key===key);
+    document.querySelectorAll('.sidebar-item').forEach(function(el) {{
+      el.classList.toggle('active', el.dataset.key === key);
     }});
     var right = document.getElementById('settings-right');
+    if (!right) return;
+
+    // Custom integration panel
+    if (key === 'custom') {{
+      right.innerHTML = '<div class="integ-form-title">&#10010; Custom Integration</div>'\
+        +'<div class="custom-panel">'\
+        +'<div class="custom-panel-note">Define your own integration: name, URL, auth type, and a JSONPath to extract a status value. The collector will make a periodic HTTP request and surface the result as a card.</div>'\
+        +'<div class="form-grid">'\
+        +'<div class="form-field span2"><label>Integration Name</label>'\
+        +'<input id="field-CUSTOM_NAME" type="text" placeholder="My Service" data-key="CUSTOM_NAME" autocomplete="off"></div>'\
+        +'<div class="form-field span2"><label>URL</label>'\
+        +'<input id="field-CUSTOM_URL" type="text" placeholder="http://host:port/api/status" data-key="CUSTOM_URL" autocomplete="off"></div>'\
+        +'<div class="form-field"><label>Auth Type</label>'\
+        +'<select id="field-CUSTOM_AUTH" data-key="CUSTOM_AUTH" style="background:var(--panel);border:1px solid var(--line);color:var(--txt);padding:6px 10px;border-radius:4px;font-size:12px;font-family:inherit">'\
+        +'<option value="none">None</option>'\
+        +'<option value="bearer">Bearer Token</option>'\
+        +'<option value="basic">Basic Auth (user:pass)</option>'\
+        +'<option value="apikey">API Key Header</option>'\
+        +'</select></div>'\
+        +'<div class="form-field"><label>Auth Value</label>'\
+        +'<input id="field-CUSTOM_AUTH_VALUE" type="password" placeholder="token or user:pass" data-key="CUSTOM_AUTH_VALUE" autocomplete="off"></div>'\
+        +'<div class="form-field span2"><label>JSONPath (optional)</label>'\
+        +'<input id="field-CUSTOM_JSONPATH" type="text" placeholder=".status or .data.health" data-key="CUSTOM_JSONPATH" autocomplete="off"></div>'\
+        +'</div>'\
+        +'<div class="form-actions">'\
+        +'<button class="btn-save" id="btn-save" onclick="saveConfig()">&#10003; Save &amp; Apply</button>'\
+        +'<span id="test-result" class="test-result" style="display:none"></span>'\
+        +'</div></div>';\
+      return;
+    }}
+
+    var integ = _integByKey(key);
+    if (!integ) return;
+
+    // Coming Soon panel
+    if (integ.state === 'coming_soon') {{
+      right.innerHTML = '<div class="coming-soon-panel">'\
+        +'<span class="coming-soon-icon">&#9899;</span>'\
+        +'<div class="coming-soon-title">'+integ.label+'</div>'\
+        +'<div class="badge-soon" style="display:inline-block;margin-bottom:14px">Coming Soon</div>'\
+        +'<div class="coming-soon-msg">A collector for '+integ.label+' is on the roadmap.<br>'\
+        +'Star the repo or open an issue to request it sooner.</div>'\
+        +'</div>';
+      return;
+    }}
+
     var sc = _stateColor(integ.state);
-    var statusLabel = integ.state==='ok'?'&#10003; Connected'
-      :integ.state==='warn'?'&#9888; Warning'
+    var statusLabel = integ.state==='ok'?'&#10003; Connected'\
+      :integ.state==='warn'?'&#9888; Warning'\
       :integ.state==='degraded'?'&#8212; Not Configured':'&#10005; Error';
-    var statusColor = integ.state==='ok'?'var(--green)':integ.state==='warn'?'var(--warn)'
+    var statusColor = integ.state==='ok'?'var(--green)':integ.state==='warn'?'var(--warn)'\
       :integ.state==='degraded'?'var(--degr)':'var(--crit)';
-    right.innerHTML = '<div class="integ-form-title">'+integ.label+'</div>'
-      +'<div class="integ-form-status" style="color:'+statusColor+';border-color:'+statusColor+'">'
-      +'<span class="sidebar-dot '+sc+'"></span>&nbsp;'+statusLabel
-      +(integ.note?' &mdash; <span style="font-weight:normal;text-transform:none;color:var(--muted)">'+integ.note+'</span>':'')
-      +'</div>'
-      +'<div id="form-grid" class="form-grid"><div style="color:var(--muted);font-size:11px">Loading&hellip;</div></div>'
-      +'<div class="form-actions">'
-      +'<button class="btn-test" id="btn-test" onclick="testConnection()">&#9654; Test Connection</button>'
-      +'<button class="btn-save" id="btn-save" onclick="saveConfig()">&#10003; Save &amp; Apply</button>'
-      +'<span id="test-result" class="test-result" style="display:none"></span>'
+    right.innerHTML = '<div class="integ-form-title">'+integ.label+'</div>'\
+      +'<div class="integ-form-status" style="color:'+statusColor+';border-color:'+statusColor+'">'\
+      +'<span class="sidebar-dot '+sc+'"></span>&nbsp;'+statusLabel\
+      +(integ.note?' &mdash; <span style="font-weight:normal;text-transform:none;color:var(--muted)">'+integ.note+'</span>':'')\
+      +'</div>'\
+      +'<div id="form-grid" class="form-grid"><div style="color:var(--muted);font-size:11px">Loading&hellip;</div></div>'\
+      +'<div class="form-actions">'\
+      +'<button class="btn-test" id="btn-test" onclick="testConnection()">&#9654; Test Connection</button>'\
+      +'<button class="btn-save" id="btn-save" onclick="saveConfig()">&#10003; Save &amp; Apply</button>'\
+      +'<span id="test-result" class="test-result" style="display:none"></span>'\
       +'</div>';
     _loadFieldDefs(function(defs) {{
       _loadCurrentCfg(function(cfg) {{
@@ -3598,11 +3725,11 @@ PAGE = """<!DOCTYPE html>
         }}
         fg.innerHTML = fields.map(function(f) {{
           var isSet = cfg[f.key] && cfg[f.key]!=='&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;';
-          var ph = f.type==='password'?(isSet?'(set — enter new to change)':'enter password'):(f.label||f.key);
-          return '<div class="form-field">'
-            +'<label for="field-'+f.key+'">'+(f.label||f.key)+'</label>'
-            +'<input id="field-'+f.key+'" type="'+f.type+'" placeholder="'+ph+'" '
-            +'autocomplete="off" data-key="'+f.key+'">'
+          var ph = f.type==='password'?(isSet?'(set \u2014 enter new to change)':'enter password'):(f.label||f.key);
+          return '<div class="form-field">'\
+            +'<label for="field-'+f.key+'">'+(f.label||f.key)+'</label>'\
+            +'<input id="field-'+f.key+'" type="'+f.type+'" placeholder="'+ph+'" '\
+            +'autocomplete="off" data-key="'+f.key+'">'\
             +'</div>';
         }}).join('');
       }});
