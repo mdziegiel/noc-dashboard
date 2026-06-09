@@ -2891,7 +2891,12 @@ PAGE = """<!DOCTYPE html>
   @media(max-width:620px){{ .row{{grid-template-columns:1fr;}} }}
   .card {{ background:linear-gradient(180deg,var(--panel),var(--panel2));
     border:1px solid var(--line); border-left:3px solid var(--degr); border-radius:6px;
-    padding:14px 16px; box-shadow:0 2px 10px rgba(0,0,0,.4); }}
+    padding:14px 16px; box-shadow:0 2px 10px rgba(0,0,0,.4);
+    transition:box-shadow .18s ease,border-color .18s ease,filter .18s ease; cursor:pointer; }}
+  .card:hover {{ box-shadow:0 4px 18px rgba(0,0,0,.55),0 0 0 1px var(--line); filter:brightness(1.07); }}
+  .card.s-ok:hover {{ box-shadow:0 4px 18px rgba(0,0,0,.5),0 0 8px rgba(0,255,65,.18); border-color:var(--green-dim); }}
+  .card.s-warn:hover {{ box-shadow:0 4px 18px rgba(0,0,0,.5),0 0 8px rgba(255,204,0,.18); border-color:var(--warn); }}
+  .card.s-crit:hover {{ box-shadow:0 4px 18px rgba(0,0,0,.5),0 0 10px rgba(255,59,59,.25); border-color:var(--crit); }}
   .card.s-ok {{ border-left-color:var(--green); }}
   .card.s-warn {{ border-left-color:var(--warn); }}
   .card.s-crit {{ border-left-color:var(--crit); }}
