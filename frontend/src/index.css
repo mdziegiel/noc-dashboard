@@ -372,6 +372,9 @@
   /* ── Section management ── */
   .section-label-row { display: flex; align-items: center; gap: 8px; }
   .section-label-edit { border-bottom-style: dashed; border-bottom-color: var(--green-dim); background: rgba(0,255,65,0.03); border-radius: 2px; padding-left: 4px; padding-right: 4px; }
+  /* Hide collapse arrow in view mode — only show in edit mode */
+  .section-collapse-btn { display: none !important; }
+  .section-label-edit .section-collapse-btn { display: inline-flex !important; }
   .section-collapse-btn:hover { color: var(--green) !important; }
   .section-drag-handle:hover { color: var(--green) !important; }
   .section-drag-handle { cursor: grab !important; }

@@ -141,7 +141,7 @@ def get_collector_map():
         proxmox, wazuh, malware_sources, docker_portainer, pbs, uptime_kuma,
         crowdsec, unifi, adguard, home_assistant, smart_health, urbackup,
         qnap, media, cloudflare, nginx_proxy, tailscale, limacharlie, custom_url,
-        hyperv
+        hyperv, adguard2, wgdashboard
     )
     return {
         "proxmox": proxmox.collect,
@@ -154,6 +154,7 @@ def get_collector_map():
         "crowdsec": crowdsec.collect,
         "unifi": unifi.collect,
         "adguard": adguard.collect,
+        "adguard2": adguard2.collect,
         "home_assistant": home_assistant.collect,
         "smart_health": smart_health.collect,
         "urbackup": urbackup.collect,
@@ -172,6 +173,7 @@ def get_collector_map():
         "custom_url": custom_url.collect,
         "wan_health": unifi.collect,
         "hyperv": hyperv.collect,
+        "wgdashboard": wgdashboard.collect,
     }
 
 
@@ -188,12 +190,14 @@ CARD_TYPE_META = {
     "malware_sources":  {"label": "Malware Detect",       "description": "Malware feed detections",                   "category": "Security",       "icon": "AlertTriangle"},
     "crowdsec":         {"label": "CrowdSec",             "description": "Bans and detections",                       "category": "Security",       "icon": "ShieldAlert"},
     "cloudflare":       {"label": "Cloudflare",           "description": "Requests, threats, WAF events",             "category": "Security",       "icon": "Cloud"},
-    "limacharlie":      {"label": "LimaCharlie",          "description": "Endpoint sensor status",                    "category": "Security",       "icon": "Eye"},
+    "limacharlie":      {"label": "LimaCharlie (LC)",    "description": "EDR detections and sensor status",            "category": "Security",       "icon": "ShieldAlert"},
+    "wgdashboard":      {"label": "WGDashboard",         "description": "WireGuard VPN interfaces and peers",          "category": "Network",        "icon": "Network"},
     "unifi":            {"label": "UniFi",                "description": "WAN status, clients, IPS alerts",           "category": "Network",        "icon": "Wifi"},
     "wan_health":       {"label": "WAN Health",           "description": "WAN/internet status via UniFi",             "category": "Network",        "icon": "Wifi"},
     "tailscale":        {"label": "Tailscale",            "description": "VPN device status",                         "category": "Network",        "icon": "Network"},
     "nginx_proxy":      {"label": "Nginx Proxy Manager",  "description": "Proxy hosts and cert expiry",               "category": "Network",        "icon": "Globe"},
-    "adguard":          {"label": "AdGuard Home",         "description": "DNS query and block stats",                 "category": "Network",        "icon": "Filter"},
+    "adguard":          {"label": "AdGuard · DNS1",      "description": "AdGuard Home DNS1 stats",                       "category": "Security",       "icon": "Shield"},
+    "adguard2":         {"label": "AdGuard · DNS2",      "description": "AdGuard Home DNS2 stats",                       "category": "Security",       "icon": "Shield"},
     "qnap":             {"label": "NAS Storage",          "description": "QNAP NAS volumes, disks, temps",            "category": "Storage",        "icon": "Database"},
     "plex":             {"label": "Plex",                 "description": "Active streams, library counts",            "category": "Media",          "icon": "Play"},
     "tautulli":         {"label": "Tautulli",             "description": "Plex streams, plays today, top user",       "category": "Media",          "icon": "BarChart2"},
@@ -283,6 +287,7 @@ TYPE_TO_SECTION = {
     "crowdsec": "security_network", "limacharlie": "security_network",
     "adguard": "security_network", "adguard2": "security_network",
     "tailscale": "security_network", "malware_sources": "security_network",
+    "wgdashboard": "security_network", "hyperv": "system_status",
     "plex": "media_downloads", "tautulli": "media_downloads",
     "sonarr": "media_downloads", "radarr": "media_downloads",
     "sabnzbd": "media_downloads", "overseerr": "media_downloads",
@@ -584,8 +589,8 @@ def _extract_ticker_items(cache: dict) -> tuple:
         if prox.get("cpu") is not None:
             add(f"Proxmox: CPU {prox['cpu']:.0f}% · RAM {prox.get('mem_pct', 0):.0f}%", "ok")
         ag = cache.get("adguard", {}).get("data", {})
-        if ag.get("block_pct"):
-            add(f"AdGuard: blocking {ag['block_pct']:.1f}% of queries", "ok")
+        if ag.get("block_pct") is not None and ag.get("block_pct", 0) > 0:
+            add(f"AdGuard: blocking {float(ag['block_pct']):.1f}% of queries", "ok")
         uk = cache.get("uptime_kuma", {}).get("data", {})
         if uk.get("up_count"):
             add(f"Uptime Kuma: {uk['up_count']} monitors UP", "ok")
@@ -1168,6 +1173,16 @@ INTEGRATION_FIELDS = {
         {"key": "ADGUARD_URL", "label": "URL", "placeholder": "http://10.10.10.21", "type": "text"},
         {"key": "ADGUARD_USERNAME", "label": "Username", "placeholder": "mdziegiel", "type": "text"},
         {"key": "ADGUARD_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "adguard2": [
+        {"key": "ADGUARD2_URL", "label": "URL", "placeholder": "http://10.10.10.x:3000", "type": "text"},
+        {"key": "ADGUARD2_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
+        {"key": "ADGUARD2_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "wgdashboard": [
+        {"key": "WG_URL", "label": "URL", "placeholder": "http://10.10.10.x:10086", "type": "text"},
+        {"key": "WG_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
+        {"key": "WG_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
     ],
     "uptime_kuma": [
         {"key": "UPTIME_KUMA_URL", "label": "URL", "placeholder": "http://10.10.10.237:3661", "type": "text"},
