@@ -1601,9 +1601,9 @@ def collect_wgdashboard():
     """WGDashboard. Real auth flow is POST /api/authenticate (cookie jar) then
     GET /api/getWireguardConfigurations. Each config returns ConnectedPeers,
     TotalPeers and Status (True = interface up). Aggregates across all configs."""
-    base = E.get("WGDASHBOARD_URL", "").strip().rstrip("/")
-    user = E.get("WGDASHBOARD_USERNAME", "").strip()
-    pw = E.get("WGDASHBOARD_PASSWORD", "").strip()
+    base = (E.get("WGDASHBOARD_URL") or E.get("WG_URL") or "").strip().rstrip("/")
+    user = (E.get("WGDASHBOARD_USERNAME") or E.get("WG_USERNAME") or "").strip()
+    pw = (E.get("WGDASHBOARD_PASSWORD") or E.get("WG_PASSWORD") or "").strip()
     if not base or not user or not pw or pw.startswith("<"):
         return {"state": "degraded", "note": "WGDashboard creds not set",
                 "connected": 0, "total_peers": 0, "interfaces": []}
@@ -3163,38 +3163,11 @@ PAGE = """<!DOCTYPE html>
   .integ-form-status {{ display:inline-flex; align-items:center; gap:6px; font-size:10px;
     letter-spacing:1px; text-transform:uppercase; margin-bottom:18px; padding:4px 10px;
     border-radius:3px; background:var(--panel2); border:1px solid var(--line); }}
-    border:1px solid var(--line); border-radius:8px; padding:24px 28px;
-    box-shadow:0 8px 40px rgba(0,0,0,.7); }}
-  .settings-title {{ font-size:13px; font-weight:700; letter-spacing:3px;
-    color:var(--green); margin-bottom:4px; text-transform:uppercase; display:inline-block; }}
-  .settings-sub {{ font-size:10px; color:var(--muted); margin-bottom:20px; letter-spacing:1px; }}
-  .settings-close {{ float:right; background:none; border:none; color:var(--muted);
-    font-size:22px; cursor:pointer; line-height:1; padding:0; }}
-  .settings-close:hover {{ color:var(--green); }}
-  /* Integration grid */
-  .integ-grid {{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }}
-  @media(max-width:900px) {{ .integ-grid {{ grid-template-columns:repeat(2,1fr); }} }}
-  .integ-card {{ background:var(--panel2); border:1px solid var(--line);
-    border-radius:5px; padding:9px 11px; border-left:3px solid var(--degr);
-    cursor:pointer; transition:border-color .15s,background .15s; }}
-  .integ-card:hover {{ background:var(--panel); border-color:var(--green-dim); }}
-  .integ-card.s-ok {{ border-left-color:var(--green); }}
-  .integ-card.s-warn {{ border-left-color:var(--warn); }}
-  .integ-card.s-crit, .integ-card.s-error {{ border-left-color:var(--crit); }}
-  .integ-card.s-degraded {{ border-left-color:var(--degr); }}
-  .integ-card.selected {{ background:rgba(0,255,65,0.05); border-color:var(--green); outline:1px solid var(--green); }}
-  .integ-name {{ font-size:10px; font-weight:700; letter-spacing:1px; color:var(--txt); margin-bottom:3px; }}
-  .integ-badge {{ font-size:9px; letter-spacing:1px; text-transform:uppercase; }}
-  .integ-badge.ok {{ color:var(--green); }}
-  .integ-badge.warn {{ color:var(--warn); }}
-  .integ-badge.error,.integ-badge.crit {{ color:var(--crit); }}
-  .integ-badge.degraded {{ color:var(--degr); }}
-  /* Config form */
-  .integ-form {{ display:none; margin-top:20px; background:var(--panel2);
-    border:1px solid var(--line); border-radius:6px; padding:20px 22px; }}
-  .integ-form.open {{ display:block; }}
-  .integ-form-title {{ font-size:12px; font-weight:700; letter-spacing:2px;
-    color:var(--green); margin-bottom:14px; text-transform:uppercase; }}
+  .form-section-hdr {{ grid-column:1/-1; font-size:9px; font-weight:700; letter-spacing:2px;
+    text-transform:uppercase; color:var(--green-dim); padding:10px 0 4px;
+    border-bottom:1px solid var(--line); margin-top:6px; }}
+  .form-section-hdr:first-child {{ margin-top:0; }}
+  .form-field.span2 {{ grid-column:1/-1; }}
   .form-grid {{ display:grid; grid-template-columns:repeat(2,1fr); gap:12px 20px; }}
   @media(max-width:700px) {{ .form-grid {{ grid-template-columns:1fr; }} }}
   .form-field {{ display:flex; flex-direction:column; gap:4px; }}

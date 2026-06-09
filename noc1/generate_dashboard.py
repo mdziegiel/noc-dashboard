@@ -1601,9 +1601,9 @@ def collect_wgdashboard():
     """WGDashboard. Real auth flow is POST /api/authenticate (cookie jar) then
     GET /api/getWireguardConfigurations. Each config returns ConnectedPeers,
     TotalPeers and Status (True = interface up). Aggregates across all configs."""
-    base = E.get("WGDASHBOARD_URL", "").strip().rstrip("/")
-    user = E.get("WGDASHBOARD_USERNAME", "").strip()
-    pw = E.get("WGDASHBOARD_PASSWORD", "").strip()
+    base = (E.get("WGDASHBOARD_URL") or E.get("WG_URL") or "").strip().rstrip("/")
+    user = (E.get("WGDASHBOARD_USERNAME") or E.get("WG_USERNAME") or "").strip()
+    pw = (E.get("WGDASHBOARD_PASSWORD") or E.get("WG_PASSWORD") or "").strip()
     if not base or not user or not pw or pw.startswith("<"):
         return {"state": "degraded", "note": "WGDashboard creds not set",
                 "connected": 0, "total_peers": 0, "interfaces": []}
