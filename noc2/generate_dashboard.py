@@ -3920,6 +3920,27 @@ PAGE = """<!DOCTYPE html>
   .custom-panel {{ padding:4px 0 12px; }}
   .custom-panel-note {{ font-size:11px; color:var(--muted); margin-bottom:16px;\n    padding:8px 10px; background:var(--panel2); border-radius:4px; border-left:3px solid var(--green-dim); }}
 {{cc_css}}
+
+  /* ── First-launch welcome overlay ── */
+  .welcome-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.92);
+    backdrop-filter:blur(6px); z-index:10000; align-items:center; justify-content:center; }}
+  .welcome-overlay.open {{ display:flex; }}
+  .welcome-box {{ background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    max-width:480px; width:calc(100% - 40px); padding:36px 32px 28px; text-align:center;
+    box-shadow:0 12px 60px rgba(0,0,0,.9); }}
+  .welcome-logo {{ font-size:38px; margin-bottom:12px; }}
+  .welcome-title {{ font-size:16px; font-weight:700; letter-spacing:3px; color:var(--green);
+    text-transform:uppercase; margin-bottom:6px; }}
+  .welcome-sub {{ font-size:11px; color:var(--muted); letter-spacing:1px; margin-bottom:24px; line-height:1.7; }}
+  .welcome-actions {{ display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }}
+  .welcome-btn-primary {{ background:var(--green); border:none; color:#000; padding:9px 24px;
+    border-radius:5px; font-size:11px; font-weight:700; letter-spacing:2px; cursor:pointer;
+    font-family:inherit; text-transform:uppercase; }}
+  .welcome-btn-primary:hover {{ opacity:.85; }}
+  .welcome-btn-skip {{ background:none; border:1px solid var(--line); color:var(--muted);
+    padding:9px 24px; border-radius:5px; font-size:11px; letter-spacing:2px; cursor:pointer;
+    font-family:inherit; text-transform:uppercase; }}
+  .welcome-btn-skip:hover {{ border-color:var(--muted); color:var(--txt); }}
 </style></head>
 <body>
   <div class="topbar">
@@ -3993,6 +4014,12 @@ PAGE = """<!DOCTYPE html>
             <div class="settings-sidebar-sub">Select to configure</div>
           </div>
           <div id="settings-sidebar-list"></div>
+          <div style="padding:10px 14px 14px;border-top:1px solid var(--line);margin-top:auto;">
+            <div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Help</div>
+            <div class="sidebar-item" style="padding:5px 0;font-size:10px;" onclick="openSetupWizard()" title="Show the first-launch welcome screen">
+              <span>&#9654; Setup Wizard</span>
+            </div>
+          </div>
         </div>
         <div class="settings-content">
           <button class="settings-close" onclick="toggleSettings()">&times;</button>
@@ -4003,6 +4030,22 @@ PAGE = """<!DOCTYPE html>
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+    <!-- First-launch welcome overlay -->
+  <div id="welcome-overlay" class="welcome-overlay">
+    <div class="welcome-box">
+      <div class="welcome-logo">&#9881;</div>
+      <div class="welcome-title">Welcome to NOC Dashboard</div>
+      <div class="welcome-sub">
+        Your homelab operations center is running.<br>
+        Open Settings to configure integrations &amp; credentials,<br>
+        or explore the dashboard as-is.
+      </div>
+      <div class="welcome-actions">
+        <button class="welcome-btn-primary" onclick="welcomeOpenSettings()">&#9881; Open Settings</button>
+        <button class="welcome-btn-skip" onclick="welcomeSkip()">Skip for now</button>
       </div>
     </div>
   </div>
@@ -4708,6 +4751,31 @@ PAGE = """<!DOCTYPE html>
     }}
   }});
 
+
+  /* ── Welcome screen ── */
+  var WELCOME_KEY = 'noc-welcomed';
+  window.welcomeSkip = function() {{
+    localStorage.setItem(WELCOME_KEY, '1');
+    var ov = document.getElementById('welcome-overlay');
+    if (ov) ov.classList.remove('open');
+  }};
+  window.welcomeOpenSettings = function() {{
+    welcomeSkip();
+    window.toggleSettings();
+  }};
+  window.openSetupWizard = function() {{
+    var ov = document.getElementById('welcome-overlay');
+    if (ov) ov.classList.add('open');
+    // Close settings if open
+    var sov = document.getElementById('settings-overlay');
+    if (sov && sov.classList.contains('open')) window.toggleSettings();
+  }};
+  (function() {{
+    if (!localStorage.getItem(WELCOME_KEY)) {{
+      var ov = document.getElementById('welcome-overlay');
+      if (ov) ov.classList.add('open');
+    }}
+  }})();
 }})();
 {cc_js}
 </script>
