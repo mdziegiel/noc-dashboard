@@ -86,26 +86,23 @@ function SparkSVG({ data, state }) {
   )
 }
 
-// Donut gauge — matches generator's donut() function
-export function Donut({ label, pct, state = '' }) {
-  const safeState = state || (pct > 85 ? 'crit' : pct > 70 ? 'warn' : '')
-  const cls = safeState ? `q-${safeState}` : ''
-  const r = 40, cx = 46, cy = 46, circ = 2 * Math.PI * r
-  const dash = Math.min(pct / 100, 1) * circ
-  const strokeColor = safeState === 'crit' ? 'var(--crit)' : safeState === 'warn' ? 'var(--warn)' : 'var(--green)'
+// Donut gauge — matches generator's donut() function exactly
+// Generator uses: viewBox="0 0 140 140", r=52, cx=70, cy=70
+// Classes: gauge, g-track, g-val, g-pct, g-lbl; SVG class: g-ok/g-warn/g-crit
+export function Donut({ label, pct, state }) {
+  const safeState = state || (pct >= 90 ? 'crit' : pct >= 80 ? 'warn' : 'ok')
+  const r = 52, cx = 70, cy = 70, circ = 2 * Math.PI * r
+  const dash = (Math.min(pct / 100, 1) * circ).toFixed(1)
   return (
     <div className="gauge">
-      <svg width="92" height="92" viewBox="0 0 92 92">
-        <circle className="g-track" cx={cx} cy={cy} r={r} fill="none" strokeWidth="8" />
-        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth="8" stroke={strokeColor}
-          strokeDasharray={`${dash.toFixed(1)} ${circ.toFixed(1)}`} strokeLinecap="round"
+      <svg viewBox="0 0 140 140" className={`g-${safeState}`}>
+        <circle cx={cx} cy={cy} r={r} className="g-track" />
+        <circle cx={cx} cy={cy} r={r} className="g-val"
+          strokeDasharray={`${dash} ${circ.toFixed(1)}`}
           transform={`rotate(-90 ${cx} ${cy})`} />
-        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
-          style={{ fontSize:14, fill:strokeColor, fontFamily:'inherit', fontWeight:700 }}>
-          {Math.round(pct)}%
-        </text>
+        <text x={cx} y="64" className="g-pct">{Math.round(pct)}%</text>
+        <text x={cx} y="86" className="g-lbl">{label}</text>
       </svg>
-      <div className="g-lbl">{label}</div>
     </div>
   )
 }

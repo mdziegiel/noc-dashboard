@@ -1,23 +1,19 @@
 import React from 'react'
-import { M, Sub, Donut, fmt } from '../shared.jsx'
+import { Donut } from '../shared.jsx'
 
 export default function ProxmoxStorageCard({ data, config }) {
   if (!data) return null
   const storages = data.storage || []
+  if (storages.length === 0) {
+    return <div className="card-b"><div className="metric"><div className="m-v">—</div><div className="m-l">Storage</div></div></div>
+  }
   return (
-    <>
-      <div className="card-b">
-        {storages.length === 0 && <M v="—" l="Storage" />}
-      </div>
-      {storages.length > 0 && (
-        <div className="gauges">
-          {storages.map((s, i) => {
-            const pct = s.pct ?? s.used_pct ?? 0
-            const state = pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : ''
-            return <Donut key={i} label={s.name} pct={pct} state={state} />
-          })}
-        </div>
-      )}
-    </>
+    <div className="gauges">
+      {storages.map((s, i) => {
+        const pct = s.pct ?? s.used_pct ?? 0
+        const state = pct >= 90 ? 'crit' : pct >= 80 ? 'warn' : 'ok'
+        return <Donut key={i} label={s.name} pct={pct} state={state} />
+      })}
+    </div>
   )
 }

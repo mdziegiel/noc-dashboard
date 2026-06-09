@@ -15,7 +15,7 @@ const CARD_MAP = {
   crowdsec:       () => import('./cards/CrowdsecCard.jsx'),
   cloudflare:     () => import('./cards/CloudflareCard.jsx'),
   unifi:          () => import('./cards/UnifiCard.jsx'),
-  wan_health:     () => import('./cards/UnifiCard.jsx'),
+  wan_health:     () => import('./cards/UnifiCard.jsx').then(m => ({ default: m.WanHealthCard })),
   tailscale:      () => import('./cards/TailscaleCard.jsx'),
   nginx_proxy:    () => import('./cards/NginxProxyCard.jsx'),
   adguard:        () => import('./cards/AdguardCard.jsx'),
