@@ -1,20 +1,26 @@
-# NOC Dashboard v2
+# NOC Dashboard
 
-**An interactive, Homarr-inspired React + FastAPI homelab NOC dashboard with true dark-terminal aesthetic.**
+**A zero-dependency homelab NOC dashboard — static Python generator, vanilla JS, Docker-ready. No React, no build step.**
 
-Deploy it, load your credentials, and get a fully live NOC dashboard — drag cards around in edit mode, resize them, add or remove card types with a categorized picker, customize every card with a settings panel. Layout persists automatically.
+Deploy it, add credentials, and get a fully live operations dashboard regenerated every 15 minutes. Drag cards in edit mode, resize, create sections, remove cards — layout persists automatically. 40+ integrations with live status or Coming Soon badges.
 
 ---
 
 ![NOC Dashboard — Dark NOC Theme](screenshots/dark-noc.png)
 
-*Dark NOC theme — true black background, green accents, terminal/NOC room aesthetic*
+*Dark NOC theme — true black background, green accents, terminal aesthetic*
 
 ---
 
 ![NOC Dashboard — Edit Mode](screenshots/dark-noc-edit.png)
 
-*Edit mode — drag handles, X remove buttons, gear settings highlighted, bottom banner*
+*Edit mode — remove/resize buttons on every card, drag handles for sections*
+
+---
+
+![NOC Dashboard — Integrations Settings](screenshots/integrations.png)
+
+*Integrations & Settings — centered modal overlay, 40+ integrations, Coming Soon badges, Custom integration builder*
 
 ---
 
