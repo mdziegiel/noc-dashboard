@@ -1,112 +1,141 @@
+/**
+ * shared.jsx — Shared primitives matching generate_dashboard.py's HTML output exactly.
+ * These components emit the same CSS classes as the Python generator so styling is identical.
+ */
 import React from 'react'
-import { LineChart, Line, Area, AreaChart, ResponsiveContainer, Tooltip } from 'recharts'
+import { AreaChart, Area, ResponsiveContainer } from 'recharts'
 
-// Shared metric row: label left, value right
-export function MetricRow({ label, value, valueColor, style }) {
+// ── Metric row: matches <div class="metric m-{state}"><div class="m-v">...</div><div class="m-l">...</div></div>
+export function Metric({ label, value, state }) {
+  // state: ok | warn | crit | '' (neutral)
+  const cls = state ? `metric m-${state}` : 'metric'
   return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'baseline',
-      padding: '2px 0',
-      borderBottom: '1px solid var(--card-border, #1e1e1e)',
-      fontSize: 11,
-      lineHeight: 1.6,
-      ...style,
-    }}>
-      <span style={{ color: 'var(--text-muted, #555)', marginRight: 8 }}>{label}</span>
-      <span style={{ color: valueColor || 'var(--text-primary, #e0e0e0)', fontWeight: 500 }}>
-        {value ?? '—'}
-      </span>
+    <div className={cls}>
+      <div className="m-v">{value ?? '—'}</div>
+      <div className="m-l">{label}</div>
     </div>
   )
 }
 
-// Section heading
+// ── Sub text: matches <div class="sub">...</div>
+export function Sub({ children }) {
+  if (!children) return null
+  return <div className="sub">{children}</div>
+}
+
+// ── Section header: matches <div class="section-label">...</div>
 export function SectionHeader({ children }) {
-  return (
-    <div style={{
-      fontSize: 10,
-      textTransform: 'uppercase',
-      letterSpacing: '0.1em',
-      color: 'var(--section-header-color, #00ff41)',
-      marginTop: 8,
-      marginBottom: 2,
-    }}>
-      {children}
-    </div>
-  )
+  return <div className="section-label">{children}</div>
 }
 
-// Small sparkline — 180px wide, 34px tall, no axes
-export function Sparkline({ data, color, field = 'value', height = 34 }) {
+// ── Sparkline SVG: matches the generator's sparkline() function output
+// <svg class="spark sp-{state}" viewBox="0 0 140 34" preserveAspectRatio="none">
+//   <polygon class="spark-area" points="..." />
+//   <polyline class="spark-line" points="..." />
+//   <circle class="spark-dot" ... />
+// </svg>
+export function Sparkline({ data, state = 'ok', label }) {
   if (!data || data.length < 2) return null
-  const points = data.map((d, i) => ({ i, v: typeof d === 'object' ? d[field] ?? d.value ?? 0 : d }))
-  const stroke = color || 'var(--graph-line-color, #00ff41)'
+
+  const values = data.map(d => typeof d === 'number' ? d : (d?.v ?? d?.value ?? 0))
+  const W = 140, H = 34
+  const min = Math.min(...values), max = Math.max(...values)
+  const range = max - min || 1
+
+  function xAt(i) { return (i / (values.length - 1)) * W }
+  function yAt(v) { return H - ((v - min) / range) * (H - 4) - 2 }
+
+  const pts = values.map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`).join(' ')
+  const areaPts = `0,${H} ` + pts + ` ${W},${H}`
+  const lastX = xAt(values.length - 1)
+  const lastY = yAt(values[values.length - 1])
+
   return (
-    <div style={{ width: '100%', height: height, marginTop: 4 }}>
-      <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={points} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
-          <defs>
-            <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={stroke} stopOpacity={0.3} />
-              <stop offset="95%" stopColor={stroke} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <Area
-            type="monotone"
-            dataKey="v"
-            stroke={stroke}
-            strokeWidth={1.5}
-            fill="url(#sparkFill)"
-            dot={false}
-            isAnimationActive={false}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div className="trend">
+      {label && <span className="trend-lbl">{label}</span>}
+      <svg className={`spark sp-${state}`} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+        <polygon className="spark-area" points={areaPts} />
+        <polyline className="spark-line" points={pts} />
+        <circle className="spark-dot" cx={lastX.toFixed(1)} cy={lastY.toFixed(1)} r="2.5" />
+      </svg>
     </div>
   )
 }
 
-// SVG donut gauge (0-100%)
-export function DonutGauge({ value, max, color, label, size = 56 }) {
-  const pct = max ? Math.min(value / max, 1) : Math.min(value / 100, 1)
-  const r = (size - 8) / 2
+// ── Donut gauge: matches the generator's donut() function
+// <svg class="gauge" ...><circle class="g-track" .../><circle class="g-val" .../></svg>
+export function DonutGauge({ label, pct, state = 'ok' }) {
+  const r = 28, cx = 34, cy = 34
   const circ = 2 * Math.PI * r
-  const dash = pct * circ
-  const c = size / 2
+  const dash = Math.min(pct / 100, 1) * circ
+  const color = state === 'crit' ? 'var(--crit)' : state === 'warn' ? 'var(--warn)' : 'var(--green)'
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle cx={c} cy={c} r={r} fill="none" stroke="var(--gauge-track-color, #1a1a1a)" strokeWidth={6} />
+    <div className="gauge" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+      <svg width="68" height="68" viewBox="0 0 68 68">
+        <circle className="g-track" cx={cx} cy={cy} r={r} fill="none" strokeWidth="6" />
         <circle
-          cx={c} cy={c} r={r}
-          fill="none"
-          stroke={color || 'var(--gauge-fill-ok, #00ff41)'}
-          strokeWidth={6}
-          strokeDasharray={`${dash} ${circ}`}
+          className="g-val"
+          cx={cx} cy={cy} r={r}
+          fill="none" strokeWidth="6"
+          stroke={color}
+          strokeDasharray={`${dash.toFixed(1)} ${circ.toFixed(1)}`}
           strokeLinecap="round"
-          transform={`rotate(-90 ${c} ${c})`}
+          transform={`rotate(-90 ${cx} ${cy})`}
         />
-        <text x={c} y={c + 1} textAnchor="middle" dominantBaseline="middle"
-          fontSize="9" fill="var(--text-primary, #e0e0e0)" fontFamily="inherit">
-          {Math.round(pct * 100)}%
+        <text x={cx} y={cy+1} textAnchor="middle" dominantBaseline="middle"
+          style={{ fontSize: 12, fill: color, fontFamily: 'inherit', fontWeight: 700 }}>
+          {Math.round(pct)}%
         </text>
       </svg>
-      {label && <span style={{ fontSize: 9, color: 'var(--text-muted, #555)', maxWidth: size, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>}
+      <span className="g-lbl" style={{ fontSize: 10, color: 'var(--muted)', textAlign: 'center', maxWidth: 68, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </div>
   )
 }
 
-// State color helper
+// ── Horizontal progress bar: matches qbar/qbar-f
+export function QBar({ pct, state = 'ok' }) {
+  const color = state === 'crit' ? 'var(--crit)' : state === 'warn' ? 'var(--warn)' : 'var(--green)'
+  return (
+    <div className="qbar">
+      <div className="qbar-f" style={{ width: `${Math.min(pct, 100)}%`, background: color }} />
+    </div>
+  )
+}
+
+// ── H-bar (uptime bar cells) — matches hbar structure
+export function HBar({ name, cells, legend }) {
+  return (
+    <div className="hbar-row">
+      <div className="hbar-name">{name}</div>
+      <div className="hbar-cells">
+        {cells.map((c, i) => (
+          <div key={i} className={`hbar-cell b-${c}`} title={c} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── MetricRow alias — kept for backward compat but emits Metric
+export function MetricRow({ label, value, valueColor, style }) {
+  // Map valueColor to state
+  let state = ''
+  if (valueColor) {
+    if (valueColor.includes('ff3') || valueColor.includes('crit')) state = 'crit'
+    else if (valueColor.includes('warn') || valueColor.includes('ffaa') || valueColor.includes('ffcc')) state = 'warn'
+    else if (valueColor.includes('ok') || valueColor.includes('00ff')) state = 'ok'
+  }
+  return <Metric label={label} value={value} state={state} />
+}
+
+// Keep for backward compat
+export const SectionHeader_ = SectionHeader
+
 export function stateToColor(state) {
   switch (state) {
-    case 'ok': return 'var(--ok-color, #00ff41)'
-    case 'warn': return 'var(--warn-color, #ffaa00)'
-    case 'crit':
-    case 'critical': return 'var(--critical-color, #ff0000)'
-    case 'error': return 'var(--error-color, #ff3333)'
-    case 'degraded': return 'var(--text-muted, #555)'
-    default: return 'var(--text-secondary, #a0a0a0)'
+    case 'ok': return 'var(--green)'
+    case 'warn': return 'var(--warn)'
+    case 'crit': case 'critical': case 'error': return 'var(--crit)'
+    default: return 'var(--muted)'
   }
 }

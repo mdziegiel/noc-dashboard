@@ -1,10 +1,119 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchLayout, fetchThemes, fetchConfig, saveLayout } from './api.js'
-import { applyTheme, resolveTheme } from './theme.js'
-import TopBar from './components/TopBar.jsx'
-import TickerBar from './components/TickerBar.jsx'
-import CardGrid from './components/CardGrid.jsx'
-import AlertHistoryPanel, { useAlertHistory } from './components/AlertHistoryPanel.jsx'
+import GridLayout from 'react-grid-layout'
+import 'react-grid-layout/css/styles.css'
+import 'react-resizable/css/styles.css'
+import CardWrapper from './components/CardWrapper.jsx'
+import AddCardPanel from './components/AddCardPanel.jsx'
+import SettingsPanel from './components/SettingsPanel.jsx'
+
+// Map card type -> section label (matches generate_dashboard.py section order)
+const SECTION_MAP = {
+  wan_health:     'System Status',
+  proxmox:        'System Status',
+  home_assistant: 'System Status',
+  uptime_kuma:    'System Status',
+  docker:         'System Status',
+  pbs:            'System Status',
+  urbackup:       'System Status',
+  smart_health:   'System Status',
+  unifi:          'Security & Network',
+  nginx_proxy:    'Security & Network',
+  cloudflare:     'Security & Network',
+  wazuh:          'Security & Network',
+  crowdsec:       'Security & Network',
+  limacharlie:    'Security & Network',
+  adguard:        'Security & Network',
+  tailscale:      'Security & Network',
+  malware_sources:'Security & Network',
+  plex:           'Media & Downloads',
+  tautulli:       'Media & Downloads',
+  sonarr:         'Media & Downloads',
+  radarr:         'Media & Downloads',
+  sabnzbd:        'Media & Downloads',
+  overseerr:      'Media & Downloads',
+  prowlarr:       'Media & Downloads',
+  qnap:           'Storage',
+  proxmox_storage:'Storage',
+  custom_url:     'Monitoring',
+}
+
+const COLS = 4
+const ROW_HEIGHT = 60
+const MARGIN = [12, 12]
+
+function formatDate(d) {
+  if (!d) return ''
+  return d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' })
+    + ' ' + d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit', timeZoneName:'short' })
+}
+
+function HealthBadge({ cards, cardData }) {
+  // Compute worst state across all cards with data
+  let worst = 'ok'
+  for (const card of cards) {
+    const data = cardData[card.type]
+    const state = data?.state
+    if (state === 'crit' || state === 'critical' || state === 'error') { worst = 'crit'; break }
+    if (state === 'warn' && worst !== 'crit') worst = 'warn'
+  }
+  const label = worst === 'crit' ? 'CRITICAL' : worst === 'warn' ? 'WARNING' : 'ALL SYSTEMS OK'
+  return (
+    <div className={`health h-${worst}`}>
+      <span className="led" />
+      {label}
+    </div>
+  )
+}
+
+function TickerBar({ cards, cardData }) {
+  // Build ticker items from alerts/warnings in card data
+  const items = []
+  for (const card of cards) {
+    const data = cardData[card.type]
+    if (!data) continue
+    const st = data.state
+    if (st === 'crit' || st === 'critical' || st === 'error') {
+      const note = data.note || data.error || `${card.title} ${st}`
+      items.push({ text: note, level: 'crit' })
+    } else if (st === 'warn') {
+      const note = data.note || `${card.title} warning`
+      items.push({ text: note, level: 'warn' })
+    }
+  }
+
+  const worst = items.some(i => i.level === 'crit') ? 'crit'
+              : items.some(i => i.level === 'warn') ? 'warn' : 'ok'
+
+  if (items.length === 0) {
+    return (
+      <div className="ticker-bar">
+        <div className={`tk-badge tb-${worst}`}>OK</div>
+        <div className="tk-track">
+          <div className="tk-content" id="tk-content">
+            <span className="tk-item t-ok">All systems nominal</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="ticker-bar">
+      <div className={`tk-badge tb-${worst}`}>{worst === 'crit' ? 'ALERT' : 'WARN'}</div>
+      <div className="tk-track">
+        <div className="tk-content" id="tk-content">
+          {items.map((item, i) => (
+            <React.Fragment key={i}>
+              <span className={`tk-item t-${item.level}`}>{item.text}</span>
+              {i < items.length - 1 && <span className="tk-sep">◆</span>}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function App() {
   const [layout, setLayout] = useState(null)
@@ -13,169 +122,132 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null)
   const [loading, setLoading] = useState(true)
   const [editMode, setEditMode] = useState(false)
-  const [alertPanelOpen, setAlertPanelOpen] = useState(false)
+  const [showAdd, setShowAdd] = useState(false)
+  const [cardData, setCardData] = useState({})        // card.type -> latest data
+  const [settingsCard, setSettingsCard] = useState(null)
+  const [containerWidth, setContainerWidth] = useState(
+    typeof window !== 'undefined' ? window.innerWidth - MARGIN[0] * 2 : 1200
+  )
   const saveTimerRef = useRef(null)
   const layoutRef = useRef(null)
 
-  const { events: alertEvents, unread: alertUnread, appendEvents, setPanelOpen, clearHistory } = useAlertHistory()
-
-  // SSE connection for live card-data pushes + alert history updates
-  const sseRef = useRef(null)
-  const [sseData, setSseData] = useState({})  // card_type -> latest data
+  useEffect(() => {
+    function handleResize() { setContainerWidth(window.innerWidth - MARGIN[0] * 2) }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   useEffect(() => {
     Promise.all([fetchLayout(), fetchThemes(), fetchConfig()])
       .then(([lay, thms, cfg]) => {
-        setLayout(lay)
-        setThemes(thms)
-        setConfig(cfg)
+        setLayout(lay); setThemes(thms); setConfig(cfg)
         setLastUpdated(new Date())
         layoutRef.current = lay
-        const themeName = resolveTheme(lay)
-        if (thms[themeName]) applyTheme(thms[themeName])
+        // Apply theme via data-theme attribute on <html>
+        const themeName = lay?.theme || 'dark-noc'
+        applyThemeAttr(themeName)
         setLoading(false)
       })
-      .catch(err => {
-        console.error('Failed to load app data:', err)
-        setLoading(false)
-      })
+      .catch(() => setLoading(false))
   }, [])
 
-  // Auto-theme switcher
+  // Auto theme switch
   useEffect(() => {
     if (!layout?.autoTheme) return
-    const interval = setInterval(() => {
-      const themeName = resolveTheme(layoutRef.current)
-      if (themeName && themes[themeName]) {
-        applyTheme(themes[themeName])
-      }
+    const t = setInterval(() => {
+      const lay = layoutRef.current
+      if (!lay) return
+      const hour = new Date().getHours()
+      const dayStart = lay.dayStart ?? 7
+      const nightStart = lay.nightStart ?? 19
+      const themeName = (hour >= dayStart && hour < nightStart)
+        ? (lay.dayTheme || lay.theme)
+        : (lay.nightTheme || lay.theme)
+      applyThemeAttr(themeName)
     }, 60000)
-    return () => clearInterval(interval)
-  }, [layout?.autoTheme, themes])
-
-  // SSE — connect once on mount, reconnect on disconnect
-  useEffect(() => {
-    let es = null
-    let reconnectTimer = null
-
-    function connect() {
-      if (es) { es.close(); es = null }
-      try {
-        es = new EventSource('/api/events')
-        sseRef.current = es
-
-        es.onmessage = (evt) => {
-          try {
-            const msg = JSON.parse(evt.data)
-            if (msg.type === 'card_update' && msg.card_type && msg.data) {
-              setSseData(prev => ({ ...prev, [msg.card_type]: msg.data }))
-            } else if (msg.type === 'alert_history_update' && msg.new_events) {
-              // New alert events from backend — merge into local history
-              appendEvents(msg.new_events)
-            }
-          } catch {}
-        }
-
-        es.onerror = () => {
-          es?.close()
-          reconnectTimer = setTimeout(connect, 5000)
-        }
-      } catch {}
-    }
-
-    connect()
-    return () => {
-      es?.close()
-      if (reconnectTimer) clearTimeout(reconnectTimer)
-    }
-  }, [appendEvents])
-
-  // Dynamic favicon — updates color based on overall health
-  useEffect(() => {
-    async function syncFavicon() {
-      try {
-        const r = await fetch('/api/status-overview')
-        if (!r.ok) return
-        const d = await r.json()
-        const { ok = 0, warn = 0, crit = 0, error = 0 } = d
-        let color = '#00ff41'
-        if (crit + error > 0) color = '#ff0000'
-        else if (warn > 0) color = '#ffaa00'
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="${color}"/></svg>`
-        let link = document.querySelector('link[rel="icon"]')
-        if (!link) {
-          link = document.createElement('link')
-          link.rel = 'icon'
-          link.type = 'image/svg+xml'
-          document.head.appendChild(link)
-        }
-        link.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
-      } catch {}
-    }
-    syncFavicon()
-    const t = setInterval(syncFavicon, 30000)
     return () => clearInterval(t)
-  }, [])
-
-  // Also sync favicon when SSE pushes card updates (any state change)
-  useEffect(() => {
-    if (Object.keys(sseData).length === 0) return
-    // Compute worst state from sseData
-    let worst = 'ok'
-    for (const d of Object.values(sseData)) {
-      const st = d?.state
-      if (st === 'crit' || st === 'critical' || st === 'error') { worst = 'crit'; break }
-      if (st === 'warn' && worst !== 'crit') worst = 'warn'
-    }
-    const color = worst === 'crit' ? '#ff0000' : worst === 'warn' ? '#ffaa00' : '#00ff41'
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="${color}"/></svg>`
-    let link = document.querySelector('link[rel="icon"]')
-    if (!link) {
-      link = document.createElement('link')
-      link.rel = 'icon'
-      link.type = 'image/svg+xml'
-      document.head.appendChild(link)
-    }
-    link.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
-  }, [sseData])
+  }, [layout?.autoTheme])
 
   const debouncedSave = useCallback((newLayout) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      saveLayout(newLayout).catch(err => console.error('Save layout failed:', err))
+      saveLayout(newLayout).catch(() => {})
     }, 500)
   }, [])
 
+  function applyThemeAttr(name) {
+    // Map theme names to data-theme attribute values used in CSS
+    const themeMap = {
+      'dark-noc': '',         // default (no attribute = dark)
+      'light-clean': 'light',
+      'midnight-blue': 'midnight',
+      'solarized-dark': 'solarized',
+      'dracula': 'dracula',
+      'nord': 'nord',
+      'gruvbox': 'gruvbox',
+      'tokyo': 'tokyo',
+    }
+    const attr = themeMap[name] ?? ''
+    if (attr) {
+      document.documentElement.setAttribute('data-theme', attr)
+    } else {
+      document.documentElement.removeAttribute('data-theme')
+    }
+    // Store on body too (reference uses body[data-theme] in some places)
+    if (attr) {
+      document.body.setAttribute('data-theme', attr)
+    } else {
+      document.body.removeAttribute('data-theme')
+    }
+  }
+
+  function cycleTheme() {
+    const themeNames = ['dark-noc','light-clean','midnight-blue','solarized-dark','dracula','nord','gruvbox']
+    const cur = layout?.theme || 'dark-noc'
+    const idx = themeNames.indexOf(cur)
+    const next = themeNames[(idx + 1) % themeNames.length]
+    const newLayout = { ...layoutRef.current, theme: next }
+    setLayout(newLayout); layoutRef.current = newLayout
+    applyThemeAttr(next)
+    debouncedSave(newLayout)
+  }
+
+  // Receive data back from CardWrapper children
+  const handleCardData = useCallback((cardType, data) => {
+    setCardData(prev => ({ ...prev, [cardType]: data }))
+  }, [])
+
   const handleLayoutChange = useCallback((newLayout) => {
-    setLayout(newLayout)
-    layoutRef.current = newLayout
+    setLayout(newLayout); layoutRef.current = newLayout
     debouncedSave(newLayout)
   }, [debouncedSave])
 
-  const handleThemeChange = useCallback((themeName) => {
-    const newLayout = { ...layoutRef.current, theme: themeName }
-    setLayout(newLayout)
-    layoutRef.current = newLayout
-    if (themes[themeName]) applyTheme(themes[themeName])
+  const handleGridChange = useCallback((newItems) => {
+    const cards = layoutRef.current?.cards || []
+    const posMap = {}
+    newItems.forEach(item => { posMap[item.i] = item })
+    const updatedCards = cards.map(card => {
+      const pos = posMap[card.id]
+      if (!pos) return card
+      return { ...card, x: pos.x, y: pos.y, w: pos.w, h: pos.h }
+    })
+    const newLayout = { ...layoutRef.current, cards: updatedCards }
+    setLayout(newLayout); layoutRef.current = newLayout
     debouncedSave(newLayout)
-  }, [themes, debouncedSave])
+  }, [debouncedSave])
 
   const handleAddCard = useCallback((cardType, cardTypeInfo) => {
     const cards = layoutRef.current?.cards || []
-    const maxY = cards.reduce((m, c) => Math.max(m, (c.y || 0) + (c.h || 2)), 0)
+    const maxY = cards.reduce((m, c) => Math.max(m, (c.y || 0) + (c.h || 3)), 0)
     const newCard = {
       id: `${cardType}_${Date.now()}`,
       type: cardType,
-      title: cardTypeInfo?.label || cardType,
-      x: 0,
-      y: maxY,
-      w: 2,
-      h: 3,
+      title: cardTypeInfo?.label || cardType.toUpperCase(),
+      x: 0, y: maxY, w: 1, h: 3,
       config: { refresh_seconds: 60 },
     }
     const newLayout = { ...layoutRef.current, cards: [...cards, newCard] }
-    setLayout(newLayout)
-    layoutRef.current = newLayout
+    setLayout(newLayout); layoutRef.current = newLayout
     debouncedSave(newLayout)
   }, [debouncedSave])
 
@@ -184,106 +256,177 @@ export default function App() {
       c.id === cardId ? { ...c, ...updates } : c
     )
     const newLayout = { ...layoutRef.current, cards }
-    setLayout(newLayout)
-    layoutRef.current = newLayout
+    setLayout(newLayout); layoutRef.current = newLayout
     debouncedSave(newLayout)
   }, [debouncedSave])
 
   const handleRemoveCard = useCallback((cardId) => {
     const cards = (layoutRef.current?.cards || []).filter(c => c.id !== cardId)
     const newLayout = { ...layoutRef.current, cards }
-    setLayout(newLayout)
-    layoutRef.current = newLayout
+    setLayout(newLayout); layoutRef.current = newLayout
     debouncedSave(newLayout)
   }, [debouncedSave])
 
   if (loading) {
     return (
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: '100vh',
-        gap: 16,
-      }}>
-        <span style={{
-          fontSize: 13,
-          color: 'var(--accent, #00ff41)',
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-        }}>
-          Initializing NOC Dashboard...
-        </span>
-        <span style={{ fontSize: 10, color: 'var(--text-muted, #555)', letterSpacing: '0.06em' }}>
-          Connecting to ANTON
-        </span>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', color:'var(--green,#00ff41)' }}>
+        Initializing NOC Dashboard...
       </div>
     )
   }
 
-  return (
-    <div
-      className={editMode ? 'edit-mode' : ''}
-      style={{ minHeight: '100vh', background: 'var(--background, #0a0a0a)' }}
-    >
-      <TopBar
-        config={config}
-        themes={themes}
-        currentTheme={layout?.theme}
-        onThemeChange={handleThemeChange}
-        onAddCard={handleAddCard}
-        lastUpdated={lastUpdated}
-        editMode={editMode}
-        onEditModeToggle={() => setEditMode(m => !m)}
-        alertCount={alertUnread}
-        onBellClick={() => {
-          setAlertPanelOpen(o => !o)
-          setPanelOpen(!alertPanelOpen)
-        }}
-      />
-      <TickerBar />
-      <CardGrid
-        layout={layout}
-        onLayoutChange={handleLayoutChange}
-        onUpdateCard={handleUpdateCard}
-        onRemoveCard={handleRemoveCard}
-        editMode={editMode}
-        sseData={sseData}
-      />
+  const cards = layout?.cards || []
 
-      {/* Edit mode overlay banner */}
+  // Group cards into sections by y-position order
+  const sortedCards = [...cards].sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x)
+
+  // Build sections in the order defined by SECTION_MAP (preserving fixed section order)
+  const SECTION_ORDER = [
+    'System Status',
+    'Security & Network',
+    'Media & Downloads',
+    'Storage',
+    'Monitoring',
+  ]
+
+  // Build sections map from sorted cards
+  const sectionCards = {}
+  SECTION_ORDER.forEach(s => { sectionCards[s] = [] })
+  const customSection = {}
+  for (const card of sortedCards) {
+    const section = SECTION_MAP[card.type] || 'Monitoring'
+    if (!sectionCards[section]) sectionCards[section] = []
+    sectionCards[section].push(card)
+  }
+
+  // Build RGL grid items
+  const gridItems = cards.map(card => ({
+    i: card.id, x: card.x ?? 0, y: card.y ?? 0, w: card.w ?? 1, h: card.h ?? 3,
+  }))
+
+  const themeLabel = (layout?.theme || 'dark-noc').toUpperCase().replace(/-/g, ' ')
+
+  return (
+    <div>
+      {/* Topbar — exact structure from generate_dashboard.py */}
+      <div className="topbar">
+        <div className="brand">
+          <h1>{config?.title || 'MRDTech Homelab'}</h1>
+          <span className="tag">{config?.subtitle || 'NOC // ANTON'}</span>
+        </div>
+        <div className="top-right">
+          <div className="ts">
+            UPDATED <b>{lastUpdated ? formatDate(lastUpdated) : '—'}</b>
+          </div>
+          <HealthBadge cards={cards} cardData={cardData} />
+          {/* Edit mode toggle — replaces alert bell slot */}
+          <button
+            className="theme-btn"
+            onClick={() => setEditMode(m => !m)}
+            title={editMode ? 'Exit Edit Mode' : 'Edit Layout'}
+            style={{ color: editMode ? 'var(--green)' : undefined, borderColor: editMode ? 'var(--green)' : undefined }}
+          >
+            {editMode ? '✓ EDITING' : '✎ EDIT'}
+          </button>
+          {editMode && (
+            <button className="theme-btn" onClick={() => setShowAdd(true)} title="Add card"
+              style={{ background:'var(--green)', color:'#000', border:'none', fontWeight:700 }}>
+              + ADD
+            </button>
+          )}
+          <button
+            className="theme-btn"
+            onClick={cycleTheme}
+            title="Cycle theme"
+          >
+            &#9680; {themeLabel}
+          </button>
+        </div>
+      </div>
+
+      {/* Ticker bar */}
+      <TickerBar cards={cards} cardData={cardData} />
+
+      {/* Main grid — react-grid-layout filling the wrap div */}
+      <div className="wrap" style={{ padding: 0 }}>
+        <GridLayout
+          className="layout"
+          layout={gridItems}
+          cols={COLS}
+          rowHeight={ROW_HEIGHT}
+          width={containerWidth}
+          margin={MARGIN}
+          draggableHandle=".card-drag-handle"
+          onLayoutChange={handleGridChange}
+          isDraggable={editMode}
+          isResizable={editMode}
+          useCSSTransforms={true}
+          style={{ minHeight: 400 }}
+        >
+          {cards.map(card => (
+            <div key={card.id}>
+              <CardWrapper
+                card={card}
+                onUpdate={handleUpdateCard}
+                onRemove={handleRemoveCard}
+                onOpenSettings={setSettingsCard}
+                onData={handleCardData}
+                editMode={editMode}
+              />
+            </div>
+          ))}
+        </GridLayout>
+      </div>
+
+      <footer>MRDTECH INFRASTRUCTURE MONITORING · AUTO-REFRESH 60s · REGEN 15m</footer>
+
+      {/* Card modal (reference feature — focus a card) */}
+      <div id="card-modal" className="card-modal" onClick={e => {
+        if (e.target.id === 'card-modal') { e.currentTarget.style.display = 'none' }
+      }} style={{ display: 'none' }}>
+        <div className="card-modal-box">
+          <button className="card-modal-close" onClick={() => document.getElementById('card-modal').style.display='none'}>×</button>
+          <div id="card-modal-title" className="card-modal-title"></div>
+          <div id="card-modal-body" className="card-modal-body"></div>
+        </div>
+      </div>
+
+      {/* Alert panel */}
+      <div id="alert-overlay" className="alert-overlay" onClick={() => {
+        document.getElementById('alert-panel')?.classList.remove('open')
+        document.getElementById('alert-overlay').style.display = 'none'
+      }} style={{ display: 'none' }} />
+      <div id="alert-panel" className="alert-panel">
+        <div className="alert-panel-hdr">
+          <span>ALERT HISTORY</span>
+          <button onClick={() => document.getElementById('alert-panel')?.classList.remove('open')}>×</button>
+        </div>
+        <ul id="alert-feed" className="alert-feed"></ul>
+        <div className="alert-panel-empty" id="alert-empty">No alert history recorded yet.</div>
+      </div>
+
+      {/* Edit mode bottom banner */}
       {editMode && (
-        <div style={{
-          position: 'fixed',
-          bottom: 16,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'rgba(0,0,0,0.9)',
-          border: '1px solid var(--accent, #00ff41)',
-          borderRadius: 4,
-          padding: '6px 20px',
-          fontSize: 11,
-          color: 'var(--accent, #00ff41)',
-          letterSpacing: '0.1em',
-          zIndex: 1000,
-          pointerEvents: 'none',
-        }}>
-          EDIT MODE — Drag cards · Resize · Click ⚙ to configure · Click ✕ to remove
+        <div className="edit-mode-banner">
+          EDIT MODE — Drag cards · Resize corners · ⚙ to configure · ✕ to remove
         </div>
       )}
 
-      {/* Alert history slide-out panel */}
-      <AlertHistoryPanel
-        open={alertPanelOpen}
-        onClose={() => {
-          setAlertPanelOpen(false)
-          setPanelOpen(false)
-        }}
-        events={alertEvents}
-        unread={alertUnread}
-        onClear={clearHistory}
-      />
+      {showAdd && (
+        <AddCardPanel
+          onAdd={(type, info) => { handleAddCard(type, info); setShowAdd(false) }}
+          onClose={() => setShowAdd(false)}
+        />
+      )}
+
+      {settingsCard && (
+        <SettingsPanel
+          card={settingsCard}
+          onSave={updates => { handleUpdateCard(settingsCard.id, updates); setSettingsCard(null) }}
+          onRemove={id => { handleRemoveCard(id); setSettingsCard(null) }}
+          onClose={() => setSettingsCard(null)}
+        />
+      )}
     </div>
   )
 }

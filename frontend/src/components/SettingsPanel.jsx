@@ -57,7 +57,7 @@ const labelStyle = {
   fontSize: 10,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
-  color: 'var(--text-muted, #555)',
+  color: 'var(--muted)',
   marginBottom: 4,
 }
 
@@ -123,8 +123,8 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
         zIndex: 1,
         width: 320,
         height: '100vh',
-        background: 'var(--card-background, #111)',
-        borderLeft: '1px solid var(--card-border, #1e1e1e)',
+        background: 'var(--panel)',
+        borderLeft: '1px solid var(--line)',
         display: 'flex',
         flexDirection: 'column',
         overflowY: 'auto',
@@ -136,17 +136,17 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '12px 16px',
-          borderBottom: '1px solid var(--card-border, #1e1e1e)',
+          borderBottom: '1px solid var(--line)',
           position: 'sticky',
           top: 0,
-          background: 'var(--card-background, #111)',
+          background: 'var(--panel)',
           zIndex: 1,
         }}>
-          <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--accent, #00ff41)' }}>
+          <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--green)' }}>
             Card Settings
           </span>
           <button
-            style={{ background: 'none', border: 'none', color: 'var(--text-muted, #555)', cursor: 'pointer', fontSize: 16, fontFamily: 'inherit' }}
+            style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 16, fontFamily: 'inherit' }}
             onClick={onClose}
           >✕</button>
         </div>
@@ -157,7 +157,7 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
           {/* Type label (read-only) */}
           <div style={fieldStyle}>
             <label style={labelStyle}>Card Type</label>
-            <div style={{ fontSize: 11, color: 'var(--text-muted, #555)', letterSpacing: '0.04em' }}>
+            <div style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '0.04em' }}>
               {card.type}
             </div>
           </div>
@@ -176,17 +176,17 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
               style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px' }}
               onClick={() => setShowIconPicker(p => !p)}
             >
-              {icon ? <Icon name={icon} size={14} color="var(--accent, #00ff41)" /> : '—'}
+              {icon ? <Icon name={icon} size={14} color="var(--green)" /> : '—'}
               <span style={{ fontSize: 11, flex: 1 }}>{icon || 'Auto (default)'}</span>
-              <span style={{ fontSize: 10, color: 'var(--text-muted, #555)' }}>{showIconPicker ? '▲' : '▼'}</span>
+              <span style={{ fontSize: 10, color: 'var(--muted)' }}>{showIconPicker ? '▲' : '▼'}</span>
             </button>
             {showIconPicker && (
               <div style={{
                 marginTop: 6,
-                border: '1px solid var(--card-border, #1e1e1e)',
+                border: '1px solid var(--line)',
                 borderRadius: 3,
                 padding: 8,
-                background: 'var(--background, #0a0a0a)',
+                background: 'var(--bg)',
                 display: 'grid',
                 gridTemplateColumns: 'repeat(5, 1fr)',
                 gap: 4,
@@ -210,11 +210,11 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      borderColor: icon === ic ? 'var(--accent, #00ff41)' : undefined,
+                      borderColor: icon === ic ? 'var(--green)' : undefined,
                     }}
                     onClick={() => { setIcon(ic); setShowIconPicker(false) }}
                   >
-                    <Icon name={ic} size={13} color={icon === ic ? 'var(--accent, #00ff41)' : 'var(--text-muted, #555)'} />
+                    <Icon name={ic} size={13} color={icon === ic ? 'var(--green)' : 'var(--muted)'} />
                   </button>
                 ))}
               </div>
@@ -230,8 +230,8 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
                 style={{
                   fontSize: 10,
                   padding: '2px 8px',
-                  borderColor: graph ? 'var(--accent, #00ff41)' : undefined,
-                  color: graph ? 'var(--accent, #00ff41)' : undefined,
+                  borderColor: graph ? 'var(--green)' : undefined,
+                  color: graph ? 'var(--green)' : undefined,
                 }}
                 onClick={() => setGraph(g => !g)}
               >
@@ -265,7 +265,7 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
                     style={{ flex: 1 }}
                     value={graphColor}
                     onChange={e => setGraphColor(e.target.value)}
-                    placeholder="var(--graph-line-color)"
+                    placeholder="var(--green)"
                   />
                 </div>
               </div>
@@ -313,13 +313,13 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose }) {
         {/* Footer */}
         <div style={{
           padding: 16,
-          borderTop: '1px solid var(--card-border, #1e1e1e)',
+          borderTop: '1px solid var(--line)',
           display: 'flex',
           flexDirection: 'column',
           gap: 8,
           position: 'sticky',
           bottom: 0,
-          background: 'var(--card-background, #111)',
+          background: 'var(--panel)',
         }}>
           <button className="btn-accent" onClick={handleSave}>
             Save Changes

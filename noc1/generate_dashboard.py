@@ -1794,7 +1794,7 @@ def donut(name, pct):
 
 def card(title, badge_state, body_html, sub=""):
     sub_html = f'<div class="sub">{sub}</div>' if sub else ""
-    return f"""<div class="card s-{badge_state}">
+    return f"""<div class="card s-{badge_state}" data-title="{esc(title)}" data-state="{badge_state}" onclick="focusCard(this)" style="cursor:pointer">
       <div class="card-h"><span class="dot"></span><h3>{esc(title)}</h3></div>
       <div class="card-b">{body_html}</div>{sub_html}
     </div>"""
@@ -2974,6 +2974,13 @@ PAGE = """<!DOCTYPE html>
   .bell-badge {{ background:var(--crit); color:#fff; border-radius:50%;
     font-size:9px; padding:1px 4px; margin-left:3px;
     display:none; vertical-align:super; }}
+  /* ── Edit mode ── */
+  .edit-mode .row {{ outline: 1px dashed var(--green-dim); outline-offset: 4px; }}
+  .edit-mode .card {{ cursor: grab !important; user-select: none; }}
+  .edit-mode .card:active {{ cursor: grabbing !important; }}
+  .sortable-ghost {{ opacity: 0.35; background: var(--panel2) !important; outline: 2px solid var(--green) !important; }}
+  .sortable-drag {{ opacity: 0.9; box-shadow: 0 8px 24px rgba(0,255,65,0.35) !important; }}
+  #edit-btn.active {{ color: var(--green); border-color: var(--green); background: rgba(0,255,65,0.08); }}
 </style></head>
 <body>
   <div class="topbar">
@@ -2984,6 +2991,8 @@ PAGE = """<!DOCTYPE html>
       <div class="ts">UPDATED <b>{ts}</b></div>
       <div class="health h-{overall}"><span class="led"></span>{overall_txt}</div>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
+      <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
+      <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
     </div>
   </div>
@@ -3152,6 +3161,89 @@ PAGE = """<!DOCTYPE html>
   }};
   ingestCurrentAlerts();
   renderAlertHistory();
+
+  // ── Edit Mode (SortableJS) ────────────────────────────────────────────────
+  var _editActive = false;
+  var _sortables = [];
+
+  window.toggleEditMode = function() {{
+    _editActive = !_editActive;
+    document.body.classList.toggle('edit-mode', _editActive);
+    var btn = document.getElementById('edit-btn');
+    var saveBtn = document.getElementById('save-btn');
+    if (btn) {{ btn.classList.toggle('active', _editActive); btn.innerHTML = _editActive ? '&#10003; DONE' : '&#9998; EDIT'; }}
+    if (saveBtn) saveBtn.style.display = _editActive ? 'inline-block' : 'none';
+    if (_editActive) {{ enableSort(); }} else {{ disableSort(); }}
+  }};
+
+  function enableSort() {{
+    if (typeof Sortable !== 'undefined') {{ initSortables(); return; }}
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js';
+    s.onload = initSortables;
+    document.head.appendChild(s);
+  }}
+  function initSortables() {{
+    _sortables = [];
+    document.querySelectorAll('.row').forEach(function(row) {{
+      _sortables.push(Sortable.create(row, {{
+        animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag', handle: '.card',
+      }}));
+    }});
+  }}
+  function disableSort() {{
+    _sortables.forEach(function(s) {{ try {{ s.destroy(); }} catch(e) {{}} }});
+    _sortables = [];
+  }}
+
+  window.saveLayout = function() {{
+    var layout = {{}};
+    document.querySelectorAll('.section-label').forEach(function(lbl) {{
+      var name = lbl.textContent.trim();
+      var row = lbl.nextElementSibling;
+      if (!row) return;
+      var titles = [];
+      row.querySelectorAll('.card').forEach(function(c) {{
+        titles.push(c.getAttribute('data-title') || (c.querySelector('h3') ? c.querySelector('h3').textContent : ''));
+      }});
+      layout[name] = titles;
+    }});
+    fetch('/save-layout', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(layout)
+    }}).then(function(r) {{
+      var btn = document.getElementById('save-btn');
+      if (r.ok) {{ if (btn) {{ btn.textContent = '\\u2713 SAVED!'; setTimeout(function() {{ btn.innerHTML = '\\u2713 SAVE'; }}, 2000); }} }}
+      else {{ alert('Save failed: ' + r.status); }}
+    }}).catch(function(e) {{ alert('Error: ' + e.message); }});
+  }};
+
+  // Apply saved layout on page load (reorder DOM cards to match saved order)
+  (function applyStoredLayout() {{
+    fetch('/layout.json').then(function(r) {{ return r.ok ? r.json() : null; }}).then(function(layout) {{
+      if (!layout) return;
+      document.querySelectorAll('.section-label').forEach(function(lbl) {{
+        var name = lbl.textContent.trim();
+        var order = layout[name];
+        if (!order || !order.length) return;
+        var row = lbl.nextElementSibling;
+        if (!row) return;
+        var cardEls = Array.from(row.querySelectorAll('.card'));
+        var cardMap = {{}};
+        cardEls.forEach(function(c) {{
+          var t = c.getAttribute('data-title') || (c.querySelector('h3') ? c.querySelector('h3').textContent : '');
+          cardMap[t] = c;
+        }});
+        // Append in saved order, then remaining
+        var seen = new Set(order);
+        order.forEach(function(title) {{ if (cardMap[title]) row.appendChild(cardMap[title]); }});
+        cardEls.forEach(function(c) {{
+          var t = c.getAttribute('data-title') || '';
+          if (!seen.has(t)) row.appendChild(c);
+        }});
+      }});
+    }}).catch(function() {{ /* no layout.json yet, use default order */ }});
+  }})();
+
 }})();
 </script>
 </body></html>"""

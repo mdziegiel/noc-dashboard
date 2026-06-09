@@ -5,8 +5,8 @@ const CATEGORY_ORDER = ['Infrastructure', 'Security', 'Network', 'Storage', 'Med
 
 // Category colors
 const CATEGORY_COLORS = {
-  Infrastructure: 'var(--accent, #00ff41)',
-  Security:       'var(--warn-color, #ffaa00)',
+  Infrastructure: 'var(--green)',
+  Security:       'var(--warn)',
   Network:        '#00cfff',
   Storage:        '#a78bfa',
   Media:          '#f472b6',
@@ -105,8 +105,8 @@ export default function AddCardPanel({ onAdd, onClose }) {
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div style={{
-        background: 'var(--card-background, #111)',
-        border: '1px solid var(--card-border, #1e1e1e)',
+        background: 'var(--panel)',
+        border: '1px solid var(--line)',
         borderRadius: 4,
         width: 720,
         maxHeight: '75vh',
@@ -121,18 +121,18 @@ export default function AddCardPanel({ onAdd, onClose }) {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '10px 16px',
-          borderBottom: '1px solid var(--card-border, #1e1e1e)',
+          borderBottom: '1px solid var(--line)',
         }}>
           <span style={{
             fontSize: 11,
             textTransform: 'uppercase',
             letterSpacing: '0.12em',
-            color: 'var(--accent, #00ff41)',
+            color: 'var(--green)',
           }}>
             Add Card
           </span>
           <button
-            style={{ background: 'none', border: 'none', color: 'var(--text-muted, #555)', cursor: 'pointer', fontSize: 16, fontFamily: 'inherit' }}
+            style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 16, fontFamily: 'inherit' }}
             onClick={onClose}
           >✕</button>
         </div>
@@ -140,7 +140,7 @@ export default function AddCardPanel({ onAdd, onClose }) {
         {/* Search + category tabs */}
         <div style={{
           padding: '10px 16px 0',
-          borderBottom: '1px solid var(--card-border, #1e1e1e)',
+          borderBottom: '1px solid var(--line)',
           display: 'flex',
           flexDirection: 'column',
           gap: 8,
@@ -168,8 +168,8 @@ export default function AddCardPanel({ onAdd, onClose }) {
                   style={{
                     fontSize: 10,
                     padding: '2px 8px',
-                    borderColor: activeCategory === cat ? undefined : CATEGORY_COLORS[cat] || 'var(--card-border)',
-                    color: activeCategory === cat ? undefined : CATEGORY_COLORS[cat] || 'var(--text-secondary)',
+                    borderColor: activeCategory === cat ? undefined : CATEGORY_COLORS[cat] || 'var(--line)',
+                    color: activeCategory === cat ? undefined : CATEGORY_COLORS[cat] || 'var(--txt)',
                   }}
                   onClick={() => setActiveCategory(c => c === cat ? null : cat)}
                 >
@@ -185,7 +185,7 @@ export default function AddCardPanel({ onAdd, onClose }) {
           {visibleCats.map(cat => {
             const items = getFiltered(cat)
             if (!items.length) return null
-            const catColor = CATEGORY_COLORS[cat] || 'var(--accent, #00ff41)'
+            const catColor = CATEGORY_COLORS[cat] || 'var(--green)'
             return (
               <div key={cat}>
                 <div style={{
@@ -209,8 +209,8 @@ export default function AddCardPanel({ onAdd, onClose }) {
                       key={type}
                       onClick={() => onAdd(type, info)}
                       style={{
-                        background: 'var(--background, #0a0a0a)',
-                        border: '1px solid var(--card-border, #1e1e1e)',
+                        background: 'var(--bg)',
+                        border: '1px solid var(--line)',
                         borderLeft: `3px solid ${catColor}44`,
                         borderRadius: 3,
                         padding: '8px 10px',
@@ -225,9 +225,9 @@ export default function AddCardPanel({ onAdd, onClose }) {
                         e.currentTarget.style.background = `${catColor}08`
                       }}
                       onMouseLeave={e => {
-                        e.currentTarget.style.borderColor = 'var(--card-border, #1e1e1e)'
+                        e.currentTarget.style.borderColor = 'var(--line)'
                         e.currentTarget.style.borderLeftColor = `${catColor}44`
-                        e.currentTarget.style.background = 'var(--background, #0a0a0a)'
+                        e.currentTarget.style.background = 'var(--bg)'
                       }}
                     >
                       <span style={{ flexShrink: 0, marginTop: 1 }}>
@@ -245,7 +245,7 @@ export default function AddCardPanel({ onAdd, onClose }) {
                         </div>
                         <div style={{
                           fontSize: 10,
-                          color: 'var(--text-muted, #555)',
+                          color: 'var(--muted)',
                           lineHeight: 1.4,
                         }}>
                           {info.description || ''}
@@ -258,7 +258,7 @@ export default function AddCardPanel({ onAdd, onClose }) {
             )
           })}
           {visibleCats.length === 0 && (
-            <div style={{ color: 'var(--text-muted, #555)', fontSize: 12, padding: 8, textAlign: 'center' }}>
+            <div style={{ color: 'var(--muted)', fontSize: 12, padding: 8, textAlign: 'center' }}>
               No card types found for "{search}"
             </div>
           )}
