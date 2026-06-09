@@ -1,45 +1,71 @@
 import React from 'react'
-import { MetricRow, SectionHeader } from '../shared.jsx'
+import { M, Sub, Spark, fmt } from '../shared.jsx'
 
-export default function UnifiCard({ data, config, trends }) {
+export default function UnifiCard({ data, config }) {
   if (!data) return null
-  // Collector returns: wan (ok/down), wan_ip, clients, ips_24h, latency, down_mbps, up_mbps, devices[]
+  // wan_health and unifi share same collector
+  const wan = data.wan === 'ok' || data.wan_status === 'up' ? 'OK' : (data.wan || data.wan_status || '?').toUpperCase()
+  const wanState = (data.wan === 'ok' || data.wan_status === 'up') ? 'ok' : 'crit'
+  const ssids = data.ssids || []
   const devices = data.devices || []
-  const wanStatus = data.wan || data.wan_status || '—'
-  const throughput = (data.down_mbps != null && data.up_mbps != null)
-    ? `↓${data.down_mbps} ↑${data.up_mbps} Mbps`
-    : data.throughput || '—'
+  const pia = data.pia || {}
+  const monthRx = data.month_rx, monthTx = data.month_tx
+
+  // Format monthly data like the generator: "1019G↓ / 337G↑"
+  function fmtG(b) {
+    if (!b) return null
+    const g = b / 1e9
+    return g >= 1 ? `${Math.round(g)}G` : `${(g*1000).toFixed(0)}M`
+  }
+  const monthly = (monthRx && monthTx) ? `${fmtG(monthRx)}↓ / ${fmtG(monthTx)}↑` : null
+  const sub = data.wan_ip ? `${data.wan_ip}` : null
+
+  const ipsState = (data.ips_24h || 0) > 0 ? 'warn' : ''
 
   return (
-    <div>
-      <MetricRow
-        label="WAN"
-        value={wanStatus.toUpperCase()}
-        valueColor={wanStatus === 'ok' ? 'var(--ok-color, #00ff41)' : 'var(--error-color, #ff3333)'}
-      />
-      {data.wan_ip && <MetricRow label="WAN IP" value={data.wan_ip} />}
-      <MetricRow label="Clients" value={data.clients ?? '—'} />
-      <MetricRow label="Latency" value={data.latency != null ? `${data.latency}ms` : '—'} />
-      <MetricRow label="Throughput" value={throughput} />
-      <MetricRow
-        label="IPS Alerts"
-        value={data.ips_24h ?? data.ips_alerts ?? 0}
-        valueColor={(data.ips_24h || data.ips_alerts) > 0 ? 'var(--warn-color, #ffaa00)' : undefined}
-      />
-      {devices.length > 0 && (
-        <>
-          <SectionHeader>Devices</SectionHeader>
-          {devices.slice(0, 6).map((d, i) => (
-            <MetricRow
-              key={i}
-              label={d.name || d.mac || `Device ${i + 1}`}
-              value={d.kind ? `${d.kind} · ${d.uptime || '—'}` : (d.status || d.state || '—')}
-              valueColor={d.online === false ? 'var(--text-muted, #555)' : undefined}
-            />
-          ))}
-          {devices.length > 6 && <div style={{ fontSize: 10, color: 'var(--text-muted, #555)' }}>+{devices.length - 6} more</div>}
-        </>
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        <M v={wan} l="WAN" s={wanState} />
+        <M v={data.clients ?? data.client_count ?? '—'} l="Clients" />
+        <M v={(data.ips_24h ?? 0)} l="IPS 24h" s={ipsState} />
+        {ssids.length > 0 && (
+          <div className="ublist">
+            {ssids.map((s, i) => (
+              <div key={i} className="ubrow">
+                <span className="ub-n">{s.name || s}</span>
+                <span className="ub-a">{s.clients != null ? `${s.clients} clients` : ''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {monthly && (
+          <div className="ublist">
+            <div className="ubrow">
+              <span className="ub-n">Mo. Data</span>
+              <span className="ub-a">{monthly}</span>
+            </div>
+            {pia.name && (
+              <div className="ubrow">
+                <span className="ub-n">VPN {pia.name}</span>
+                <span className="ub-a">{pia.status || (pia.connected ? 'VALID' : 'INVALID')}</span>
+              </div>
+            )}
+          </div>
+        )}
+        {devices.length > 0 && (
+          <div className="dvlist">
+            {devices.map((d, i) => (
+              <div key={i} className={`dv dv-${d.online ? 'on' : 'off'}`}>
+                <span className="dv-dot" />
+                <span className="dv-name">{d.name}</span>
+                <span className="dv-kind">{d.kind}</span>
+                <span className="dv-up">{d.uptime}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {sub && <Sub>{sub}{data.latency != null ? ` · ${data.latency}ms latency` : ''}</Sub>}
+    </>
   )
 }

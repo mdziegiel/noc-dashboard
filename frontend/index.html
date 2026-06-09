@@ -364,21 +364,18 @@
     display:none; vertical-align:super; }
 
 
-/* ── React/interactive additions ── */
-.edit-mode-banner {
-  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-  background: rgba(0,0,0,0.9); border: 1px solid var(--green);
-  border-radius: 4px; padding: 6px 20px; font-size: 11px;
-  color: var(--green); letter-spacing: 0.1em; z-index: 1000;
-  pointer-events: none; font-family: inherit;
-}
-.react-grid-layout { position: relative; }
-.react-resizable-handle { opacity: 0.3; }
-.edit-mode .react-resizable-handle { opacity: 0.8; }
-.card-drag-handle { cursor: grab; }
-.card-drag-handle:active { cursor: grabbing; }
-/* Override RGL default styles to not conflict */
-.react-grid-item.react-grid-placeholder { background: var(--green); opacity: 0.1; border-radius: 4px; }
+/* ── Edit mode ── */
+  .noc-row.edit-active { outline: 1px dashed var(--green-dim); outline-offset: 4px; }
+  .noc-row.edit-active .noc-card-slot { cursor: grab; }
+  .noc-row.edit-active .noc-card-slot:active { cursor: grabbing; }
+  .sortable-ghost { opacity: 0.35; outline: 2px solid var(--green) !important; }
+  .sortable-drag { opacity: 0.9; box-shadow: 0 8px 24px rgba(0,255,65,0.35) !important; }
+  .theme-btn.active { color: var(--green); border-color: var(--green); background: rgba(0,255,65,0.08); }
+  /* ── Card gear/remove overlay in edit mode ── */
+  .noc-card-edit-overlay { position:absolute; top:4px; right:4px; display:flex; gap:4px; z-index:10; }
+  .noc-card-edit-btn { background:rgba(0,0,0,0.6); border:1px solid var(--line); color:var(--muted); cursor:pointer; font-size:11px; padding:2px 6px; border-radius:2px; font-family:inherit; line-height:1.4; }
+  .noc-card-edit-btn:hover { color:var(--green); border-color:var(--green); }
+  .noc-card-edit-btn.remove:hover { color:var(--crit); border-color:var(--crit); }
     </style>
   </head>
   <body>

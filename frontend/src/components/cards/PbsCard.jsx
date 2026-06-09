@@ -1,43 +1,22 @@
 import React from 'react'
-import { MetricRow, SectionHeader, DonutGauge } from '../shared.jsx'
+import { M, Sub } from '../shared.jsx'
 
-export default function PbsCard({ data, config, trends }) {
+export default function PbsCard({ data, config }) {
   if (!data) return null
-  // Collector returns: ok, fail, run, last_backup, datastores [{name, pct}]
+  const failState = (data.fail || 0) > 0 ? 'crit' : ''
+  const lastBackupState = data.state === 'crit' ? 'crit' : ''
   const datastores = data.datastores || []
-  const tasksFail = data.fail ?? data.tasks_fail ?? data.tasks_failed ?? 0
-  const tasksOk = data.ok ?? data.tasks_ok ?? 0
-  const tasksRun = data.run ?? data.tasks_running ?? 0
+  const sub = [
+    data.fail > 0 ? `${data.fail} FAILED task(s) in 24h` : null,
+    ...datastores.map(d => `datastore ${d.name}: ${Math.round(d.pct)}% used`)
+  ].filter(Boolean).join(' · ')
   return (
-    <div>
-      <MetricRow
-        label="Tasks OK"
-        value={tasksOk}
-        valueColor="var(--ok-color, #00ff41)"
-      />
-      <MetricRow
-        label="Tasks Failed"
-        value={tasksFail}
-        valueColor={tasksFail > 0 ? 'var(--error-color, #ff3333)' : undefined}
-      />
-      <MetricRow label="Running" value={tasksRun} />
-      <MetricRow label="Last Backup" value={data.last_backup || '—'} />
-      {datastores.length > 0 && (
-        <>
-          <SectionHeader>Datastores</SectionHeader>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-            {datastores.map((ds, i) => (
-              <DonutGauge
-                key={ds.name || i}
-                value={ds.pct ?? ds.used_pct ?? 0}
-                max={100}
-                color={ds.pct > 85 ? 'var(--warn-color, #ffaa00)' : 'var(--gauge-fill-ok, #00ff41)'}
-                label={ds.name || `DS ${i + 1}`}
-              />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        <M v={data.last_backup || '—'} l="Last Backup" s={lastBackupState} />
+        <M v={`${data.ok ?? 0} ok / ${data.fail ?? 0} fail`} l="24h Tasks" s={failState} />
+      </div>
+      <Sub>{sub || null}</Sub>
+    </>
   )
 }

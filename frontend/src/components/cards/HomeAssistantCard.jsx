@@ -1,15 +1,19 @@
 import React from 'react'
-import { MetricRow, SectionHeader } from '../shared.jsx'
+import { M, Sub } from '../shared.jsx'
 
-export default function HomeAssistantCard({ data, config, trends }) {
+export default function HomeAssistantCard({ data, config }) {
   if (!data) return null
+  const unavailState = (data.unavailable || 0) > 0 ? 'warn' : ''
+  const alertsState = (data.alerts_on || 0) > 0 ? 'warn' : 'ok'
+  const sub = `${data.domains ?? '?'} domains · ${data.notifications ?? 0} notification(s)`
   return (
-    <div>
-      <MetricRow label="Entities" value={data.entities ?? data.entity_count ?? '—'} />
-      <MetricRow label="Alerts" value={data.alerts ?? 0} valueColor={data.alerts > 0 ? 'var(--warn-color, #ffaa00)' : undefined} />
-      <MetricRow label="Notifications" value={data.notifications ?? 0} />
-      <MetricRow label="Unavailable" value={data.unavailable ?? data.unavailable_count ?? 0} valueColor={(data.unavailable || data.unavailable_count) > 0 ? 'var(--warn-color, #ffaa00)' : undefined} />
-      {data.version && <MetricRow label="Version" value={data.version} />}
-    </div>
+    <>
+      <div className="card-b">
+        <M v={data.entities ?? '—'} l="Entities" />
+        <M v={data.alerts_on ?? 0} l="Alerts" s={alertsState} />
+        <M v={(data.unavailable ?? 0)} l="Unavail" s={unavailState} />
+      </div>
+      <Sub>{sub}</Sub>
+    </>
   )
 }

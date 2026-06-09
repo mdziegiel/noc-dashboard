@@ -1,17 +1,18 @@
 import React from 'react'
-import { MetricRow } from '../shared.jsx'
+import { M, Sub } from '../shared.jsx'
 
-export default function CustomUrlCard({ data, config, trends }) {
+export default function CustomUrlCard({ data, config }) {
   if (!data) return null
   const values = data.values || {}
+  const entries = Object.entries(values)
   return (
-    <div>
-      {Object.entries(values).map(([k, v]) => (
-        <MetricRow key={k} label={k} value={typeof v === 'object' ? JSON.stringify(v) : String(v)} />
-      ))}
-      {!Object.keys(values).length && (
-        <div style={{ fontSize: 11, color: 'var(--text-muted, #555)' }}>No data</div>
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        {entries.slice(0,6).map(([k, v]) => (
+          <M key={k} v={typeof v === 'object' ? JSON.stringify(v) : String(v)} l={k} />
+        ))}
+        {entries.length === 0 && <M v="—" l="no data" />}
+      </div>
+    </>
   )
 }

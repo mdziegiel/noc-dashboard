@@ -1,18 +1,21 @@
 import React from 'react'
-import { MetricRow, Sparkline } from '../shared.jsx'
+import { M, Sub, Spark, fmt } from '../shared.jsx'
 
-export default function AdguardCard({ data, config, trends }) {
+export default function AdguardCard({ data, config }) {
   if (!data) return null
-  const blockPct = data.block_pct ?? (data.queries && data.blocked ? Math.round(data.blocked / data.queries * 100) : null)
+  const blockState = (data.block_pct ?? 0) > 40 ? 'warn' : ''
+  const trends = data._trends
   return (
-    <div>
-      <MetricRow label="Queries" value={data.queries ?? '—'} />
-      <MetricRow label="Blocked" value={data.blocked ?? '—'} valueColor="var(--warn-color, #ffaa00)" />
-      <MetricRow label="Block %" value={blockPct != null ? `${blockPct}%` : '—'} />
-      <MetricRow label="Avg Latency" value={data.avg_latency != null ? `${data.avg_latency}ms` : '—'} />
-      {trends?.queries && config?.graph !== false && (
-        <Sparkline data={trends.queries} color={config?.graph_color} />
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        <M v={fmt(data.queries)} l="Queries" />
+        <M v={`${data.block_pct ?? 0}%`} l="Blocked" s={blockState} />
+        {trends?.block_pct
+          ? <Spark data={trends.block_pct} state={blockState || 'ok'} label={`blocked ${trends.block_pct.length}d trend`} />
+          : <Spark label="blocked 1d trend" />
+        }
+      </div>
+      <Sub>{data.blocked != null ? `${fmt(data.blocked)} blocked · ${data.avg_ms ?? '—'}ms avg` : null}</Sub>
+    </>
   )
 }

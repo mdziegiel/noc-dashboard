@@ -1,23 +1,19 @@
 import React from 'react'
-import { MetricRow, SectionHeader } from '../shared.jsx'
+import { M, Sub, fmt } from '../shared.jsx'
 
-export default function LimaCharlieCard({ data, config, trends }) {
+export default function LimaCharlieCard({ data, config }) {
   if (!data) return null
-  const offline = data.offline_hosts || []
+  const top = data.top || []
+  const detState = (data.detections_24h || 0) > 0 ? 'warn' : ''
+  const sub = top.length > 0 ? `top: ${top.slice(0,2).map(([k,v]) => `${k}(${v})`).join(', ')}` : null
   return (
-    <div>
-      <MetricRow label="Sensors" value={`${data.online ?? data.sensors_online ?? '?'} / ${data.total ?? data.sensors_total ?? '?'}`} />
-      <MetricRow label="Detections 24h" value={data.detections_24h ?? 0} valueColor={data.detections_24h > 0 ? 'var(--warn-color, #ffaa00)' : undefined} />
-      {offline.length > 0 && (
-        <>
-          <SectionHeader>Offline Hosts</SectionHeader>
-          {offline.map((h, i) => (
-            <div key={i} style={{ fontSize: 10, color: 'var(--text-muted, #555)', padding: '1px 0' }}>
-              {typeof h === 'string' ? h : h.name || h.hostname || `Host ${i + 1}`}
-            </div>
-          ))}
-        </>
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        <M v={`${data.online ?? '?'}/${data.total ?? '?'} online`} l="Sensors" s={(data.offline ?? 0) === 0 ? 'ok' : ''} />
+        <M v={data.offline ?? 0} l="Offline" />
+        <M v={fmt(data.detections_24h ?? 0)} l="Detections 24h" s={detState} />
+      </div>
+      <Sub>{sub}</Sub>
+    </>
   )
 }

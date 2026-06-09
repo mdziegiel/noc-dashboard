@@ -1,22 +1,17 @@
 import React from 'react'
-import { MetricRow, SectionHeader } from '../shared.jsx'
+import { M, Sub } from '../shared.jsx'
 
-export default function ProwlarrCard({ data, config, trends }) {
+export default function ProwlarrCard({ data, config }) {
   if (!data) return null
-  const failing = data.failing_indexers || []
+  const failingState = (data.failing || 0) > 0 ? 'crit' : ''
   return (
-    <div>
-      <MetricRow label="Indexers" value={`${data.healthy ?? '?'} / ${data.enabled ?? data.total ?? '?'} healthy`} />
-      {failing.length > 0 && (
-        <>
-          <SectionHeader>Failing</SectionHeader>
-          {failing.map((idx, i) => (
-            <div key={i} style={{ fontSize: 10, color: 'var(--error-color, #ff3333)', padding: '1px 0' }}>
-              {typeof idx === 'string' ? idx : idx.name || `Indexer ${i + 1}`}
-            </div>
-          ))}
-        </>
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        <M v={data.total ?? '—'} l="Indexers" />
+        <M v={data.healthy ?? 0} l="Healthy" s={data.healthy > 0 ? 'ok' : ''} />
+        <M v={data.failing ?? 0} l="Failing" s={failingState} />
+      </div>
+      <Sub>{(data.enabled ?? data.total) != null ? `${data.enabled ?? data.total}/${data.total ?? '?'} enabled` : null}</Sub>
+    </>
   )
 }

@@ -1,14 +1,17 @@
 import React from 'react'
-import { MetricRow } from '../shared.jsx'
+import { M, Sub, fmt } from '../shared.jsx'
 
-export default function OverseerrCard({ data, config, trends }) {
+export default function OverseerrCard({ data, config }) {
   if (!data) return null
+  const pendingState = (data.pending || 0) > 0 ? 'warn' : 'ok'
   return (
-    <div>
-      <MetricRow label="Pending" value={data.pending ?? '—'} valueColor={data.pending > 0 ? 'var(--warn-color, #ffaa00)' : undefined} />
-      <MetricRow label="Approved" value={data.approved ?? '—'} />
-      <MetricRow label="Available" value={data.available ?? '—'} valueColor="var(--ok-color, #00ff41)" />
-      <MetricRow label="Total" value={data.total ?? '—'} />
-    </div>
+    <>
+      <div className="card-b">
+        <M v={data.pending ?? 0} l="Pending" s={pendingState} />
+        <M v={fmt(data.approved)} l="Approved" />
+        <M v={fmt(data.available)} l="Available" />
+      </div>
+      <Sub>{fmt(data.total)} total request(s)</Sub>
+    </>
   )
 }

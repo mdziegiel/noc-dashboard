@@ -1,26 +1,30 @@
 import React from 'react'
-import { MetricRow, SectionHeader } from '../shared.jsx'
+import { M, Sub, Spark, fmt } from '../shared.jsx'
 
-export default function NginxProxyCard({ data, config, trends }) {
+export default function NginxProxyCard({ data, config }) {
   if (!data) return null
-  const expiring = data.expiring_certs || []
+  const certList = data.cert_list || []
+  const sub = data.errored > 0 ? `${data.errored} errored` : 'all hosts enabled — no errors'
   return (
-    <div>
-      <MetricRow label="Enabled Hosts" value={data.enabled_hosts ?? data.hosts ?? '—'} />
-      <MetricRow label="Certs" value={data.cert_count ?? data.certs ?? '—'} />
-      {expiring.length > 0 && (
-        <>
-          <SectionHeader>Expiring Certs</SectionHeader>
-          {expiring.map((c, i) => (
-            <MetricRow
-              key={i}
-              label={c.domain || c.name || `cert ${i + 1}`}
-              value={c.days_left != null ? `${c.days_left}d` : c.expiry || '—'}
-              valueColor="var(--warn-color, #ffaa00)"
-            />
-          ))}
-        </>
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        <M v={data.hosts ?? data.enabled ?? '—'} l="Proxy Hosts" />
+        <M v={data.enabled ?? '—'} l="Enabled" s={data.enabled > 0 ? 'ok' : ''} />
+        <M v={data.disabled ?? 0} l="Disabled" />
+        <M v={data.errored ?? 0} l="Errored" s={data.errored > 0 ? 'warn' : ''} />
+        <M v={data.certs ?? data.cert_count ?? '—'} l="SSL Certs" />
+        {certList.length > 0 && (
+          <div className="ublist">
+            {certList.slice(0, 8).map((c, i) => (
+              <div key={i} className="ubrow">
+                <span className="ub-n">{c.name || c.domain}</span>
+                <span className="ub-a">{c.days != null ? `${c.days}d` : ''}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <Sub>{sub}</Sub>
+    </>
   )
 }

@@ -1,23 +1,17 @@
 import React from 'react'
-import { MetricRow } from '../shared.jsx'
+import { M, Sub } from '../shared.jsx'
 
-const SKIP = new Set(['state', '_trends', '_error'])
-
-export default function GenericCard({ data, config, trends }) {
+export default function GenericCard({ data, config }) {
   if (!data) return null
-  const entries = Object.entries(data).filter(([k, v]) => {
-    if (SKIP.has(k)) return false
-    if (typeof v === 'object' && v !== null) return false
-    return true
-  })
+  const entries = Object.entries(data).filter(([k, v]) => !k.startsWith('_') && k !== 'state' && typeof v !== 'object')
   return (
-    <div>
-      {entries.map(([k, v]) => (
-        <MetricRow key={k} label={k.replace(/_/g, ' ')} value={String(v)} />
-      ))}
-      {entries.length === 0 && (
-        <div style={{ fontSize: 11, color: 'var(--text-muted, #555)' }}>No display data</div>
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        {entries.slice(0, 6).map(([k, v]) => (
+          <M key={k} v={String(v)} l={k.replace(/_/g,' ')} />
+        ))}
+        {entries.length === 0 && <M v="—" l="no data" />}
+      </div>
+    </>
   )
 }

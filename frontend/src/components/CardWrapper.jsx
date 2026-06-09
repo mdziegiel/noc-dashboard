@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { fetchCardData } from '../api.js'
 
-// Lazy card component map — each card renders card-b and sub content
+// Lazy card component map
 const CARD_MAP = {
   proxmox:        () => import('./cards/ProxmoxCard.jsx'),
   docker:         () => import('./cards/DockerCard.jsx'),
@@ -15,10 +15,12 @@ const CARD_MAP = {
   crowdsec:       () => import('./cards/CrowdsecCard.jsx'),
   cloudflare:     () => import('./cards/CloudflareCard.jsx'),
   unifi:          () => import('./cards/UnifiCard.jsx'),
+  wan_health:     () => import('./cards/UnifiCard.jsx'),
   tailscale:      () => import('./cards/TailscaleCard.jsx'),
   nginx_proxy:    () => import('./cards/NginxProxyCard.jsx'),
   adguard:        () => import('./cards/AdguardCard.jsx'),
   qnap:           () => import('./cards/QnapCard.jsx'),
+  proxmox_storage:() => import('./cards/ProxmoxStorageCard.jsx'),
   plex:           () => import('./cards/PlexCard.jsx'),
   tautulli:       () => import('./cards/TautulliCard.jsx'),
   sonarr:         () => import('./cards/SonarrCard.jsx'),
@@ -28,8 +30,6 @@ const CARD_MAP = {
   overseerr:      () => import('./cards/OverseerrCard.jsx'),
   limacharlie:    () => import('./cards/LimaCharlieCard.jsx'),
   custom_url:     () => import('./cards/CustomUrlCard.jsx'),
-  wan_health:     () => import('./cards/UnifiCard.jsx'),
-  proxmox_storage:() => import('./cards/ProxmoxCard.jsx'),
 }
 
 function useCardComponent(type) {
@@ -37,9 +37,7 @@ function useCardComponent(type) {
   useEffect(() => {
     const loader = CARD_MAP[type]
     if (loader) {
-      loader()
-        .then(m => setComp(() => m.default))
-        .catch(() => import('./cards/GenericCard.jsx').then(m => setComp(() => m.default)))
+      loader().then(m => setComp(() => m.default)).catch(() => import('./cards/GenericCard.jsx').then(m => setComp(() => m.default)))
     } else {
       import('./cards/GenericCard.jsx').then(m => setComp(() => m.default))
     }
@@ -47,12 +45,10 @@ function useCardComponent(type) {
   return Comp
 }
 
-// Normalize state string to the CSS class suffix the reference uses
 function normalizeState(state) {
   if (!state) return 'degraded'
-  if (state === 'critical') return 'crit'
-  if (state === 'error') return 'crit'
-  return state  // ok, warn, crit, degraded
+  if (state === 'critical' || state === 'error') return 'crit'
+  return state
 }
 
 export default function CardWrapper({ card, onUpdate, onRemove, onOpenSettings, onData, editMode }) {
@@ -61,22 +57,12 @@ export default function CardWrapper({ card, onUpdate, onRemove, onOpenSettings, 
   const [error, setError] = useState(null)
   const timerRef = useRef(null)
   const CardComp = useCardComponent(card.type)
-
   const refresh = card.config?.refresh_seconds || 60
 
   function doFetch() {
     fetchCardData(card.type)
-      .then(d => {
-        setData(d)
-        setError(null)
-        setLoading(false)
-        if (onData) onData(card.type, d)
-      })
-      .catch(e => {
-        setError(e.message)
-        setLoading(false)
-        if (onData) onData(card.type, { state: 'error', note: e.message })
-      })
+      .then(d => { setData(d); setError(null); setLoading(false); if (onData) onData(card.type, d) })
+      .catch(e => { setError(e.message); setLoading(false); if (onData) onData(card.type, { state: 'error', note: e.message }) })
   }
 
   useEffect(() => {
@@ -86,84 +72,63 @@ export default function CardWrapper({ card, onUpdate, onRemove, onOpenSettings, 
   }, [card.type, refresh])
 
   const state = normalizeState(data?.state || (error ? 'error' : 'degraded'))
-  const trends = data?._trends || null
+  const title = card.title || card.type.toUpperCase().replace(/_/g,' ')
 
-  // Handle card click — open modal (matches reference focusCard behavior)
-  function handleClick(e) {
+  // Open card modal on click (matches focusCard behavior from 9969)
+  function handleCardClick(e) {
     if (editMode) return
     const modal = document.getElementById('card-modal')
-    const titleEl = document.getElementById('card-modal-title')
+    if (!modal) return
+    document.getElementById('card-modal-title').textContent = title
     const bodyEl = document.getElementById('card-modal-body')
-    if (modal && titleEl && bodyEl) {
-      titleEl.textContent = card.title || card.type
-      // Build a simple text representation of card data
-      bodyEl.innerHTML = data
-        ? Object.entries(data)
-            .filter(([k]) => !k.startsWith('_') && k !== 'state')
-            .map(([k, v]) => `<div><b>${k}</b>: ${typeof v === 'object' ? JSON.stringify(v) : v}</div>`)
-            .join('')
-        : '<div>No data</div>'
-      modal.style.display = 'block'
+    if (data) {
+      bodyEl.innerHTML = Object.entries(data)
+        .filter(([k]) => !k.startsWith('_') && k !== 'state')
+        .map(([k, v]) => `<div><b>${k.replace(/_/g,' ')}</b>: ${typeof v === 'object' ? JSON.stringify(v) : v}</div>`)
+        .join('')
     }
+    modal.style.display = 'flex'
+    document.body.style.overflow = 'hidden'
   }
 
   return (
     <div
       className={`card s-${state}`}
-      data-title={card.title || card.type}
+      data-title={title}
       data-state={state}
-      onClick={handleClick}
-      style={{ height: '100%', cursor: editMode ? 'default' : 'pointer', boxSizing: 'border-box', overflow: 'hidden' }}
+      onClick={handleCardClick}
+      style={{ cursor: editMode ? 'grab' : 'pointer', position: 'relative' }}
     >
-      {/* Card header — drag handle in edit mode */}
-      <div
-        className={`card-h${editMode ? ' card-drag-handle' : ''}`}
-        onClick={e => e.stopPropagation()}
-      >
+      {/* Edit mode overlay buttons */}
+      {editMode && (
+        <div className="noc-card-edit-overlay" onClick={e => e.stopPropagation()}>
+          {onOpenSettings && (
+            <button className="noc-card-edit-btn" onClick={() => onOpenSettings(card)} title="Card settings">⚙</button>
+          )}
+          {onRemove && (
+            <button className="noc-card-edit-btn remove" onClick={() => onRemove(card.id)} title="Remove">✕</button>
+          )}
+        </div>
+      )}
+      {/* Header — exact generator structure */}
+      <div className="card-h">
         <span className="dot" />
-        <h3 style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {card.title || card.type}
-        </h3>
-        {/* Gear icon — always visible */}
-        <button
-          title="Card settings"
-          onClick={e => { e.stopPropagation(); onOpenSettings && onOpenSettings(card) }}
-          style={{
-            background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer',
-            fontSize: 13, padding: '0 4px', lineHeight: 1, fontFamily: 'inherit',
-            opacity: editMode ? 1 : 0.5,
-          }}
-        >⚙</button>
-        {editMode && (
-          <button
-            title="Remove card"
-            onClick={e => { e.stopPropagation(); onRemove && onRemove(card.id) }}
-            style={{
-              background: 'none', border: 'none', color: 'var(--crit)', cursor: 'pointer',
-              fontSize: 13, padding: '0 4px', lineHeight: 1, fontFamily: 'inherit',
-            }}
-          >✕</button>
-        )}
+        <h3>{title}</h3>
       </div>
-
-      {/* Card body */}
-      <div className="card-b">
-        {loading && (
-          <div className="metric">
-            <div className="m-v" style={{ color: 'var(--muted)' }}>…</div>
-            <div className="m-l">loading</div>
-          </div>
-        )}
-        {!loading && error && (
-          <div className="metric m-crit">
-            <div className="m-v">ERR</div>
-            <div className="m-l" style={{ fontSize: 10, wordBreak: 'break-all' }}>{error.slice(0, 60)}</div>
-          </div>
-        )}
-        {!loading && !error && data && CardComp && (
-          <CardComp data={data} config={card.config || {}} trends={trends} />
-        )}
-      </div>
+      {/* Body */}
+      {loading ? (
+        <div className="card-b">
+          <div className="metric"><div className="m-v" style={{ color:'var(--muted)' }}>…</div><div className="m-l">loading</div></div>
+        </div>
+      ) : error ? (
+        <>
+          <div className="card-b"><div className="metric m-crit"><div className="m-v">ERR</div><div className="m-l">{error.slice(0,40)}</div></div></div>
+        </>
+      ) : data && CardComp ? (
+        <CardComp data={data} config={card.config || {}} />
+      ) : (
+        <div className="card-b"><div className="metric"><div className="m-v">…</div><div className="m-l">loading</div></div></div>
+      )}
     </div>
   )
 }

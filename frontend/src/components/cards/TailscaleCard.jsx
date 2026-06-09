@@ -1,43 +1,32 @@
 import React from 'react'
-import { MetricRow, SectionHeader } from '../shared.jsx'
+import { M, Sub, fmt } from '../shared.jsx'
 
-export default function TailscaleCard({ data, config, trends }) {
+export default function TailscaleCard({ data, config }) {
   if (!data) return null
-  // Collector returns: total, online, offline, devices [{name, os, online, exit_node}]
   const devices = data.devices || []
-  const expiring = data.key_expiry || []
+  const expiryState = (data.soonest_expiry_days ?? 999) < 0 ? 'crit' : (data.soonest_expiry_days ?? 999) < 30 ? 'warn' : ''
+  const expiryStr = data.soonest_expiry_days != null
+    ? (data.soonest_expiry_days < 0 ? `key expired ${Math.abs(data.soonest_expiry_days)}d ago` : `key expires ${data.soonest_expiry_days}d`)
+    : null
   return (
-    <div>
-      <MetricRow
-        label="Online"
-        value={`${data.online ?? '?'} / ${data.total ?? '?'}`}
-        valueColor={data.offline > 0 ? 'var(--warn-color, #ffaa00)' : 'var(--ok-color, #00ff41)'}
-      />
-      {data.offline > 0 && (
-        <MetricRow label="Offline" value={data.offline} valueColor="var(--warn-color, #ffaa00)" />
-      )}
-      {expiring.length > 0 && (
-        <>
-          <SectionHeader>Key Expiry</SectionHeader>
-          {expiring.map((d, i) => (
-            <MetricRow key={i} label={d.name || `Device ${i + 1}`} value={d.days_left != null ? `${d.days_left}d` : d.expiry || '—'} valueColor="var(--warn-color, #ffaa00)" />
-          ))}
-        </>
-      )}
-      {devices.length > 0 && (
-        <>
-          <SectionHeader>Devices</SectionHeader>
-          {devices.slice(0, 8).map((d, i) => (
-            <MetricRow
-              key={i}
-              label={d.name || d.hostname || `Device ${i + 1}`}
-              value={d.online ? 'online' : 'offline'}
-              valueColor={d.online ? 'var(--ok-color, #00ff41)' : 'var(--text-muted, #555)'}
-            />
-          ))}
-          {devices.length > 8 && <div style={{ fontSize: 10, color: 'var(--text-muted, #555)' }}>+{devices.length - 8} more</div>}
-        </>
-      )}
-    </div>
+    <>
+      <div className="card-b">
+        <M v={data.total ?? '—'} l="Devices" />
+        <M v={data.online ?? '—'} l="Online" s={data.online > 0 ? 'ok' : ''} />
+        <M v={data.offline ?? 0} l="Offline" s={(data.offline ?? 0) > 0 ? 'warn' : ''} />
+        {devices.length > 0 && (
+          <div className="ublist">
+            {devices.slice(0, 6).map((d, i) => (
+              <div key={i} className={`ubrow`}>
+                <span className="ub-n">{d.name}</span>
+                <span className="ub-a" style={{ color: d.online ? 'var(--green)' : 'var(--muted)' }}>{d.online ? 'online' : 'offline'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {expiryStr && <M v={expiryStr} l="Key" s={expiryState} />}
+      </div>
+      <Sub>{data.online != null ? `${data.online} online · key expires ${data.soonest_expiry_days ?? '?'}d` : null}</Sub>
+    </>
   )
 }

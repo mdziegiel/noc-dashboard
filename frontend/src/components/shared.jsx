@@ -1,141 +1,148 @@
 /**
- * shared.jsx — Shared primitives matching generate_dashboard.py's HTML output exactly.
- * These components emit the same CSS classes as the Python generator so styling is identical.
+ * shared.jsx — Primitives matching generate_dashboard.py HTML output exactly.
+ * Every function/component here produces the same class names as the Python generator.
  */
 import React from 'react'
-import { AreaChart, Area, ResponsiveContainer } from 'recharts'
 
-// ── Metric row: matches <div class="metric m-{state}"><div class="m-v">...</div><div class="m-l">...</div></div>
-export function Metric({ label, value, state }) {
-  // state: ok | warn | crit | '' (neutral)
-  const cls = state ? `metric m-${state}` : 'metric'
+// metric: <div class="metric m-{state}"><div class="m-v">{val}</div><div class="m-l">{label}</div></div>
+export function M({ v, l, s = '' }) {
   return (
-    <div className={cls}>
-      <div className="m-v">{value ?? '—'}</div>
-      <div className="m-l">{label}</div>
+    <div className={`metric${s ? ` m-${s}` : ''}`}>
+      <div className="m-v">{v ?? '—'}</div>
+      <div className="m-l">{l}</div>
     </div>
   )
 }
 
-// ── Sub text: matches <div class="sub">...</div>
+// sub: <div class="sub">{text}</div>
 export function Sub({ children }) {
   if (!children) return null
   return <div className="sub">{children}</div>
 }
 
-// ── Section header: matches <div class="section-label">...</div>
-export function SectionHeader({ children }) {
-  return <div className="section-label">{children}</div>
+// ubrow: <div class="ubrow {cls}"><span class="ub-n">{n}</span><span class="ub-a">{a}</span></div>
+export function UbRow({ n, a, s = '' }) {
+  return (
+    <div className={`ubrow ${s}`}>
+      <span className="ub-n">{n}</span>
+      <span className="ub-a">{a}</span>
+    </div>
+  )
 }
 
-// ── Sparkline SVG: matches the generator's sparkline() function output
-// <svg class="spark sp-{state}" viewBox="0 0 140 34" preserveAspectRatio="none">
-//   <polygon class="spark-area" points="..." />
-//   <polyline class="spark-line" points="..." />
-//   <circle class="spark-dot" ... />
-// </svg>
-export function Sparkline({ data, state = 'ok', label }) {
-  if (!data || data.length < 2) return null
+// ublist container
+export function UbList({ children }) {
+  return <div className="ublist">{children}</div>
+}
 
+// dv: <div class="dv dv-{on|off}"><span class="dv-dot"></span><span class="dv-name">{name}</span><span class="dv-kind">{kind}</span><span class="dv-up">{up}</span></div>
+export function Dv({ name, kind, up, online }) {
+  return (
+    <div className={`dv dv-${online ? 'on' : 'off'}`}>
+      <span className="dv-dot" />
+      <span className="dv-name">{name}</span>
+      <span className="dv-kind">{kind}</span>
+      <span className="dv-up">{up}</span>
+    </div>
+  )
+}
+
+export function DvList({ children }) {
+  return <div className="dvlist">{children}</div>
+}
+
+// Spark SVG — matches generate_dashboard.py sparkline() function output
+// When no trend data: <div class="spark-empty">collecting trend data…</div>
+// When data: <svg class="spark sp-{state}" viewBox="0 0 140 34" preserveAspectRatio="none">...</svg>
+export function Spark({ data, state = 'ok', label, samples }) {
+  const lbl = label || (samples != null ? `${samples} samples / 24h` : null)
+  return (
+    <div className="trend">
+      {lbl && <span className="trend-lbl">{lbl}</span>}
+      {(!data || data.length < 2)
+        ? <div className="spark-empty">collecting trend data&hellip;</div>
+        : <SparkSVG data={data} state={state} />
+      }
+    </div>
+  )
+}
+
+function SparkSVG({ data, state }) {
   const values = data.map(d => typeof d === 'number' ? d : (d?.v ?? d?.value ?? 0))
   const W = 140, H = 34
   const min = Math.min(...values), max = Math.max(...values)
   const range = max - min || 1
-
-  function xAt(i) { return (i / (values.length - 1)) * W }
-  function yAt(v) { return H - ((v - min) / range) * (H - 4) - 2 }
-
+  const xAt = i => (i / (values.length - 1)) * W
+  const yAt = v => H - ((v - min) / range) * (H - 4) - 2
   const pts = values.map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`).join(' ')
   const areaPts = `0,${H} ` + pts + ` ${W},${H}`
-  const lastX = xAt(values.length - 1)
-  const lastY = yAt(values[values.length - 1])
-
+  const lastX = xAt(values.length - 1), lastY = yAt(values[values.length - 1])
   return (
-    <div className="trend">
-      {label && <span className="trend-lbl">{label}</span>}
-      <svg className={`spark sp-${state}`} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-        <polygon className="spark-area" points={areaPts} />
-        <polyline className="spark-line" points={pts} />
-        <circle className="spark-dot" cx={lastX.toFixed(1)} cy={lastY.toFixed(1)} r="2.5" />
-      </svg>
-    </div>
+    <svg className={`spark sp-${state}`} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+      <polygon className="spark-area" points={areaPts} />
+      <polyline className="spark-line" points={pts} />
+      <circle className="spark-dot" cx={lastX.toFixed(1)} cy={lastY.toFixed(1)} r="2.5" />
+    </svg>
   )
 }
 
-// ── Donut gauge: matches the generator's donut() function
-// <svg class="gauge" ...><circle class="g-track" .../><circle class="g-val" .../></svg>
-export function DonutGauge({ label, pct, state = 'ok' }) {
-  const r = 28, cx = 34, cy = 34
-  const circ = 2 * Math.PI * r
+// Donut gauge — matches generator's donut() function
+export function Donut({ label, pct, state = '' }) {
+  const safeState = state || (pct > 85 ? 'crit' : pct > 70 ? 'warn' : '')
+  const cls = safeState ? `q-${safeState}` : ''
+  const r = 40, cx = 46, cy = 46, circ = 2 * Math.PI * r
   const dash = Math.min(pct / 100, 1) * circ
-  const color = state === 'crit' ? 'var(--crit)' : state === 'warn' ? 'var(--warn)' : 'var(--green)'
+  const strokeColor = safeState === 'crit' ? 'var(--crit)' : safeState === 'warn' ? 'var(--warn)' : 'var(--green)'
   return (
-    <div className="gauge" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-      <svg width="68" height="68" viewBox="0 0 68 68">
-        <circle className="g-track" cx={cx} cy={cy} r={r} fill="none" strokeWidth="6" />
-        <circle
-          className="g-val"
-          cx={cx} cy={cy} r={r}
-          fill="none" strokeWidth="6"
-          stroke={color}
-          strokeDasharray={`${dash.toFixed(1)} ${circ.toFixed(1)}`}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${cx} ${cy})`}
-        />
-        <text x={cx} y={cy+1} textAnchor="middle" dominantBaseline="middle"
-          style={{ fontSize: 12, fill: color, fontFamily: 'inherit', fontWeight: 700 }}>
+    <div className="gauge">
+      <svg width="92" height="92" viewBox="0 0 92 92">
+        <circle className="g-track" cx={cx} cy={cy} r={r} fill="none" strokeWidth="8" />
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth="8" stroke={strokeColor}
+          strokeDasharray={`${dash.toFixed(1)} ${circ.toFixed(1)}`} strokeLinecap="round"
+          transform={`rotate(-90 ${cx} ${cy})`} />
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
+          style={{ fontSize:14, fill:strokeColor, fontFamily:'inherit', fontWeight:700 }}>
           {Math.round(pct)}%
         </text>
       </svg>
-      <span className="g-lbl" style={{ fontSize: 10, color: 'var(--muted)', textAlign: 'center', maxWidth: 68, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <div className="g-lbl">{label}</div>
     </div>
   )
 }
 
-// ── Horizontal progress bar: matches qbar/qbar-f
-export function QBar({ pct, state = 'ok' }) {
-  const color = state === 'crit' ? 'var(--crit)' : state === 'warn' ? 'var(--warn)' : 'var(--green)'
+// qbar: <div class="qbar"><span class="qbar-f {cls}" style="width:{pct}%"></span></div>
+export function QBar({ pct, state }) {
+  const cls = state === 'crit' ? 'q-crit' : state === 'warn' ? 'q-warn' : 'q-ok'
   return (
     <div className="qbar">
-      <div className="qbar-f" style={{ width: `${Math.min(pct, 100)}%`, background: color }} />
+      <span className={`qbar-f ${cls}`} style={{ width: `${Math.min(pct, 100)}%` }} />
     </div>
   )
 }
 
-// ── H-bar (uptime bar cells) — matches hbar structure
-export function HBar({ name, cells, legend }) {
-  return (
-    <div className="hbar-row">
-      <div className="hbar-name">{name}</div>
-      <div className="hbar-cells">
-        {cells.map((c, i) => (
-          <div key={i} className={`hbar-cell b-${c}`} title={c} />
-        ))}
-      </div>
-    </div>
-  )
+// qsec-l: section label inside a QNAP card
+export function QSecL({ children }) {
+  return <div className="qsec-l">{children}</div>
 }
 
-// ── MetricRow alias — kept for backward compat but emits Metric
-export function MetricRow({ label, value, valueColor, style }) {
-  // Map valueColor to state
-  let state = ''
-  if (valueColor) {
-    if (valueColor.includes('ff3') || valueColor.includes('crit')) state = 'crit'
-    else if (valueColor.includes('warn') || valueColor.includes('ffaa') || valueColor.includes('ffcc')) state = 'warn'
-    else if (valueColor.includes('ok') || valueColor.includes('00ff')) state = 'ok'
-  }
-  return <Metric label={label} value={value} state={state} />
+// State helper
+export function stateClass(v, warn, crit) {
+  if (crit != null && v >= crit) return 'crit'
+  if (warn != null && v >= warn) return 'warn'
+  if (v === 0) return 'ok'
+  return ''
 }
 
-// Keep for backward compat
-export const SectionHeader_ = SectionHeader
+// Numeric formatting matching Python's f'{n:,}'
+export function fmt(n) {
+  if (n == null) return '—'
+  return Number(n).toLocaleString('en-US')
+}
 
-export function stateToColor(state) {
-  switch (state) {
-    case 'ok': return 'var(--green)'
-    case 'warn': return 'var(--warn)'
-    case 'crit': case 'critical': case 'error': return 'var(--crit)'
-    default: return 'var(--muted)'
-  }
+// Bytes to MB/GB string
+export function fmtBytes(b) {
+  if (b == null) return '—'
+  if (b >= 1e9) return `${(b/1e9).toFixed(1)}GB`
+  if (b >= 1e6) return `${(b/1e6).toFixed(1)}MB`
+  return `${Math.round(b)}B`
 }

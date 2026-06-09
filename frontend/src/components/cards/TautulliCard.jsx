@@ -1,13 +1,17 @@
 import React from 'react'
-import { MetricRow } from '../shared.jsx'
+import { M, Sub } from '../shared.jsx'
 
-export default function TautulliCard({ data, config, trends }) {
+export default function TautulliCard({ data, config }) {
   if (!data) return null
+  const streamState = (data.streams || 0) > 0 ? 'warn' : 'ok'
+  const sub = data.top_user ? `top user: ${data.top_user} (${data.top_plays ?? '?'} plays)` : data.note || 'no plays today'
   return (
-    <div>
-      <MetricRow label="Streams" value={data.streams ?? data.active_streams ?? '—'} />
-      <MetricRow label="Plays Today" value={data.plays_today ?? '—'} />
-      <MetricRow label="Top User" value={data.top_user ?? '—'} />
-    </div>
+    <>
+      <div className="card-b">
+        <M v={data.plays_today ?? 0} l="Plays Today" />
+        <M v={data.streams ?? 0} l="Streaming" s={streamState} />
+      </div>
+      <Sub>{sub}</Sub>
+    </>
   )
 }

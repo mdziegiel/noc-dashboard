@@ -1,13 +1,18 @@
 import React from 'react'
-import { MetricRow } from '../shared.jsx'
+import { M, Sub, fmt } from '../shared.jsx'
 
-export default function RadarrCard({ data, config, trends }) {
+export default function RadarrCard({ data, config }) {
   if (!data) return null
+  const queueState = (data.queue || 0) > 0 ? 'warn' : ''
+  const missingState = (data.missing || 0) > 0 ? 'warn' : ''
   return (
-    <div>
-      <MetricRow label="Movies" value={`${data.monitored ?? '?'} / ${data.total ?? '?'} monitored`} />
-      <MetricRow label="Queue" value={data.queue ?? 0} valueColor={data.queue > 0 ? 'var(--ok-color, #00ff41)' : undefined} />
-      <MetricRow label="Missing" value={data.missing ?? 0} valueColor={data.missing > 0 ? 'var(--warn-color, #ffaa00)' : undefined} />
-    </div>
+    <>
+      <div className="card-b">
+        <M v={fmt(data.monitored ?? data.total)} l="Monitored" />
+        <M v={data.queue ?? 0} l="Queue" s={queueState} />
+        <M v={data.missing ?? 0} l="Missing" s={missingState} />
+      </div>
+      <Sub>{fmt(data.total)} movies total</Sub>
+    </>
   )
 }
