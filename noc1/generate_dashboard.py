@@ -22,10 +22,42 @@ OUT_DIR = os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard"
 OUT_FILE = os.environ.get("NOC_OUT_FILE", os.path.join(OUT_DIR, "index.html"))
 TIMEOUT = 15
 CERT_WARN_DAYS = 30
+DEFAULT_DASHBOARD_TITLE = "NOC Dashboard"
+DEFAULT_DASHBOARD_SUBTITLE = "Infrastructure Monitoring"
+STATE_DIR = os.environ.get("NOC_STATE_DIR", os.path.join(OUT_DIR, "state"))
+CONFIG_FILE = os.environ.get("NOC_CONFIG_FILE", os.path.join(STATE_DIR, "config.json"))
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
 CTX.verify_mode = ssl.CERT_NONE
 
+
+def load_dashboard_config():
+    cfg = {
+        "dashboard_title": DEFAULT_DASHBOARD_TITLE,
+        "dashboard_subtitle": DEFAULT_DASHBOARD_SUBTITLE,
+        "logo_url": "",
+    }
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            for key in cfg:
+                val = raw.get(key)
+                if isinstance(val, str):
+                    cfg[key] = val.strip()
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"warn: dashboard config load failed: {type(e).__name__}: {str(e)[:80]}")
+    cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_TITLE
+    cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_SUBTITLE
+    return cfg
+
+def dashboard_logo_html(cfg):
+    logo = (cfg.get("logo_url") or "").strip()
+    if not logo:
+        return ""
+    return f'<img class="brand-logo" src="{esc(logo)}" alt="Dashboard logo">'
 
 def load_env(path):
     d = {}
@@ -2853,9 +2885,15 @@ def render(data, gen_epoch, errors, trends=None):
     integ_list.append({"key": "custom", "label": "Custom Integration", "state": "custom", "note": ""})
     integ_list.sort(key=lambda x: (0 if x["state"] == "ok" else 1 if x["state"] == "warn" else 2, x["label"]))
     integrations_json = json.dumps(integ_list)
+    dashboard_cfg = load_dashboard_config()
 
     return PAGE.format(
         ts=esc(ts), overall=overall, overall_txt=overall_txt,
+        doc_title=esc(dashboard_cfg["dashboard_title"]),
+        dashboard_title=esc(dashboard_cfg["dashboard_title"]),
+        dashboard_subtitle=esc(dashboard_cfg["dashboard_subtitle"]),
+        dashboard_logo=dashboard_logo_html(dashboard_cfg),
+        dashboard_config_json=json.dumps(dashboard_cfg),
         ticker_bar=ticker_bar,
         row1=row1, row2=row2, media_row=media_row, row3=row3,
         qnap_cards=qnap_cards, kuma_history=hist_block,
@@ -3665,7 +3703,7 @@ PAGE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="60">
-<title>MRDTech Homelab NOC</title>
+<title>{doc_title}</title>
 <link rel="icon" id="noc-favicon" type="image/svg+xml" href="">
 <style>
   :root {{
@@ -3797,7 +3835,9 @@ PAGE = """<!DOCTYPE html>
   .topbar {{ display:flex; align-items:center; justify-content:space-between;
     padding:14px 22px; border-bottom:1px solid var(--line);
     background:linear-gradient(180deg,#0c130c,#080b08); position:sticky; top:0; z-index:5; }}
-  .brand {{ display:flex; align-items:baseline; gap:14px; }}
+  .brand {{ display:flex; align-items:center; gap:14px; }}
+  .brand-text {{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }}
+  .brand-logo {{ width:30px; height:30px; object-fit:contain; border-radius:4px; flex:none; }}
   .brand h1 {{ font-size:20px; margin:0; color:var(--green); letter-spacing:2px;
     text-shadow:0 0 8px rgba(0,255,65,.4); }}
   .brand .tag {{ color:var(--muted); font-size:11px; letter-spacing:3px; }}
@@ -4188,7 +4228,7 @@ PAGE = """<!DOCTYPE html>
 <body>
   <div class="topbar">
     <div class="brand">
-      <h1>MRDTech Homelab</h1><span class="tag">NOC // ANTON</span>
+      {dashboard_logo}<div class="brand-text"><h1>{dashboard_title}</h1><span class="tag">{dashboard_subtitle}</span></div>
     </div>
     <div class="top-right">
       <div class="ts">UPDATED <b>{ts}</b></div>
@@ -4253,8 +4293,8 @@ PAGE = """<!DOCTYPE html>
       <div class="settings-body">
         <div class="settings-sidebar">
           <div class="settings-sidebar-hdr">
-            <div class="settings-sidebar-title">Integrations</div>
-            <div class="settings-sidebar-sub">Select to configure</div>
+            <div class="settings-sidebar-title">Settings</div>
+            <div class="settings-sidebar-sub">General and integrations</div>
           </div>
           <div id="settings-sidebar-list"></div>
           <div style="padding:10px 14px 14px;border-top:1px solid var(--line);margin-top:auto;">
@@ -4748,11 +4788,13 @@ PAGE = """<!DOCTYPE html>
   _initSectionLabels();
   _applySectionState();
   var INTEGRATIONS = {integrations_json};
+  var DASHBOARD_CONFIG = {dashboard_config_json};
   var _fieldDefs = null;
   var _currentCfg = null;
   var _selectedType = null;
 
   var CATEGORIES = [
+    {{ id:'general',    label:'General', keys:['general_dashboard'] }},
     {{ id:'infra',      label:'Infrastructure',
       keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
     {{ id:'security',   label:'Security',
@@ -4831,13 +4873,17 @@ PAGE = """<!DOCTYPE html>
     var html = '';
     CATEGORIES.forEach(function(cat) {{
       var items = cat.keys.filter(function(k) {{
-        if (k === 'custom') return true;
+        if (k === 'custom' || k === 'general_dashboard') return true;
         var i = _integByKey(k);
         return !!i;
       }});
       if (!items.length) return;
       html += '<div class="sidebar-cat">'+cat.label+'</div>';
       items.forEach(function(key) {{
+        if (key === 'general_dashboard') {{
+          html += '<div class="sidebar-item" data-key="general_dashboard">'            +'<span>Dashboard Branding</span>'            +'<span class="sidebar-dot ok"></span>'            +'</div>';
+          return;
+        }}
         if (key === 'custom') {{
           html += '<div class="sidebar-item" data-key="custom">'\
             +'<span>Custom Integration</span>'\
@@ -4873,6 +4919,14 @@ PAGE = """<!DOCTYPE html>
     }});
     var right = document.getElementById('settings-right');
     if (!right) return;
+
+    // General dashboard branding panel
+    if (key === 'general_dashboard') {{
+      var cfg = DASHBOARD_CONFIG || {{}};
+      function _escAttr(v) {{ return String(v||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }}
+      right.innerHTML = '<div class="integ-form-title">General</div>'        +'<div class="custom-panel">'        +'<div class="custom-panel-note">Customize the top-bar branding. Saved to <code>state/config.json</code> and read on every regeneration.</div>'        +'<div id="form-grid" class="form-grid">'        +'<div class="form-field span2"><label>Dashboard Title</label>'        +'<input id="field-dashboard_title" type="text" value="'+_escAttr(cfg.dashboard_title||'NOC Dashboard')+'" data-key="dashboard_title" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Subtitle</label>'        +'<input id="field-dashboard_subtitle" type="text" value="'+_escAttr(cfg.dashboard_subtitle||'Infrastructure Monitoring')+'" data-key="dashboard_subtitle" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Logo URL (optional)</label>'        +'<input id="field-logo_url" type="text" value="'+_escAttr(cfg.logo_url||'')+'" placeholder="https://example.com/logo.png" data-key="logo_url" autocomplete="off"></div>'        +'</div><div class="form-actions">'        +'<button class="btn-save" id="btn-save" onclick="saveDashboardConfig()">&#10003; Save &amp; Apply</button>'        +'<span id="test-result" class="test-result" style="display:none"></span>'        +'</div></div>';
+      return;
+    }}
 
     // Custom integration panel
     if (key === 'custom') {{
@@ -4984,6 +5038,24 @@ PAGE = """<!DOCTYPE html>
       }} else {{ tr.textContent='✕ '+(d.note||d.error||'Connection failed'); }}
     }})
     .catch(function(e){{btn.disabled=false;tr.className='test-result error';tr.textContent='✕ '+e.message;}});
+  }};
+
+  window.saveDashboardConfig = function() {{
+    var vals = {{
+      dashboard_title: (document.getElementById('field-dashboard_title')||{{value:''}}).value.trim(),
+      dashboard_subtitle: (document.getElementById('field-dashboard_subtitle')||{{value:''}}).value.trim(),
+      logo_url: (document.getElementById('field-logo_url')||{{value:''}}).value.trim()
+    }};
+    var btn=document.getElementById('btn-save'), tr=document.getElementById('test-result');
+    if (btn) {{ btn.disabled=true; btn.textContent='⧙ Saving…'; }}
+    fetch('/save-dashboard-config',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(vals)}})
+    .then(function(r){{return r.json();}})
+    .then(function(d){{
+      if (btn) {{ btn.disabled=false; btn.textContent='✓ Save & Apply'; }}
+      DASHBOARD_CONFIG=d.config||vals;
+      if (tr){{tr.style.display='inline-block';tr.className='test-result ok';tr.textContent='✓ Saved — regen started';}}
+    }})
+    .catch(function(e){{if(btn){{btn.disabled=false;btn.textContent='✓ Save & Apply';}} alert('Save failed: '+e.message);}});
   }};
 
   window.saveConfig = function() {{

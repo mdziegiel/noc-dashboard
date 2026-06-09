@@ -32,14 +32,22 @@ NOC 1 HTTP server — serves /app/output as static files.
 POST /save-layout   — persist card drag order
 POST /regenerate    — trigger immediate regen
 POST /save-config   — write credential k/v pairs to .env, trigger regen
+POST /save-dashboard-config — write branding settings to state/config.json, trigger regen
 POST /test-connection — run a collector with provided creds, return state
 """
 import http.server, json, os, subprocess, threading, sys, importlib.util
 
 OUTPUT_DIR  = "/app/output"
+STATE_DIR   = os.environ.get("NOC_STATE_DIR", os.path.join(OUTPUT_DIR, "state"))
 LAYOUT_FILE = os.path.join(OUTPUT_DIR, "layout.json")
+CONFIG_FILE = os.environ.get("NOC_CONFIG_FILE", os.path.join(STATE_DIR, "config.json"))
 ENV_FILE    = "/root/.hermes/.env"
 GENERATOR   = "/app/generate_dashboard.py"
+DEFAULT_DASHBOARD_CONFIG = {
+    "dashboard_title": "NOC Dashboard",
+    "dashboard_subtitle": "Infrastructure Monitoring",
+    "logo_url": "",
+}
 
 # ── env helpers ────────────────────────────────────────────────────────────────
 
@@ -60,6 +68,38 @@ def write_env(d):
     lines = [f"{k}={v}" for k, v in sorted(d.items())]
     with open(ENV_FILE, 'w') as f:
         f.write('\n'.join(lines) + '\n')
+
+def read_dashboard_config():
+    cfg = dict(DEFAULT_DASHBOARD_CONFIG)
+    try:
+        with open(CONFIG_FILE) as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            for key in cfg:
+                val = raw.get(key)
+                if isinstance(val, str):
+                    cfg[key] = val.strip()
+    except FileNotFoundError:
+        pass
+    cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
+    cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
+    return cfg
+
+def write_dashboard_config(payload):
+    cfg = read_dashboard_config()
+    for key in cfg:
+        val = payload.get(key, "") if isinstance(payload, dict) else ""
+        if isinstance(val, str):
+            cfg[key] = val.strip()
+    cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
+    cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = CONFIG_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, CONFIG_FILE)
+    return cfg
 
 # ── regen helper ───────────────────────────────────────────────────────────────
 
@@ -215,6 +255,9 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path == "/api/dashboard-config":
+            self.send_json(200, read_dashboard_config())
+            return
         if self.path == "/api/integration-fields":
             # Return field defs for the UI
             result = {}
@@ -270,6 +313,15 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
                 print(f"Config saved: {changed}")
                 threading.Thread(target=_run_regen, daemon=True).start()
                 self.send_json(200, {"ok": True, "saved": changed, "regen": True})
+            except Exception as e2:
+                self.send_json(500, {"error": str(e2)})
+
+        elif self.path == "/save-dashboard-config":
+            try:
+                cfg = write_dashboard_config(self.read_body())
+                print(f"Dashboard config saved: {CONFIG_FILE}")
+                threading.Thread(target=_run_regen, daemon=True).start()
+                self.send_json(200, {"ok": True, "config": cfg, "regen": True})
             except Exception as e2:
                 self.send_json(500, {"error": str(e2)})
 
