@@ -2946,7 +2946,28 @@ PAGE = """<!DOCTYPE html>
   .wrap {{ padding:18px 22px 40px; max-width:1500px; margin:0 auto; }}
   .section-label {{ color:var(--green-dim); font-size:11px; letter-spacing:3px;
     margin:22px 4px 10px; text-transform:uppercase; border-bottom:1px solid var(--line);
-    padding-bottom:6px; }}
+    padding-bottom:6px; cursor:pointer; user-select:none; display:flex;
+    align-items:center; gap:8px; }}
+  .section-label .sec-title {{ flex:1; }}
+  .section-collapse-icon {{ font-size:10px; color:var(--muted); transition:transform .2s; flex-shrink:0; }}
+  .section-collapsed .section-collapse-icon {{ transform:rotate(-90deg); }}
+  .section-drag-handle {{ display:none; cursor:grab; color:var(--muted); font-size:14px;
+    padding:0 4px; flex-shrink:0; }}
+  .edit-mode .section-drag-handle {{ display:block; }}
+  .section-del-btn {{ display:none; background:none; border:none; color:var(--muted);
+    font-size:11px; cursor:pointer; padding:0 3px; flex-shrink:0; }}
+  .edit-mode .section-del-btn {{ display:block; }}
+  .section-del-btn:hover {{ color:var(--crit); }}
+  .section-add-btn {{ display:none; background:rgba(0,255,65,.08); border:1px dashed var(--green-dim);
+    color:var(--green-dim); padding:6px 16px; border-radius:4px; font-size:10px;
+    letter-spacing:2px; cursor:pointer; font-family:inherit; text-transform:uppercase;
+    margin:12px 4px; }}
+  .edit-mode .section-add-btn {{ display:block; }}
+  .section-add-btn:hover {{ border-color:var(--green); color:var(--green);
+    background:rgba(0,255,65,.13); }}
+  .section-label input.sec-rename {{ background:transparent; border:none; border-bottom:1px solid var(--green);
+    color:var(--green-dim); font:inherit; font-size:11px; letter-spacing:3px;
+    text-transform:uppercase; outline:none; width:auto; min-width:80px; padding:0; }}
   .row {{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }}
   @media(max-width:1100px){{ .row{{grid-template-columns:repeat(2,1fr);}} }}
   @media(max-width:620px){{ .row{{grid-template-columns:1fr;}} }}
@@ -3304,6 +3325,7 @@ PAGE = """<!DOCTYPE html>
       <div class="card card-half" data-card-id="active-alerts"><h3>ACTIVE ALERTS</h3><div class="panelbox">{alert_block}</div></div>
     </div>
   </div>
+  <button class="section-add-btn" id="add-section-btn" onclick="addSection()">&#10010; Add Section</button>
   <div id="card-modal" class="card-modal" onclick="closeCardModal(event)">
     <div class="card-modal-box">
       <button class="card-modal-close" onclick="closeCardModal(null)">&times;</button>
@@ -3605,7 +3627,207 @@ PAGE = """<!DOCTYPE html>
   // Apply saved layout on page load (before user edits)
   applyStoredLayout();
 
-  /* ── Settings / Integrations page ── */
+  /* ── Section Management ── */
+  var SEC_KEY = 'noc-sections';
+  var _sectionSortable = null;
+
+  function _getSections() {{
+    return Array.from(document.querySelectorAll('.section-label'));
+  }}
+
+  function _getSectionRows(lbl) {{
+    // Return all sibling .row elements immediately following this label
+    var rows = [];
+    var el = lbl.nextElementSibling;
+    while (el && el.classList.contains('row')) {{
+      rows.push(el);
+      el = el.nextElementSibling;
+    }}
+    return rows;
+  }}
+
+  function _initSectionLabels() {{
+    _getSections().forEach(function(lbl) {{
+      // Wrap text in span if not already done
+      if (!lbl.querySelector('.sec-title')) {{
+        var titleText = lbl.textContent.trim();
+        lbl.innerHTML =
+          '<span class="section-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>'\
+          +'<span class="sec-title">'+titleText+'</span>'\
+          +'<span class="section-collapse-icon">&#9660;</span>'\
+          +'<button class="section-del-btn" title="Delete section">&#128465;</button>';
+      }}
+      // Click to collapse (but not when clicking buttons inside)
+      lbl.onclick = function(e) {{
+        if (e.target.classList.contains('section-del-btn')) {{ return; }}
+        if (e.target.classList.contains('section-drag-handle')) {{ return; }}
+        if (e.target.classList.contains('sec-rename')) {{ return; }}
+        var rows = _getSectionRows(lbl);
+        var isCollapsed = lbl.classList.toggle('section-collapsed');
+        rows.forEach(function(r) {{ r.style.display = isCollapsed ? 'none' : ''; }});
+        _persistSectionState();
+      }};
+      // Double-click sec-title to rename
+      var titleSpan = lbl.querySelector('.sec-title');
+      if (titleSpan) {{
+        titleSpan.ondblclick = function(e) {{
+          e.stopPropagation();
+          var cur = titleSpan.textContent.trim();
+          var inp = document.createElement('input');
+          inp.className = 'sec-rename';
+          inp.value = cur;
+          titleSpan.textContent = '';
+          titleSpan.appendChild(inp);
+          inp.focus();
+          inp.select();
+          function _commit() {{
+            var val = inp.value.trim() || cur;
+            titleSpan.textContent = val;
+            _persistSectionState();
+          }}
+          inp.onblur = _commit;
+          inp.onkeydown = function(ev) {{
+            if (ev.key === 'Enter') {{ inp.blur(); }}
+            if (ev.key === 'Escape') {{ inp.value = cur; inp.blur(); }}
+          }};
+        }};
+      }}
+      // Delete button
+      var delBtn = lbl.querySelector('.section-del-btn');
+      if (delBtn) {{
+        delBtn.onclick = function(e) {{
+          e.stopPropagation();
+          var titleText = (lbl.querySelector('.sec-title')||lbl).textContent.trim();
+          if (!confirm('Delete section "'+titleText+'"? Cards will move to the last section.')) return;
+          var rows = _getSectionRows(lbl);
+          // Find or create Unsorted section
+          var labels = _getSections();
+          var lastLabel = labels[labels.length - 1];
+          var targetRow = lastLabel ? _getSectionRows(lastLabel)[0] : null;
+          if (!targetRow) {{
+            // Create Unsorted section
+            window.addSection('Unsorted');
+            labels = _getSections();
+            lastLabel = labels[labels.length - 1];
+            targetRow = _getSectionRows(lastLabel)[0];
+          }}
+          rows.forEach(function(row) {{
+            Array.from(row.children).forEach(function(card) {{
+              if (targetRow) targetRow.appendChild(card);
+            }});
+            row.remove();
+          }});
+          lbl.remove();
+          _persistSectionState();
+          persistLayout();
+          if (document.body.classList.contains('edit-mode')) {{
+            destroySortables(); initSortables();
+          }}
+        }};
+      }}
+    }});
+  }}
+
+  function _persistSectionState() {{
+    var state = {{}};
+    _getSections().forEach(function(lbl) {{
+      var title = (lbl.querySelector('.sec-title')||lbl).textContent.trim();
+      state[title] = {{ collapsed: lbl.classList.contains('section-collapsed') }};
+    }});
+    // Save section order
+    state['__order__'] = _getSections().map(function(lbl) {{
+      return (lbl.querySelector('.sec-title')||lbl).textContent.trim();
+    }});
+    try {{ localStorage.setItem(SEC_KEY, JSON.stringify(state)); }} catch(e) {{}}
+  }}
+
+  function _applySectionState() {{
+    var stored;
+    try {{ stored = JSON.parse(localStorage.getItem(SEC_KEY)||'null'); }} catch(e) {{ return; }}
+    if (!stored) return;
+    _getSections().forEach(function(lbl) {{
+      var title = (lbl.querySelector('.sec-title')||lbl).textContent.trim();
+      if (stored[title] && stored[title].collapsed) {{
+        lbl.classList.add('section-collapsed');
+        _getSectionRows(lbl).forEach(function(r) {{ r.style.display = 'none'; }});
+      }}
+    }});
+  }}
+
+  window.addSection = function(name) {{
+    var title = name || prompt('Section name:', 'New Section');
+    if (!title) return;
+    var wrap = document.querySelector('.wrap');
+    if (!wrap) return;
+    var lbl = document.createElement('div');
+    lbl.className = 'section-label';
+    lbl.innerHTML =
+      '<span class="section-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>'\
+      +'<span class="sec-title">'+title+'</span>'\
+      +'<span class="section-collapse-icon">&#9660;</span>'\
+      +'<button class="section-del-btn" title="Delete section">&#128465;</button>';
+    var row = document.createElement('div');
+    row.className = 'row';
+    var addBtn = document.getElementById('add-section-btn');
+    if (addBtn) {{
+      wrap.insertBefore(row, addBtn);
+      wrap.insertBefore(lbl, row);
+    }} else {{
+      wrap.appendChild(lbl);
+      wrap.appendChild(row);
+    }}
+    _initSectionLabels();
+    _persistSectionState();
+    if (document.body.classList.contains('edit-mode')) {{
+      destroySortables(); initSortables();
+      if (_sectionSortable) {{ _sectionSortable.destroy(); }}
+      _initSectionSort();
+    }}
+  }};
+
+  function _initSectionSort() {{
+    var wrap = document.querySelector('.wrap');
+    if (!wrap || typeof Sortable === 'undefined') return;
+    _sectionSortable = Sortable.create(wrap, {{
+      handle: '.section-drag-handle',
+      animation: 150,
+      ghostClass: 'sortable-ghost',
+      filter: '.row,.card',
+      preventOnFilter: false,
+      onEnd: function() {{
+        _persistSectionState();
+        persistLayout();
+      }}
+    }});
+  }}
+
+  // Patch toggleEditMode to handle section sort
+  var _origToggleEditMode = window.toggleEditMode;
+  window.toggleEditMode = function() {{
+    _origToggleEditMode();
+    var isEdit = document.body.classList.contains('edit-mode');
+    if (isEdit) {{
+      if (typeof Sortable !== 'undefined') {{
+        if (_sectionSortable) {{ _sectionSortable.destroy(); }}
+        _initSectionSort();
+      }} else {{
+        // Sortable loads async — init section sort after it loads
+        var existing = document.querySelector('script[src*="sortablejs"]');
+        if (existing) {{
+          existing.addEventListener('load', function() {{
+            if (_sectionSortable) {{ _sectionSortable.destroy(); }}
+            _initSectionSort();
+          }});
+        }}
+      }}
+    }} else {{
+      if (_sectionSortable) {{ _sectionSortable.destroy(); _sectionSortable = null; }}
+    }}
+  }};
+
+  // Init on load
+  _initSectionLabels();
+  _applySectionState();
   var INTEGRATIONS = {integrations_json};
   var _fieldDefs = null;
   var _currentCfg = null;
