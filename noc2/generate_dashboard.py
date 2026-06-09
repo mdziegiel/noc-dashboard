@@ -3128,14 +3128,25 @@ PAGE = """<!DOCTYPE html>
   #edit-btn.active {{ color:var(--green); border-color:var(--green); background:rgba(0,255,65,0.08); }}
   /* ── Settings / integrations overlay ── */
   .settings-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.88);
-    backdrop-filter:blur(4px); z-index:9500; overflow-y:auto; }}
-  .settings-overlay.open {{ display:flex; align-items:stretch; }}
-  .settings-shell {{ display:flex; width:100%; height:100%; background:var(--panel);
-    box-shadow:0 0 60px rgba(0,0,0,.8); overflow:hidden; }}
-  .settings-sidebar {{ width:210px; flex-shrink:0; background:var(--panel2);
+    backdrop-filter:blur(4px); z-index:9500; padding:20px; box-sizing:border-box; }}
+  .settings-overlay.open {{ display:flex; align-items:center; justify-content:center; }}
+  .settings-shell {{ display:flex; flex-direction:column; width:100%; max-width:960px;
+    max-height:88vh; background:var(--panel); border-radius:8px;
+    box-shadow:0 8px 60px rgba(0,0,0,.85); overflow:hidden; border:1px solid var(--line); }}
+  .settings-modal-hdr {{ display:flex; align-items:center; justify-content:space-between;
+    padding:12px 18px; border-bottom:1px solid var(--line); background:var(--panel2);
+    flex-shrink:0; }}
+  .settings-modal-title {{ font-size:11px; font-weight:700; letter-spacing:3px;
+    color:var(--green); text-transform:uppercase; }}
+  .settings-modal-sub {{ font-size:9px; color:var(--muted); margin-top:1px; }}
+  .settings-modal-close {{ background:none; border:none; color:var(--muted);
+    font-size:20px; cursor:pointer; padding:0 4px; line-height:1; }}
+  .settings-modal-close:hover {{ color:var(--green); }}
+  .settings-body {{ display:flex; flex:1; overflow:hidden; }}
+  .settings-sidebar {{ width:200px; flex-shrink:0; background:var(--panel2);
     border-right:1px solid var(--line); overflow-y:auto; display:flex;
     flex-direction:column; }}
-  .settings-sidebar-hdr {{ padding:16px 14px 10px; border-bottom:1px solid var(--line); }}
+  .settings-sidebar-hdr {{ padding:14px 14px 8px; border-bottom:1px solid var(--line); }}
   .settings-sidebar-title {{ font-size:11px; font-weight:700; letter-spacing:3px;
     color:var(--green); text-transform:uppercase; }}
   .settings-sidebar-sub {{ font-size:9px; color:var(--muted); margin-top:2px; }}
@@ -3151,10 +3162,8 @@ PAGE = """<!DOCTYPE html>
   .sidebar-dot.ok {{ background:var(--green); box-shadow:0 0 4px var(--green); }}
   .sidebar-dot.warn {{ background:var(--warn); }}
   .sidebar-dot.error, .sidebar-dot.crit {{ background:var(--crit); }}
-  .settings-content {{ flex:1; overflow-y:auto; padding:26px 30px; position:relative; }}
-  .settings-close {{ position:absolute; top:12px; right:16px; background:none;
-    border:none; color:var(--muted); font-size:22px; cursor:pointer; z-index:1; }}
-  .settings-close:hover {{ color:var(--green); }}
+  .settings-content {{ flex:1; overflow-y:auto; padding:22px 28px; position:relative; }}
+  .settings-close {{ display:none; }}
   .settings-welcome {{ color:var(--muted); font-size:12px; padding-top:60px;
     text-align:center; letter-spacing:1px; }}
   .settings-welcome-icon {{ font-size:32px; display:block; margin-bottom:12px; opacity:.3; }}
@@ -3248,19 +3257,28 @@ PAGE = """<!DOCTYPE html>
   <!-- Settings / Integrations overlay -->
   <div id="settings-overlay" class="settings-overlay" onclick="settingsOverlayClick(event)">
     <div class="settings-shell">
-      <div class="settings-sidebar">
-        <div class="settings-sidebar-hdr">
-          <div class="settings-sidebar-title">&#9881; Settings</div>
-          <div class="settings-sidebar-sub">Integrations &amp; credentials</div>
+      <div class="settings-modal-hdr">
+        <div>
+          <div class="settings-modal-title">&#9881; Integrations &amp; Settings</div>
+          <div class="settings-modal-sub">Configure credentials for all integrations</div>
         </div>
-        <div id="settings-sidebar-list"></div>
+        <button class="settings-modal-close" onclick="toggleSettings()" title="Close">&times;</button>
       </div>
-      <div class="settings-content">
-        <button class="settings-close" onclick="toggleSettings()">&times;</button>
-        <div id="settings-right">
-          <div class="settings-welcome">
-            <span class="settings-welcome-icon">&#9881;</span>
-            Select an integration from the sidebar to configure credentials.
+      <div class="settings-body">
+        <div class="settings-sidebar">
+          <div class="settings-sidebar-hdr">
+            <div class="settings-sidebar-title">Integrations</div>
+            <div class="settings-sidebar-sub">Select to configure</div>
+          </div>
+          <div id="settings-sidebar-list"></div>
+        </div>
+        <div class="settings-content">
+          <button class="settings-close" onclick="toggleSettings()">&times;</button>
+          <div id="settings-right">
+            <div class="settings-welcome">
+              <span class="settings-welcome-icon">&#9881;</span>
+              Select an integration from the sidebar to configure credentials.
+            </div>
           </div>
         </div>
       </div>
