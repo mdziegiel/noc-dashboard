@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  noc1:
+    image: noc1:latest
+    build: ./noc1
+    container_name: noc1
+    restart: unless-stopped
+    ports:
+      - "${NOC1_PORT:-9969}:8081"
+    environment:
+      - PORT=8081
+      - REFRESH_MINUTES=15

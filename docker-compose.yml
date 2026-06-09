@@ -9,8 +9,10 @@ services:
     ports:
       - "${NOC_PORT:-8081}:8081"
     volumes:
-      # Persistent layout + trend state
-      - ./state:/app/state
+      - noc_state:/app/state
     environment:
       - PORT=8081
       - WORKERS=2
+
+volumes:
+  noc_state:

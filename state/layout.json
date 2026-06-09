@@ -1,0 +1,333 @@
+{
+  "theme": "dark-noc",
+  "autoTheme": true,
+  "dayTheme": "light-clean",
+  "nightTheme": "dark-noc",
+  "dayStart": 7,
+  "nightStart": 19,
+  "cards": [
+    {
+      "id": "50712164-e637-4193-a6ab-d259bbc28170",
+      "type": "wan_health",
+      "title": "WAN / INTERNET",
+      "x": 0,
+      "y": 0,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "c6bb36bd-4a2c-465f-a973-69af605daa27",
+      "type": "proxmox",
+      "title": "PROXMOX",
+      "x": 1,
+      "y": 0,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60,
+        "graph": true,
+        "graph_type": "sparkline",
+        "graph_field": "cpu"
+      }
+    },
+    {
+      "id": "5e46200c-58aa-4f94-94c0-a50fa2958f1c",
+      "type": "home_assistant",
+      "title": "HOME ASSISTANT",
+      "x": 2,
+      "y": 0,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "4d81ad42-3e54-4b0b-938d-0cedbbc6b40f",
+      "type": "uptime_kuma",
+      "title": "UPTIME KUMA",
+      "x": 3,
+      "y": 0,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "5deb32d3-4223-462d-9b51-61c2a72d5eb9",
+      "type": "docker",
+      "title": "DOCKER / PORTAINER",
+      "x": 0,
+      "y": 3,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "d7feeb06-ba14-4452-86c3-cae2d47c7e0f",
+      "type": "pbs",
+      "title": "PBS BACKUPS",
+      "x": 1,
+      "y": 3,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "0482a2b9-29c7-4b73-9ae0-07409790ad35",
+      "type": "urbackup",
+      "title": "URBACKUP",
+      "x": 2,
+      "y": 3,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "213b6850-3f8b-4586-b1a5-b1be5477be4f",
+      "type": "smart_health",
+      "title": "SMART / DISK HEALTH",
+      "x": 3,
+      "y": 3,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "62d27dc1-bbda-469c-b6a5-8184028332f6",
+      "type": "unifi",
+      "title": "UNIFI UDM-SE",
+      "x": 0,
+      "y": 6,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "a1a19458-63ac-4031-bf7f-4647367aa2d7",
+      "type": "nginx_proxy",
+      "title": "NGINX PROXY MGR",
+      "x": 1,
+      "y": 6,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "9a926e8f-3411-43b5-90df-207b49e90df0",
+      "type": "cloudflare",
+      "title": "CLOUDFLARE",
+      "x": 2,
+      "y": 6,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "397982f7-2e67-4834-a481-39955b726eb9",
+      "type": "wazuh",
+      "title": "WAZUH SIEM",
+      "x": 3,
+      "y": 6,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60,
+        "graph": true,
+        "graph_type": "sparkline",
+        "graph_field": "alerts_24h"
+      }
+    },
+    {
+      "id": "04b4f9b7-b9d5-41c2-907f-8647901a82e2",
+      "type": "crowdsec",
+      "title": "CROWDSEC",
+      "x": 0,
+      "y": 9,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "8ff56897-a691-40ca-abe2-6c99d3784544",
+      "type": "limacharlie",
+      "title": "LIMACHARLIE",
+      "x": 1,
+      "y": 9,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "415d8c6a-768e-4cb3-a6cc-ef85feb30c30",
+      "type": "adguard",
+      "title": "ADGUARD HOME",
+      "x": 2,
+      "y": 9,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60,
+        "graph": true,
+        "graph_type": "sparkline",
+        "graph_field": "block_pct"
+      }
+    },
+    {
+      "id": "0b244c6e-e790-4f27-94f8-1927e0cbbad5",
+      "type": "tailscale",
+      "title": "TAILSCALE",
+      "x": 3,
+      "y": 9,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "f4ea0626-9e4e-4341-9bf1-1624fa2e7d5d",
+      "type": "plex",
+      "title": "PLEX",
+      "x": 0,
+      "y": 12,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "7cd166cd-983f-4bf6-92a8-59c684be184f",
+      "type": "tautulli",
+      "title": "TAUTULLI",
+      "x": 1,
+      "y": 12,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "642d0eac-c147-4945-8fc7-0a8750dfa508",
+      "type": "sonarr",
+      "title": "SONARR",
+      "x": 2,
+      "y": 12,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "3297d030-8905-4704-b394-f24a719483bf",
+      "type": "radarr",
+      "title": "RADARR",
+      "x": 3,
+      "y": 12,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "c9d17c5a-4a80-474f-9f4b-0734b9c9fc55",
+      "type": "sabnzbd",
+      "title": "SABNZBD",
+      "x": 0,
+      "y": 15,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "8e6293e4-6bf2-4c85-b666-49ec91cd8973",
+      "type": "overseerr",
+      "title": "OVERSEERR",
+      "x": 1,
+      "y": 15,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "54832a5e-9764-4c84-9eef-206e55d6498d",
+      "type": "prowlarr",
+      "title": "PROWLARR",
+      "x": 2,
+      "y": 15,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 60
+      }
+    },
+    {
+      "id": "851ff58c-5228-412e-9012-454842f5683a",
+      "type": "qnap",
+      "title": "NAS STORAGE",
+      "x": 0,
+      "y": 18,
+      "w": 2,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 120
+      }
+    },
+    {
+      "id": "962c20ff-afd4-4c07-a17a-fd722b87de8f",
+      "type": "proxmox_storage",
+      "title": "PROXMOX STORAGE",
+      "x": 2,
+      "y": 18,
+      "w": 2,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 120,
+        "graph": true,
+        "graph_type": "donut"
+      }
+    },
+    {
+      "id": "b6ded5cd-d2f5-4f6d-921e-9e801f20df01",
+      "type": "malware_sources",
+      "title": "MALWARE DETECT",
+      "x": 0,
+      "y": 21,
+      "w": 1,
+      "h": 3,
+      "config": {
+        "refresh_seconds": 300
+      }
+    }
+  ]
+}
