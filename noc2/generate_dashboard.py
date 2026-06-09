@@ -3130,32 +3130,63 @@ PAGE = """<!DOCTYPE html>
   .settings-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.88);
     backdrop-filter:blur(4px); z-index:9500; overflow-y:auto; }}
   .settings-overlay.open {{ display:block; }}
-  .settings-box {{ max-width:1100px; margin:40px auto; background:var(--panel);
-    border:1px solid var(--line); border-radius:8px; padding:28px 32px;
+  .settings-box {{ max-width:960px; margin:32px auto; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; padding:24px 28px;
     box-shadow:0 8px 40px rgba(0,0,0,.7); }}
-  .settings-title {{ font-size:14px; font-weight:700; letter-spacing:3px;
-    color:var(--green); margin-bottom:6px; text-transform:uppercase; }}
-  .settings-sub {{ font-size:11px; color:var(--muted); margin-bottom:24px; letter-spacing:1px; }}
+  .settings-title {{ font-size:13px; font-weight:700; letter-spacing:3px;
+    color:var(--green); margin-bottom:4px; text-transform:uppercase; display:inline-block; }}
+  .settings-sub {{ font-size:10px; color:var(--muted); margin-bottom:20px; letter-spacing:1px; }}
   .settings-close {{ float:right; background:none; border:none; color:var(--muted);
-    font-size:22px; cursor:pointer; line-height:1; padding:0; margin-top:-4px; }}
+    font-size:22px; cursor:pointer; line-height:1; padding:0; }}
   .settings-close:hover {{ color:var(--green); }}
-  .integ-grid {{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }}
+  /* Integration grid */
+  .integ-grid {{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }}
   @media(max-width:900px) {{ .integ-grid {{ grid-template-columns:repeat(2,1fr); }} }}
   .integ-card {{ background:var(--panel2); border:1px solid var(--line);
-    border-radius:5px; padding:10px 12px; border-left:3px solid var(--degr); }}
+    border-radius:5px; padding:9px 11px; border-left:3px solid var(--degr);
+    cursor:pointer; transition:border-color .15s,background .15s; }}
+  .integ-card:hover {{ background:var(--panel); border-color:var(--green-dim); }}
   .integ-card.s-ok {{ border-left-color:var(--green); }}
   .integ-card.s-warn {{ border-left-color:var(--warn); }}
   .integ-card.s-crit, .integ-card.s-error {{ border-left-color:var(--crit); }}
   .integ-card.s-degraded {{ border-left-color:var(--degr); }}
-  .integ-name {{ font-size:11px; font-weight:700; letter-spacing:1px;
-    color:var(--txt); margin-bottom:4px; }}
-  .integ-state {{ font-size:10px; letter-spacing:1px; text-transform:uppercase; }}
-  .integ-state.ok {{ color:var(--green); }}
-  .integ-state.warn {{ color:var(--warn); }}
-  .integ-state.error, .integ-state.crit {{ color:var(--crit); }}
-  .integ-state.degraded {{ color:var(--degr); }}
-  .integ-note {{ font-size:9px; color:var(--muted); margin-top:3px;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+  .integ-card.selected {{ background:rgba(0,255,65,0.05); border-color:var(--green); outline:1px solid var(--green); }}
+  .integ-name {{ font-size:10px; font-weight:700; letter-spacing:1px; color:var(--txt); margin-bottom:3px; }}
+  .integ-badge {{ font-size:9px; letter-spacing:1px; text-transform:uppercase; }}
+  .integ-badge.ok {{ color:var(--green); }}
+  .integ-badge.warn {{ color:var(--warn); }}
+  .integ-badge.error,.integ-badge.crit {{ color:var(--crit); }}
+  .integ-badge.degraded {{ color:var(--degr); }}
+  /* Config form */
+  .integ-form {{ display:none; margin-top:20px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:6px; padding:20px 22px; }}
+  .integ-form.open {{ display:block; }}
+  .integ-form-title {{ font-size:12px; font-weight:700; letter-spacing:2px;
+    color:var(--green); margin-bottom:14px; text-transform:uppercase; }}
+  .form-grid {{ display:grid; grid-template-columns:repeat(2,1fr); gap:12px 20px; }}
+  @media(max-width:700px) {{ .form-grid {{ grid-template-columns:1fr; }} }}
+  .form-field {{ display:flex; flex-direction:column; gap:4px; }}
+  .form-field label {{ font-size:10px; color:var(--muted); letter-spacing:1px; text-transform:uppercase; }}
+  .form-field input {{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
+    padding:6px 10px; border-radius:4px; font-size:12px; font-family:inherit;
+    transition:border-color .15s; }}
+  .form-field input:focus {{ outline:none; border-color:var(--green); }}
+  .form-field input::placeholder {{ color:var(--muted); opacity:.5; }}
+  .form-actions {{ display:flex; gap:10px; margin-top:16px; align-items:center; }}
+  .btn-test {{ background:none; border:1px solid var(--green-dim); color:var(--green-dim);
+    padding:6px 16px; border-radius:4px; font-size:11px; font-family:inherit;
+    cursor:pointer; letter-spacing:1px; transition:all .15s; }}
+  .btn-test:hover {{ border-color:var(--green); color:var(--green); }}
+  .btn-test:disabled {{ opacity:.4; cursor:default; }}
+  .btn-save {{ background:var(--green); border:none; color:#000;
+    padding:6px 16px; border-radius:4px; font-size:11px; font-family:inherit;
+    cursor:pointer; font-weight:700; letter-spacing:1px; transition:opacity .15s; }}
+  .btn-save:hover {{ opacity:.85; }}
+  .btn-save:disabled {{ opacity:.4; cursor:default; }}
+  .test-result {{ font-size:11px; padding:4px 10px; border-radius:3px; }}
+  .test-result.ok {{ color:var(--green); background:rgba(0,255,65,.08); }}
+  .test-result.error {{ color:var(--crit); background:rgba(255,59,59,.08); }}
+  .test-result.testing {{ color:var(--muted); }}
 </style></head>
 <body>
   <div class="topbar">
@@ -3214,8 +3245,17 @@ PAGE = """<!DOCTYPE html>
     <div class="settings-box">
       <button class="settings-close" onclick="toggleSettings()">&times;</button>
       <div class="settings-title">&#9881; Integrations &amp; Settings</div>
-      <div class="settings-sub">Integration status as of last dashboard generation &mdash; credentials configured via container environment variables.</div>
+      <div class="settings-sub">Click an integration to configure credentials &mdash; Test Connection verifies before saving &mdash; changes trigger an immediate dashboard regen.</div>
       <div id="integ-grid" class="integ-grid"></div>
+      <div id="integ-form" class="integ-form">
+        <div id="integ-form-title" class="integ-form-title"></div>
+        <div id="form-grid" class="form-grid"></div>
+        <div class="form-actions">
+          <button class="btn-test" id="btn-test" onclick="testConnection()">&#9654; Test Connection</button>
+          <button class="btn-save" id="btn-save" onclick="saveConfig()">&#10003; Save &amp; Apply</button>
+          <span id="test-result" class="test-result" style="display:none"></span>
+        </div>
+      </div>
     </div>
   </div>
   <footer>MRDTECH INFRASTRUCTURE MONITORING · AUTO-REFRESH 60s · REGEN 15m</footer>
@@ -3439,41 +3479,175 @@ PAGE = """<!DOCTYPE html>
 
   /* ── Settings / Integrations page ── */
   var INTEGRATIONS = {integrations_json};
+  var _fieldDefs = null;    // loaded once from /api/integration-fields
+  var _currentCfg = null;   // loaded once from /api/current-config
+  var _selectedType = null;
+
+  function _loadFieldDefs(cb) {{
+    if (_fieldDefs) {{ cb(_fieldDefs); return; }}
+    fetch('/api/integration-fields')
+      .then(function(r) {{ return r.json(); }})
+      .then(function(d) {{ _fieldDefs = d; cb(d); }})
+      .catch(function() {{ cb({{}}); }});
+  }}
+
+  function _loadCurrentCfg(cb) {{
+    fetch('/api/current-config')
+      .then(function(r) {{ return r.json(); }})
+      .then(function(d) {{ _currentCfg = d; cb(d); }})
+      .catch(function() {{ cb({{}}); }});
+  }}
 
   function renderIntegGrid() {{
     var grid = document.getElementById('integ-grid');
     if (!grid) return;
     grid.innerHTML = INTEGRATIONS.map(function(integ) {{
-      var stateLabel = integ.state === 'ok' ? '✓ OK'
+      var badge = integ.state === 'ok' ? '✓ OK'
         : integ.state === 'warn' ? '⚠ WARN'
-        : integ.state === 'degraded' ? '— DEGRADED'
-        : '✕ ' + integ.state.toUpperCase();
-      var note = integ.note ? '<div class="integ-note" title="' + integ.note.replace(/"/g,'&quot;') + '">' + integ.note + '</div>' : '';
-      return '<div class="integ-card s-' + integ.state + '">'
+        : integ.state === 'degraded' ? '— NOT CONFIGURED'
+        : '✕ ERROR';
+      return '<div class="integ-card s-' + integ.state + '" data-type="' + integ.key + '" onclick="selectInteg(\'' + integ.key + '\',\'' + integ.label.replace(/'/g,"\\'") + '\')">'
         + '<div class="integ-name">' + integ.label + '</div>'
-        + '<div class="integ-state ' + integ.state + '">' + stateLabel + '</div>'
-        + note
+        + '<div class="integ-badge ' + integ.state + '">' + badge + '</div>'
         + '</div>';
     }}).join('');
   }}
 
+  function selectInteg(itype, label) {{
+    _selectedType = itype;
+    // Highlight selected card
+    document.querySelectorAll('.integ-card').forEach(function(c) {{
+      c.classList.toggle('selected', c.dataset.type === itype);
+    }});
+    var form = document.getElementById('integ-form');
+    var formTitle = document.getElementById('integ-form-title');
+    var formGrid = document.getElementById('form-grid');
+    if (!form || !formGrid) return;
+    formTitle.textContent = '⚙ Configure: ' + label;
+    formGrid.innerHTML = '<div style="color:var(--muted);font-size:11px">Loading fields…</div>';
+    form.classList.add('open');
+    // Hide test result
+    var tr = document.getElementById('test-result');
+    if (tr) {{ tr.style.display='none'; tr.className='test-result'; tr.textContent=''; }}
+    // Load field defs and current config
+    _loadFieldDefs(function(defs) {{
+      _loadCurrentCfg(function(cfg) {{
+        var fields = defs[itype] || [];
+        if (!fields.length) {{
+          formGrid.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:8px">No configurable fields for this integration.</div>';
+          return;
+        }}
+        formGrid.innerHTML = fields.map(function(f) {{
+          var val = (cfg[f.key] && cfg[f.key] !== '••••••••') ? '' : '';
+          var ph = f.type === 'password' ? '(unchanged — enter new value to change)' : (f.label || f.key);
+          return '<div class="form-field">'
+            + '<label for="field-' + f.key + '">' + (f.label || f.key) + '</label>'
+            + '<input id="field-' + f.key + '" name="' + f.key + '" type="' + f.type + '" '
+            + 'placeholder="' + ph + '" autocomplete="off" data-key="' + f.key + '">'
+            + '</div>';
+        }}).join('');
+      }});
+    }});
+  }}
+
+  function _getFormValues() {{
+    var vals = {{}};
+    document.querySelectorAll('#form-grid input[data-key]').forEach(function(inp) {{
+      if (inp.value.trim()) vals[inp.dataset.key] = inp.value.trim();
+    }});
+    return vals;
+  }}
+
+  window.testConnection = function() {{
+    if (!_selectedType) return;
+    var btn = document.getElementById('btn-test');
+    var tr = document.getElementById('test-result');
+    btn.disabled = true;
+    tr.style.display = 'inline-block';
+    tr.className = 'test-result testing';
+    tr.textContent = '⟳ Testing…';
+    fetch('/test-connection', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{type: _selectedType, creds: _getFormValues()}})
+    }})
+    .then(function(r) {{ return r.json(); }})
+    .then(function(d) {{
+      btn.disabled = false;
+      tr.className = 'test-result ' + (d.ok ? 'ok' : 'error');
+      if (d.ok) {{
+        var detail = Object.entries(d.detail || {{}}).map(function(e) {{ return e[0]+': '+e[1]; }}).join(' · ');
+        tr.textContent = '✓ Connected' + (detail ? ' — ' + detail : '');
+      }} else {{
+        tr.textContent = '✕ ' + (d.note || d.error || 'Connection failed');
+      }}
+    }})
+    .catch(function(e) {{
+      btn.disabled = false;
+      tr.className = 'test-result error';
+      tr.textContent = '✕ Request failed: ' + e.message;
+    }});
+  }};
+
+  window.saveConfig = function() {{
+    if (!_selectedType) return;
+    var vals = _getFormValues();
+    if (!Object.keys(vals).length) {{
+      alert('No values entered — nothing to save.');
+      return;
+    }}
+    var btn = document.getElementById('btn-save');
+    btn.disabled = true;
+    btn.textContent = '⟳ Saving…';
+    fetch('/save-config', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify(vals)
+    }})
+    .then(function(r) {{ return r.json(); }})
+    .then(function(d) {{
+      btn.disabled = false;
+      btn.textContent = '✓ Save & Apply';
+      if (d.ok) {{
+        _currentCfg = null; // invalidate cache
+        var tr = document.getElementById('test-result');
+        tr.style.display = 'inline-block';
+        tr.className = 'test-result ok';
+        tr.textContent = '✓ Saved ' + (d.saved||[]).join(', ') + ' — regen started';
+      }} else {{
+        alert('Save failed: ' + (d.error||'unknown'));
+      }}
+    }})
+    .catch(function(e) {{
+      btn.disabled = false;
+      btn.textContent = '✓ Save & Apply';
+      alert('Save failed: ' + e.message);
+    }});
+  }};
+
   window.toggleSettings = function() {{
     var ov = document.getElementById('settings-overlay');
     var isOpen = ov.classList.toggle('open');
-    if (isOpen) {{ renderIntegGrid(); document.body.style.overflow = 'hidden'; }}
-    else {{ document.body.style.overflow = ''; }}
+    if (isOpen) {{
+      renderIntegGrid();
+      document.body.style.overflow = 'hidden';
+      // Close form
+      var f = document.getElementById('integ-form');
+      if (f) f.classList.remove('open');
+      _selectedType = null;
+    }} else {{
+      document.body.style.overflow = '';
+    }}
   }};
 
   window.settingsOverlayClick = function(e) {{
     if (e.target === document.getElementById('settings-overlay')) window.toggleSettings();
   }};
 
-  // Escape key closes settings too
-  var _prevKeydown = document.onkeydown;
   document.addEventListener('keydown', function(e) {{
     if (e.key === 'Escape') {{
       var ov = document.getElementById('settings-overlay');
-      if (ov && ov.classList.contains('open')) {{ window.toggleSettings(); }}
+      if (ov && ov.classList.contains('open')) {{ window.toggleSettings(); return; }}
     }}
   }});
 
