@@ -2,7 +2,7 @@
 
 **A zero-dependency homelab NOC dashboard — static Python generator, vanilla JS, Docker-ready. No React, no build step.**
 
-Deploy it, add credentials, and get a fully live operations dashboard regenerated every 15 minutes. Drag cards in edit mode, resize, create sections, remove cards — layout persists automatically. 40+ integrations with live status or Coming Soon badges.
+Deploy it, add credentials, and get a fully live operations dashboard regenerated every 15 minutes. Edit mode: drag cards, resize, remove, add new cards, create sections. 130+ integrations with live status or Coming Soon badges.
 
 ---
 
@@ -14,13 +14,19 @@ Deploy it, add credentials, and get a fully live operations dashboard regenerate
 
 ![NOC Dashboard — Edit Mode](screenshots/dark-noc-edit.png)
 
-*Edit mode — remove/resize buttons on every card, drag handles for sections*
+*Edit mode — remove/resize buttons on every card, drag handles for sections, ADD CARD + SAVE in topbar*
+
+---
+
+![NOC Dashboard — Add Card Panel](screenshots/add-card-panel.png)
+
+*Add Card panel — all built-in card types by category, configured integrations clickable, unconfigured show "Configure in Settings first"*
 
 ---
 
 ![NOC Dashboard — Integrations Settings](screenshots/integrations.png)
 
-*Integrations & Settings — centered modal overlay, 40+ integrations, Coming Soon badges, Custom integration builder*
+*Integrations & Settings — 130+ integrations, Coming Soon badges for unimplemented ones, Custom integration builder*
 
 ---
 
