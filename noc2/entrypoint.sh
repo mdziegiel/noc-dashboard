@@ -34,12 +34,17 @@ POST /regenerate    — trigger immediate regen
 POST /save-config   — write credential k/v pairs to .env, trigger regen
 POST /test-connection — run a collector with provided creds, return state
 """
-import http.server, json, os, subprocess, threading, sys, importlib.util
+import http.server, json, os, subprocess, threading, sys, importlib.util, ssl
+
+CTX = ssl.create_default_context()
+CTX.check_hostname = False
+CTX.verify_mode = ssl.CERT_NONE
 
 OUTPUT_DIR  = "/app/output"
 LAYOUT_FILE = os.path.join(OUTPUT_DIR, "layout.json")
 ENV_FILE    = "/root/.hermes/.env"
 GENERATOR   = "/app/generate_dashboard.py"
+CUSTOM_CARDS_FILE = os.path.join(OUTPUT_DIR, "custom_cards.json")
 
 # ── env helpers ────────────────────────────────────────────────────────────────
 
@@ -228,6 +233,21 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
                 ]
             self.send_json(200, result)
             return
+        if self.path == "/api/custom-cards":
+            # Return saved custom card configs
+            try:
+                with open(CUSTOM_CARDS_FILE) as f:
+                    data = f.read()
+            except FileNotFoundError:
+                data = "[]"
+            except Exception:
+                data = "[]"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data.encode())
+            return
         if self.path == "/api/current-config":
             # Return current env values (masked for passwords)
             e = read_env()
@@ -319,6 +339,91 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
 
             except Exception as e2:
                 self.send_json(500, {"error": str(e2)})
+
+        elif self.path == "/save-custom-cards":
+            # Receive list of custom card configs, persist to disk
+            try:
+                payload = self.read_body()
+                if not isinstance(payload, list):
+                    self.send_json(400, {"error": "expected array"})
+                    return
+                import json as _json
+                with open(CUSTOM_CARDS_FILE, "w") as f:
+                    _json.dump(payload, f, indent=2)
+                self.send_json(200, {"ok": True, "count": len(payload)})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif self.path == "/api/fetch-custom":
+            # Proxy fetch for custom cards — runs server-side so no CORS issues
+            import urllib.request as _ureq
+            import base64 as _b64mod
+            try:
+                payload = self.read_body()
+                url        = payload.get("url", "")
+                auth_type  = payload.get("auth_type", "none")
+                auth_value = payload.get("auth_value", "")
+                auth_key_header = payload.get("auth_key_header", "X-API-Key")
+                auth_user  = payload.get("auth_user", "")
+                auth_pass  = payload.get("auth_pass", "")
+                oauth_token_url     = payload.get("oauth_token_url", "")
+                oauth_client_id     = payload.get("oauth_client_id", "")
+                oauth_client_secret = payload.get("oauth_client_secret", "")
+                oauth_scope         = payload.get("oauth_scope", "")
+
+                if not url:
+                    self.send_json(400, {"ok": False, "error": "no url"})
+                    return
+
+                headers = {}
+                if auth_type == "bearer" and auth_value:
+                    headers["Authorization"] = "Bearer " + auth_value
+                elif auth_type == "apikey" and auth_value:
+                    headers[auth_key_header or "X-API-Key"] = auth_value
+                elif auth_type == "basic":
+                    creds = _b64mod.b64encode((auth_user + ":" + auth_pass).encode()).decode()
+                    headers["Authorization"] = "Basic " + creds
+                elif auth_type == "oauth" and oauth_token_url:
+                    # Client credentials grant
+                    try:
+                        import urllib.parse as _uparse
+                        token_data = _uparse.urlencode({
+                            "grant_type": "client_credentials",
+                            "client_id": oauth_client_id,
+                            "client_secret": oauth_client_secret,
+                            "scope": oauth_scope,
+                        }).encode()
+                        token_req = _ureq.Request(
+                            oauth_token_url,
+                            data=token_data,
+                            headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        )
+                        with _ureq.urlopen(token_req, timeout=10, context=CTX) as tr:
+                            token_resp = json.loads(tr.read().decode("utf-8", "replace"))
+                        access_token = token_resp.get("access_token", "")
+                        if access_token:
+                            headers["Authorization"] = "Bearer " + access_token
+                    except Exception as oe:
+                        self.send_json(200, {"ok": False, "error": "OAuth token error: " + str(oe)[:120]})
+                        return
+
+                req = _ureq.Request(url, headers=headers)
+                try:
+                    with _ureq.urlopen(req, timeout=15, context=CTX) as resp:
+                        raw = resp.read().decode("utf-8", "replace")
+                except Exception as fe:
+                    self.send_json(200, {"ok": False, "error": str(fe)[:200]})
+                    return
+
+                parsed = None
+                try:
+                    parsed = json.loads(raw)
+                except Exception:
+                    pass
+
+                self.send_json(200, {"ok": True, "raw": raw[:500], "json": parsed})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
 
         else:
             self.send_response(404)
