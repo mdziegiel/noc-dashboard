@@ -3008,8 +3008,10 @@ PAGE = """<!DOCTYPE html>
   .ok-empty {{ color:var(--green-dim); }}
   .twocol {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }}
   @media(max-width:900px){{ .twocol{{grid-template-columns:1fr;}} }}
-  .panelbox {{ background:linear-gradient(180deg,var(--panel),var(--panel2));
-    border:1px solid var(--line); border-radius:6px; padding:16px; }}
+  .card-full {{ grid-column:1 / -1; }}
+  .card-half {{ grid-column:span 2; }}
+  @media(max-width:900px) {{ .card-half {{ grid-column:1 / -1; }} }}
+  .panelbox {{ background:transparent; border:none; padding:0; margin:0; }}
   .panelbox h4 {{ margin:0 0 12px; font-size:11px; letter-spacing:2px; color:var(--green-dim); }}
   /* sparkline trend */
   .trend {{ width:100%; margin-top:10px; padding-top:9px; border-top:1px dashed var(--line); }}
@@ -3157,11 +3159,22 @@ PAGE = """<!DOCTYPE html>
     display:none; vertical-align:super; }}
   /* ── Edit mode ── */
   .edit-mode .row {{ outline:1px dashed var(--green-dim); outline-offset:4px; }}
-  .edit-mode .card {{ cursor:grab !important; }}
+  .edit-mode .card {{ cursor:grab !important; position:relative; }}
   .edit-mode .card:active {{ cursor:grabbing !important; }}
   .sortable-ghost {{ opacity:0.35; outline:2px solid var(--green) !important; }}
   .sortable-drag {{ opacity:0.9; box-shadow:0 8px 24px rgba(0,255,65,0.35) !important; }}
   #edit-btn.active {{ color:var(--green); border-color:var(--green); background:rgba(0,255,65,0.08); }}
+  .card-rm-btn {{ display:none; position:absolute; top:4px; right:4px; z-index:10;
+    background:rgba(255,51,51,.85); border:none; color:#fff; width:18px; height:18px;
+    border-radius:3px; font-size:12px; line-height:18px; text-align:center;
+    cursor:pointer; padding:0; font-weight:700; }}
+  .edit-mode .card-rm-btn {{ display:block; }}
+  .card-rm-btn:hover {{ background:var(--crit); }}
+  .card-resize-btn {{ display:none; position:absolute; top:4px; right:26px; z-index:10;
+    background:rgba(0,80,40,.85); border:1px solid var(--green-dim); color:var(--green);
+    width:18px; height:18px; border-radius:3px; font-size:10px; line-height:16px;
+    text-align:center; cursor:pointer; padding:0; font-weight:700; }}
+  .edit-mode .card-resize-btn {{ display:block; }}
   /* ── Settings / integrations overlay ── */
   .settings-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.88);
     backdrop-filter:blur(4px); z-index:9500; padding:20px; box-sizing:border-box; }}
@@ -3282,13 +3295,13 @@ PAGE = """<!DOCTYPE html>
     <div class="section-label">QNAP Storage Appliances</div>
     <div class="row">{qnap_cards}</div>
     <div class="section-label">Proxmox Storage Utilization</div>
-    <div class="panelbox">{row3}</div>
+    <div class="row"><div class="card card-full" data-card-id="proxmox-storage"><h3>PROXMOX STORAGE</h3><div class="panelbox">{row3}</div></div></div>
     <div class="section-label">Uptime History (last 24h)</div>
-    <div class="panelbox">{kuma_history}</div>
+    <div class="row"><div class="card card-full" data-card-id="kuma-history"><h3>UPTIME HISTORY</h3><div class="panelbox">{kuma_history}</div></div></div>
     <div class="section-label">Certificates &amp; Active Alerts</div>
-    <div class="twocol">
-      <div class="panelbox"><h4>TLS CERT EXPIRY</h4><div class="certs">{cert_tiles}</div></div>
-      <div class="panelbox"><h4>ACTIVE ALERTS</h4>{alert_block}</div>
+    <div class="row">
+      <div class="card card-half" data-card-id="cert-expiry"><h3>TLS CERT EXPIRY</h3><div class="panelbox"><div class="certs">{cert_tiles}</div></div></div>
+      <div class="card card-half" data-card-id="active-alerts"><h3>ACTIVE ALERTS</h3><div class="panelbox">{alert_block}</div></div>
     </div>
   </div>
   <div id="card-modal" class="card-modal" onclick="closeCardModal(event)">
@@ -3536,6 +3549,39 @@ PAGE = """<!DOCTYPE html>
     if (editBtn) {{ editBtn.classList.toggle('active', isEdit); editBtn.textContent = isEdit ? '✕ EDITING' : '✎ EDIT'; }}
     if (saveBtn) saveBtn.style.display = isEdit ? 'inline-block' : 'none';
     if (isEdit) {{
+      // Inject remove + resize buttons into every card
+      document.querySelectorAll('.card').forEach(function(card) {{
+        if (!card.querySelector('.card-rm-btn')) {{
+          var rmBtn = document.createElement('button');
+          rmBtn.className = 'card-rm-btn';
+          rmBtn.title = 'Remove card';
+          rmBtn.textContent = '✕';
+          rmBtn.addEventListener('click', function(e) {{
+            e.stopPropagation();
+            if (confirm('Remove this card? (Reload page to restore)')) {{
+              card.remove();
+              persistLayout();
+            }}
+          }});
+          card.appendChild(rmBtn);
+        }}
+        if (!card.querySelector('.card-resize-btn')) {{
+          var rsBtn = document.createElement('button');
+          rsBtn.className = 'card-resize-btn';
+          rsBtn.title = 'Cycle size';
+          rsBtn.textContent = '⤢';
+          rsBtn.addEventListener('click', function(e) {{
+            e.stopPropagation();
+            var sizes = ['', 'card-wide', 'card-full', 'card-half'];
+            var cur = sizes.find(function(s) {{ return s && card.classList.contains(s); }}) || '';
+            var next = sizes[(sizes.indexOf(cur) + 1) % sizes.length];
+            sizes.forEach(function(s) {{ if (s) card.classList.remove(s); }});
+            if (next) card.classList.add(next);
+            persistLayout();
+          }});
+          card.appendChild(rsBtn);
+        }}
+      }});
       if (typeof Sortable === 'undefined') {{
         var s = document.createElement('script');
         s.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js';
@@ -3545,6 +3591,8 @@ PAGE = """<!DOCTYPE html>
         initSortables();
       }}
     }} else {{
+      // Remove injected buttons
+      document.querySelectorAll('.card-rm-btn, .card-resize-btn').forEach(function(btn) {{ btn.remove(); }});
       destroySortables();
     }}
   }};
