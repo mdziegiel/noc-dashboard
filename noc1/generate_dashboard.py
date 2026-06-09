@@ -2125,10 +2125,10 @@ def render(data, gen_epoch, errors, trends=None):
     # avg CPU across running VMs
     run_cpus = [v.get("cpu", 0) for v in hv_vms if v.get("state") == "Running"]
     avg_cpu = (sum(run_cpus) / len(run_cpus)) if run_cpus else None
-    hv_body = (metric(f"{hv_run}/{hv_total}", "VMs", hv_vm_state)
-               + metric(f"{avg_cpu:.0f}%" if avg_cpu is not None else "—", "CPU avg",
+    hv_body = (metric("VMs", f"{hv_run}/{hv_total}", hv_vm_state)
+               + metric("CPU avg", f"{avg_cpu:.0f}%" if avg_cpu is not None else "—",
                         "crit" if avg_cpu and avg_cpu >= 90 else "warn" if avg_cpu and avg_cpu >= 75 else "")
-               + metric(f'{sum(v.get("mem_gb",0) for v in hv_vms):.1f} GB' if hv_vms else "—", "RAM alloc"))
+               + metric("RAM alloc", f'{sum(v.get("mem_gb",0) for v in hv_vms):.1f} GB' if hv_vms else "—"))
     if hv_vms and HV.get("state") != "error":
         vm_rows = []
         for v in hv_vms[:4]:
@@ -2143,15 +2143,15 @@ def render(data, gen_epoch, errors, trends=None):
             vm_rows.append(f'<div style="font-size:10px;opacity:.5">+{len(hv_vms)-4} more</div>')
         hv_body += "".join(vm_rows)
     if HV.get("state") == "error":
-        hv_sub = HV.get("note", "host unreachable")
+        hv_sub = esc(HV.get("note", "host unreachable"))
     elif hv_stop > 0:
         down = [v["name"] for v in hv_vms if v.get("state") != "Running"][:3]
-        hv_sub = f'OFF: {", ".join(down)}'
+        hv_sub = f'OFF: {", ".join(esc(n) for n in down)}'
     else:
         cpus = HV.get("host_cpus", "?")
         mem  = HV.get("host_mem_gb", "?")
         hv_sub = (f'host {cpus} vCPU · {mem} GB' if hv_total > 0
-                  else HV.get("note", "all VMs running"))
+                  else esc(HV.get("note", "all VMs running")))
 
     row1 = (card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
             + card("PROXMOX", P.get("state", "error"), prox_body, prox_sub)
