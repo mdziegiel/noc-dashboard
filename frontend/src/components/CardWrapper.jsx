@@ -359,7 +359,6 @@ export default function CardWrapper({ card, onUpdate, onRemove, editMode, sseDat
         <FocusModal
           card={card}
           data={data}
-          CardComp={CardComp}
           onClose={() => setFocused(false)}
         />
       )}

@@ -8,6 +8,50 @@ const COLS = 4
 const ROW_HEIGHT = 52
 const MARGIN = [8, 8]
 
+// Section header rendered as a full-width row inside the grid
+function SectionHeaderCard({ card, editMode, onRemove }) {
+  return (
+    <div style={{
+      height: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      paddingLeft: 4,
+      paddingRight: 4,
+    }}>
+      <div style={{
+        width: '100%',
+        borderBottom: '1px solid var(--section-header-color, #00ff41)',
+        paddingBottom: 3,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}>
+        <span style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.18em',
+          textTransform: 'uppercase',
+          color: 'var(--section-header-color, #00ff41)',
+          textShadow: '0 0 8px rgba(0,255,65,0.35)',
+        }}>
+          {card.title || card.label || 'SECTION'}
+        </span>
+        {editMode && (
+          <button
+            onClick={() => onRemove(card.id)}
+            style={{
+              background: 'none', border: 'none',
+              color: 'var(--error-color, #ff3333)',
+              cursor: 'pointer', fontSize: 10, padding: '0 4px',
+            }}
+            title="Remove section header"
+          >✕</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function CardGrid({ layout, onLayoutChange, onUpdateCard, onRemoveCard, editMode, sseData }) {
   const cards = layout?.cards || []
   const containerRef = useRef(null)
@@ -28,8 +72,11 @@ export default function CardGrid({ layout, onLayoutChange, onUpdateCard, onRemov
     i: card.id,
     x: card.x ?? 0,
     y: card.y ?? 0,
-    w: card.w ?? 2,
-    h: card.h ?? 3,
+    w: card.type === 'section_header' ? COLS : (card.w ?? 2),
+    h: card.type === 'section_header' ? 1 : (card.h ?? 3),
+    // Section headers span full width and can't be resized
+    isResizable: card.type === 'section_header' ? false : undefined,
+    static: !editMode && card.type === 'section_header' ? true : undefined,
   }))
 
   function handleLayoutChange(newItems) {
@@ -85,13 +132,21 @@ export default function CardGrid({ layout, onLayoutChange, onUpdateCard, onRemov
       >
         {cards.map(card => (
           <div key={card.id} style={{ display: 'flex', flexDirection: 'column' }}>
-            <CardWrapper
-              card={card}
-              onUpdate={onUpdateCard}
-              onRemove={onRemoveCard}
-              editMode={editMode}
-              sseData={sseData?.[card.type]}
-            />
+            {card.type === 'section_header' ? (
+              <SectionHeaderCard
+                card={card}
+                editMode={editMode}
+                onRemove={onRemoveCard}
+              />
+            ) : (
+              <CardWrapper
+                card={card}
+                onUpdate={onUpdateCard}
+                onRemove={onRemoveCard}
+                editMode={editMode}
+                sseData={sseData?.[card.type]}
+              />
+            )}
           </div>
         ))}
       </GridLayout>

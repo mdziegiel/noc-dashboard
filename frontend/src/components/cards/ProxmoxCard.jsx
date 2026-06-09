@@ -3,34 +3,47 @@ import { MetricRow, SectionHeader, DonutGauge, Sparkline, stateToColor } from '.
 
 export default function ProxmoxCard({ data, config, trends }) {
   if (!data) return null
-  const vms = data.vms || {}
-  const nodes = data.nodes || {}
-  const storage = data.storage || {}
-
-  const nodeList = Object.entries(nodes)
-  const storageList = Object.entries(storage)
   const downVMs = data.down_vms || []
+  const storage = Array.isArray(data.storage) ? data.storage : []
+
+  // Collector returns: vms_running, vms_total, cpu (%), mem_used (GB), mem_total (GB), uptime_d
+  const cpu = data.cpu ?? data.cpu_pct
+  const memUsed = data.mem_used ?? data.ram_gb
+  const memTotal = data.mem_total
+  const memPct = memTotal ? Math.round(memUsed / memTotal * 100) : null
 
   return (
     <div>
-      <MetricRow label="VMs Running" value={`${data.vms_running ?? '?'} / ${data.vms_total ?? '?'}`} />
-      <MetricRow label="CPU" value={data.cpu_pct != null ? `${data.cpu_pct}%` : '—'} valueColor={data.cpu_pct > 80 ? 'var(--warn-color, #ffaa00)' : undefined} />
-      <MetricRow label="RAM" value={data.ram_gb != null ? `${data.ram_gb} GB (${data.ram_pct}%)` : '—'} />
-      <MetricRow label="Uptime" value={data.uptime_days != null ? `${data.uptime_days}d` : '—'} />
+      <MetricRow
+        label="VMs"
+        value={`${data.vms_running ?? '?'} / ${data.vms_total ?? '?'}`}
+        valueColor={downVMs.length > 0 ? 'var(--warn-color, #ffaa00)' : 'var(--ok-color, #00ff41)'}
+      />
+      <MetricRow
+        label="CPU"
+        value={cpu != null ? `${cpu}%` : '—'}
+        valueColor={cpu > 80 ? 'var(--error-color, #ff3333)' : cpu > 60 ? 'var(--warn-color, #ffaa00)' : 'var(--ok-color, #00ff41)'}
+      />
+      <MetricRow
+        label="RAM"
+        value={memUsed != null ? (memTotal ? `${memUsed}G / ${memTotal}G (${memPct}%)` : `${memUsed} GB`) : '—'}
+        valueColor={memPct > 85 ? 'var(--warn-color, #ffaa00)' : undefined}
+      />
+      <MetricRow label="Uptime" value={data.uptime_d != null ? `${data.uptime_d}d` : '—'} />
       {trends?.cpu && config?.graph !== false && (
         <Sparkline data={trends.cpu} color={config?.graph_color} />
       )}
-      {storageList.length > 0 && (
+      {storage.length > 0 && (
         <>
           <SectionHeader>Storage</SectionHeader>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-            {storageList.map(([name, s]) => (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+            {storage.map((s, i) => (
               <DonutGauge
-                key={name}
-                value={s.used_pct ?? s.pct ?? 0}
+                key={s.name || i}
+                value={s.pct ?? 0}
                 max={100}
-                color={s.used_pct > 85 ? 'var(--warn-color, #ffaa00)' : 'var(--gauge-fill-ok, #00ff41)'}
-                label={name}
+                color={s.pct > 85 ? 'var(--warn-color, #ffaa00)' : 'var(--gauge-fill-ok, #00ff41)'}
+                label={s.name}
               />
             ))}
           </div>

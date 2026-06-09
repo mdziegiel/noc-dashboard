@@ -1,1 +1,0 @@
-import{j as s}from"./index-BWIJ525B.js";import{M as r}from"./shared-C_L3bTfB.js";function u({data:e,config:l,trends:t}){return e?s.jsxs("div",{children:[s.jsx(r,{label:"Streams",value:e.streams??e.active_streams??"—"}),s.jsx(r,{label:"Plays Today",value:e.plays_today??"—"}),s.jsx(r,{label:"Top User",value:e.top_user??"—"})]}):null}export{u as default};

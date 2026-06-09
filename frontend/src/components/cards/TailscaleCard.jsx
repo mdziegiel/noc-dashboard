@@ -1,13 +1,21 @@
 import React from 'react'
-import { MetricRow, SectionHeader, stateToColor } from '../shared.jsx'
+import { MetricRow, SectionHeader } from '../shared.jsx'
 
 export default function TailscaleCard({ data, config, trends }) {
   if (!data) return null
+  // Collector returns: total, online, offline, devices [{name, os, online, exit_node}]
   const devices = data.devices || []
-  const expiring = (data.key_expiry || [])
+  const expiring = data.key_expiry || []
   return (
     <div>
-      <MetricRow label="Online" value={`${data.online ?? '?'} / ${data.total ?? '?'}`} />
+      <MetricRow
+        label="Online"
+        value={`${data.online ?? '?'} / ${data.total ?? '?'}`}
+        valueColor={data.offline > 0 ? 'var(--warn-color, #ffaa00)' : 'var(--ok-color, #00ff41)'}
+      />
+      {data.offline > 0 && (
+        <MetricRow label="Offline" value={data.offline} valueColor="var(--warn-color, #ffaa00)" />
+      )}
       {expiring.length > 0 && (
         <>
           <SectionHeader>Key Expiry</SectionHeader>

@@ -17,9 +17,9 @@ export default function App() {
   const saveTimerRef = useRef(null)
   const layoutRef = useRef(null)
 
-  const { history: alertHistory, addAlerts, clear: clearAlerts } = useAlertHistory()
+  const { events: alertEvents, unread: alertUnread, appendEvents, setPanelOpen, clearHistory } = useAlertHistory()
 
-  // SSE connection for live card-data pushes
+  // SSE connection for live card-data pushes + alert history updates
   const sseRef = useRef(null)
   const [sseData, setSseData] = useState({})  // card_type -> latest data
 
@@ -69,13 +69,15 @@ export default function App() {
             const msg = JSON.parse(evt.data)
             if (msg.type === 'card_update' && msg.card_type && msg.data) {
               setSseData(prev => ({ ...prev, [msg.card_type]: msg.data }))
+            } else if (msg.type === 'alert_history_update' && msg.new_events) {
+              // New alert events from backend — merge into local history
+              appendEvents(msg.new_events)
             }
           } catch {}
         }
 
         es.onerror = () => {
           es?.close()
-          // Reconnect in 5s
           reconnectTimer = setTimeout(connect, 5000)
         }
       } catch {}
@@ -86,9 +88,9 @@ export default function App() {
       es?.close()
       if (reconnectTimer) clearTimeout(reconnectTimer)
     }
-  }, [])
+  }, [appendEvents])
 
-  // Dynamic favicon — updates color based on health status
+  // Dynamic favicon — updates color based on overall health
   useEffect(() => {
     async function syncFavicon() {
       try {
@@ -115,27 +117,27 @@ export default function App() {
     return () => clearInterval(t)
   }, [])
 
-  // Poll status-overview for alert history entries
+  // Also sync favicon when SSE pushes card updates (any state change)
   useEffect(() => {
-    async function pollAlerts() {
-      try {
-        const r = await fetch('/api/status-overview')
-        if (!r.ok) return
-        const d = await r.json()
-        const { warn = 0, crit = 0, error = 0 } = d
-        const total_bad = warn + crit + error
-        if (total_bad > 0) {
-          const parts = []
-          if (crit + error > 0) parts.push(`${crit + error} critical`)
-          if (warn > 0) parts.push(`${warn} warning`)
-          addAlerts([`Dashboard health: ${parts.join(', ')}`])
-        }
-      } catch {}
+    if (Object.keys(sseData).length === 0) return
+    // Compute worst state from sseData
+    let worst = 'ok'
+    for (const d of Object.values(sseData)) {
+      const st = d?.state
+      if (st === 'crit' || st === 'critical' || st === 'error') { worst = 'crit'; break }
+      if (st === 'warn' && worst !== 'crit') worst = 'warn'
     }
-    pollAlerts()
-    const t = setInterval(pollAlerts, 30000)
-    return () => clearInterval(t)
-  }, [addAlerts])
+    const color = worst === 'crit' ? '#ff0000' : worst === 'warn' ? '#ffaa00' : '#00ff41'
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="${color}"/></svg>`
+    let link = document.querySelector('link[rel="icon"]')
+    if (!link) {
+      link = document.createElement('link')
+      link.rel = 'icon'
+      link.type = 'image/svg+xml'
+      document.head.appendChild(link)
+    }
+    link.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
+  }, [sseData])
 
   const debouncedSave = useCallback((newLayout) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -234,8 +236,11 @@ export default function App() {
         lastUpdated={lastUpdated}
         editMode={editMode}
         onEditModeToggle={() => setEditMode(m => !m)}
-        alertCount={alertHistory.length}
-        onBellClick={() => setAlertPanelOpen(o => !o)}
+        alertCount={alertUnread}
+        onBellClick={() => {
+          setAlertPanelOpen(o => !o)
+          setPanelOpen(!alertPanelOpen)
+        }}
       />
       <TickerBar />
       <CardGrid
@@ -271,9 +276,13 @@ export default function App() {
       {/* Alert history slide-out panel */}
       <AlertHistoryPanel
         open={alertPanelOpen}
-        onClose={() => setAlertPanelOpen(false)}
-        history={alertHistory}
-        onClear={clearAlerts}
+        onClose={() => {
+          setAlertPanelOpen(false)
+          setPanelOpen(false)
+        }}
+        events={alertEvents}
+        unread={alertUnread}
+        onClear={clearHistory}
       />
     </div>
   )

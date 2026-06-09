@@ -248,7 +248,7 @@ def update_trends_for(card_type, data, now_epoch, trends):
 
 DEFAULT_LAYOUT = {
     "theme": "dark-noc",
-    "autoTheme": True,
+    "autoTheme": False,
     "dayTheme": "light-clean",
     "nightTheme": "dark-noc",
     "dayStart": 7,
@@ -645,6 +645,12 @@ def api_data(card_type: str, request: Request):
     # Push to SSE clients (non-blocking)
     _push_sse_from_sync(card_type, data)
 
+    # Record alert events to persistent history
+    try:
+        _record_alert_events(card_type, data)
+    except Exception:
+        pass
+
     return data
 
 
@@ -717,6 +723,243 @@ async def api_sse():
 @app.get("/api/health")
 def api_health():
     return {"ok": True, "ts": int(time.time())}
+
+
+
+# ── Alert history persistence ──────────────────────────────────────────────────
+
+ALERT_HISTORY_FILE = STATE_DIR / "alert_history.json"
+MAX_ALERT_HISTORY = 500  # keep last 500 events
+
+
+def load_alert_history() -> list:
+    STATE_DIR.mkdir(exist_ok=True)
+    if ALERT_HISTORY_FILE.exists():
+        try:
+            with open(ALERT_HISTORY_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+
+def save_alert_history(events: list):
+    STATE_DIR.mkdir(exist_ok=True)
+    with open(ALERT_HISTORY_FILE, "w") as f:
+        json.dump(events, f)
+
+
+def _extract_alert_events(card_type: str, data: dict) -> list:
+    """Extract named alert events from a card data payload.
+    Returns list of {text, level} dicts.
+    """
+    events = []
+    label = CARD_TYPE_META.get(card_type, {}).get("label", card_type)
+    state = data.get("state", "ok")
+
+    if card_type == "proxmox":
+        vms_off = data.get("vms_offline", 0)
+        if vms_off:
+            events.append({"text": f"{label}: {vms_off} VM(s) offline", "level": "crit"})
+        for vm in (data.get("down_vms") or []):
+            events.append({"text": f"{label}: VM offline — {vm}", "level": "crit"})
+        cpu = data.get("cpu_pct") or data.get("cpu")
+        if cpu is not None:
+            if cpu > 90:
+                events.append({"text": f"{label}: CPU critical {cpu:.0f}%", "level": "crit"})
+            elif cpu > 75:
+                events.append({"text": f"{label}: CPU high {cpu:.0f}%", "level": "warn"})
+
+    elif card_type == "proxmox_storage":
+        for pool in (data.get("pools") or []):
+            pct = pool.get("pct", 0)
+            name = pool.get("name", "storage")
+            if pct > 90:
+                events.append({"text": f"{label}: {name} at {pct:.0f}%", "level": "crit"})
+            elif pct > 80:
+                events.append({"text": f"{label}: {name} at {pct:.0f}%", "level": "warn"})
+        for sname, sdata in (data.get("storage") or {}).items():
+            pct = sdata.get("used_pct") or sdata.get("pct") or 0
+            if pct > 90:
+                events.append({"text": f"{label}: {sname} at {pct:.0f}%", "level": "crit"})
+            elif pct > 80:
+                events.append({"text": f"{label}: {sname} at {pct:.0f}%", "level": "warn"})
+
+    elif card_type == "docker":
+        for c in (data.get("bad_containers") or data.get("unhealthy") or [])[:10]:
+            name = c if isinstance(c, str) else c.get("name", str(c))
+            st = (f" ({c.get('state', c.get('status', '?'))})" if isinstance(c, dict) else "")
+            events.append({"text": f"Docker: {name}{st} unhealthy", "level": "crit"})
+        for c in (data.get("stopped") or [])[:5]:
+            name = c if isinstance(c, str) else c.get("name", str(c))
+            events.append({"text": f"Docker: {name} stopped", "level": "warn"})
+
+    elif card_type == "wazuh":
+        high = data.get("high_alerts") or data.get("high_24h", 0)
+        alerts = data.get("alerts_24h", 0)
+        if high > 0:
+            events.append({"text": f"Wazuh: {high} high-severity alert(s) in 24h", "level": "crit"})
+        elif alerts > 100:
+            events.append({"text": f"Wazuh: {alerts} total alerts in 24h", "level": "warn"})
+        for a in (data.get("down_agents") or data.get("agents") or []):
+            if isinstance(a, dict):
+                status = a.get("status", "")
+                if status and status.lower() not in ("active",):
+                    name = a.get("name", a.get("id", str(a)))
+                    events.append({"text": f"Wazuh: agent offline — {name}", "level": "warn"})
+
+    elif card_type == "crowdsec":
+        bans = data.get("active_bans", 0) or data.get("bans", 0)
+        if bans > 200:
+            events.append({"text": f"CrowdSec: {bans} active bans", "level": "warn"})
+        d24 = data.get("decisions_24h", 0) or data.get("detections_24h", 0)
+        if d24 > 1000:
+            events.append({"text": f"CrowdSec: {d24} detections in 24h", "level": "warn"})
+
+    elif card_type == "uptime_kuma":
+        for m in (data.get("down") or [])[:10]:
+            name = m if isinstance(m, str) else m.get("name", str(m))
+            events.append({"text": f"Down: {name}", "level": "crit"})
+        for m in (data.get("degraded") or [])[:5]:
+            name = m if isinstance(m, str) else m.get("name", str(m))
+            events.append({"text": f"Degraded: {name}", "level": "warn"})
+
+    elif card_type == "pbs":
+        failed = data.get("failed_tasks", 0)
+        if failed:
+            events.append({"text": f"PBS: {failed} failed backup task(s) in 24h", "level": "crit"})
+
+    elif card_type == "urbackup":
+        for c in (data.get("clients_with_issues") or [])[:5]:
+            name = c if isinstance(c, str) else c.get("name", str(c))
+            events.append({"text": f"URBackup: {name} has issues", "level": "warn"})
+        for c in (data.get("overdue") or [])[:3]:
+            name = c if isinstance(c, str) else c.get("name", str(c))
+            events.append({"text": f"URBackup: {name} backup overdue", "level": "warn"})
+
+    elif card_type in ("unifi", "wan_health"):
+        wan_st = data.get("wan_status") or data.get("wan_state", "")
+        if wan_st and wan_st.lower() in ("down", "error", "offline"):
+            events.append({"text": "WAN: Internet connection DOWN", "level": "crit"})
+        ips = data.get("ips_alerts_24h", 0) or data.get("ips_events", 0)
+        if ips > 20:
+            events.append({"text": f"UniFi IPS: {ips} alerts in 24h", "level": "warn"})
+
+    elif card_type == "cloudflare":
+        threats = data.get("threats_24h", 0) or data.get("threats", 0)
+        if threats > 2000:
+            events.append({"text": f"Cloudflare: {threats} threats blocked in 24h", "level": "warn"})
+
+    elif card_type == "nginx_proxy":
+        for c in (data.get("expired_certs") or data.get("cert_invalid") or [])[:5]:
+            events.append({"text": f"Cert INVALID: {c}", "level": "crit"})
+        for c in (data.get("expiring_soon") or [])[:3]:
+            events.append({"text": f"Cert expiring soon: {c}", "level": "warn"})
+
+    elif card_type == "smart_health":
+        for d in (data.get("failed") or []):
+            events.append({"text": f"SMART FAIL: {d}", "level": "crit"})
+        for d in (data.get("warning") or [])[:3]:
+            events.append({"text": f"SMART warning: {d}", "level": "warn"})
+
+    elif card_type == "malware_sources":
+        det = data.get("total_detections", 0) or data.get("detections", 0)
+        if det > 0:
+            events.append({"text": f"Malware feed: {det} detection(s)", "level": "warn"})
+
+    elif card_type == "qnap":
+        for nas in (data.get("nas") or ([data] if data.get("volume_pct") else [])):
+            pct = nas.get("volume_pct", 0)
+            n = nas.get("name", "NAS")
+            if pct > 90:
+                events.append({"text": f"{n}: volume at {pct:.0f}%", "level": "crit"})
+            elif pct > 80:
+                events.append({"text": f"{n}: volume at {pct:.0f}%", "level": "warn"})
+            for disk in (nas.get("disks") or []):
+                st = disk.get("health") or disk.get("status", "")
+                if st and st.lower() not in ("good", "ok", "normal"):
+                    events.append({"text": f"{n}: disk {disk.get('id','?')} — {st}", "level": "warn"})
+
+    elif card_type == "limacharlie":
+        det = data.get("detections_24h", 0)
+        if det > 30:
+            events.append({"text": f"LimaCharlie: {det} detection(s) in 24h", "level": "warn"})
+        for s in (data.get("offline_sensors") or [])[:3]:
+            events.append({"text": f"LimaCharlie: sensor offline — {s}", "level": "warn"})
+
+    elif card_type == "home_assistant":
+        for n in (data.get("notifications") or [])[:5]:
+            text = n if isinstance(n, str) else n.get("message", n.get("title", str(n)))
+            events.append({"text": f"HA: {text}", "level": "warn"})
+        for e in (data.get("entity_unavailable") or [])[:3]:
+            events.append({"text": f"HA: entity unavailable — {e}", "level": "warn"})
+
+    elif card_type == "tailscale":
+        for d in (data.get("offline_devices") or [])[:5]:
+            name = d if isinstance(d, str) else d.get("name", d.get("hostname", str(d)))
+            events.append({"text": f"Tailscale: {name} offline", "level": "warn"})
+
+    # Fallback for unhandled card types in error/crit state
+    if not events and state in ("crit", "critical", "error"):
+        note = data.get("note", "")
+        events.append({"text": f"{label}: {state.upper()}{' — ' + note if note else ''}", "level": "crit"})
+    elif not events and state == "warn":
+        events.append({"text": f"{label}: WARNING", "level": "warn"})
+
+    return events
+
+
+@app.get("/api/alert-history")
+def api_get_alert_history():
+    """Return persisted alert event history."""
+    return {"events": load_alert_history(), "ts": int(time.time())}
+
+
+@app.post("/api/alert-history/clear")
+async def api_clear_alert_history():
+    """Clear the alert history file."""
+    save_alert_history([])
+    return {"ok": True}
+
+
+def _record_alert_events(card_type: str, data: dict):
+    """Extract and append new alert events to persistent history.
+    Deduplicates within the same minute to prevent log spam on fast refresh.
+    """
+    events = _extract_alert_events(card_type, data)
+    if not events:
+        return
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+    history = load_alert_history()
+    existing_texts_this_minute = {
+        e["text"] for e in history
+        if e.get("ts", "")[:16] == now_iso[:16]
+    }
+    new_entries = []
+    for ev in events:
+        if ev["text"] not in existing_texts_this_minute:
+            new_entries.append({
+                "text": ev["text"],
+                "level": ev["level"],
+                "card_type": card_type,
+                "ts": now_iso,
+            })
+            existing_texts_this_minute.add(ev["text"])
+
+    if not new_entries:
+        return
+    merged = new_entries + history
+    merged = merged[:MAX_ALERT_HISTORY]
+    save_alert_history(merged)
+
+    # Broadcast new events to all open SSE clients
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            msg = json.dumps({"type": "alert_history_update", "new_events": new_entries})
+            asyncio.run_coroutine_threadsafe(_sse_broadcast(msg), loop)
+    except Exception:
+        pass
 
 
 # ── Static file serving (React app) ───────────────────────────────────────────

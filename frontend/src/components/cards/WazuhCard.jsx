@@ -3,12 +3,25 @@ import { MetricRow, SectionHeader } from '../shared.jsx'
 
 export default function WazuhCard({ data, config, trends }) {
   if (!data) return null
-  const down = data.down_agents || []
+  // Collector returns: active, total, down (list), alerts_24h, high_24h
+  const down = data.down || data.down_agents || []
   return (
     <div>
-      <MetricRow label="Agents Active" value={`${data.agents_active ?? '?'} / ${data.agents_total ?? '?'}`} />
-      <MetricRow label="Alerts 24h" value={data.alerts_24h ?? 0} valueColor={data.alerts_24h > 0 ? 'var(--warn-color, #ffaa00)' : undefined} />
-      <MetricRow label="High Alerts" value={data.high_alerts ?? 0} valueColor={data.high_alerts > 0 ? 'var(--error-color, #ff3333)' : undefined} />
+      <MetricRow
+        label="Agents"
+        value={`${data.active ?? data.agents_active ?? '?'} / ${data.total ?? data.agents_total ?? '?'}`}
+        valueColor={down.length > 0 ? 'var(--warn-color, #ffaa00)' : 'var(--ok-color, #00ff41)'}
+      />
+      <MetricRow
+        label="Alerts 24h"
+        value={data.alerts_24h ?? 0}
+        valueColor={data.alerts_24h > 500 ? 'var(--warn-color, #ffaa00)' : undefined}
+      />
+      <MetricRow
+        label="High Severity"
+        value={data.high_24h ?? data.high_alerts ?? 0}
+        valueColor={(data.high_24h || data.high_alerts) > 0 ? 'var(--error-color, #ff3333)' : undefined}
+      />
       {down.length > 0 && (
         <>
           <SectionHeader>Down Agents</SectionHeader>

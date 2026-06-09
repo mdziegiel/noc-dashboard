@@ -1,0 +1,1 @@
+import{j as s,M as l}from"./index-BVpCZOzJ.js";function u({data:e,config:r,trends:t}){return e?s.jsxs("div",{children:[s.jsx(l,{label:"Streams",value:e.streams??e.active_streams??"—"}),s.jsx(l,{label:"Plays Today",value:e.plays_today??"—"}),s.jsx(l,{label:"Top User",value:e.top_user??"—"})]}):null}export{u as default};
