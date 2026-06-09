@@ -7,7 +7,7 @@ services:
     container_name: noc-dashboard
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "${NOC_PORT:-8081}:8081"
     volumes:
       # Persistent layout + trend state
       - ./state:/app/state
