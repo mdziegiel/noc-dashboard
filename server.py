@@ -72,6 +72,8 @@ def load_env(path):
 
 
 E = load_env(ENV_FILE)
+# Note: E is patched at startup (after CONFIG_JSON is defined) and on each integration save.
+# See _apply_config_json_to_E() called after CONFIG_JSON is defined below.
 
 # ── Theme loader ───────────────────────────────────────────────────────────────
 
@@ -961,6 +963,362 @@ def _record_alert_events(card_type: str, data: dict):
             asyncio.run_coroutine_threadsafe(_sse_broadcast(msg), loop)
     except Exception:
         pass
+
+
+# ── Integration config management ─────────────────────────────────────────────
+# state/config.json stores all integration credentials.
+# Structure: {"integrations": {"proxmox": {"url": ..., "token_id": ..., ...}, ...}}
+# .env is the fallback; config.json values win.
+
+CONFIG_JSON = STATE_DIR / "config.json"
+
+# Maps integration type -> env var names for each field
+# Fields are in order: url, then auth fields
+INTEGRATION_FIELDS = {
+    "proxmox": [
+        {"key": "PROXMOX_HOST", "label": "Host URL", "placeholder": "https://10.10.10.251:8006", "type": "text"},
+        {"key": "PROXMOX_TOKEN_ID", "label": "Token ID", "placeholder": "root@pam!hermes", "type": "text"},
+        {"key": "PROXMOX_TOKEN_SECRET", "label": "Token Secret", "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "type": "password"},
+    ],
+    "pbs": [
+        {"key": "PBS_URL", "label": "URL", "placeholder": "https://10.10.10.77:8007", "type": "text"},
+        {"key": "PBS_USERNAME", "label": "Username", "placeholder": "root@pam", "type": "text"},
+        {"key": "PBS_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "docker": [
+        {"key": "PORTAINER_URL", "label": "Portainer URL", "placeholder": "https://10.10.10.237:9005", "type": "text"},
+        {"key": "PORTAINER_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
+        {"key": "PORTAINER_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "urbackup": [
+        {"key": "URBACKUP_URL", "label": "URL", "placeholder": "http://10.10.10.76:55414", "type": "text"},
+        {"key": "URBACKUP_USERNAME", "label": "Username", "placeholder": "michaeld", "type": "text"},
+        {"key": "URBACKUP_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "home_assistant": [
+        {"key": "HASS_URL", "label": "URL", "placeholder": "http://10.10.10.105:8123", "type": "text"},
+        {"key": "HASS_TOKEN", "label": "Long-Lived Access Token", "placeholder": "", "type": "password"},
+    ],
+    "wazuh": [
+        {"key": "WAZUH_API_URL", "label": "API URL", "placeholder": "https://10.10.10.233:55000", "type": "text"},
+        {"key": "WAZUH_API_USER", "label": "Username", "placeholder": "hermes", "type": "text"},
+        {"key": "WAZUH_API_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "crowdsec": [
+        {"key": "CROWDSEC_API_URL", "label": "API URL", "placeholder": "http://10.10.10.237:18080", "type": "text"},
+        {"key": "CROWDSEC_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+        {"key": "CROWDSEC_MACHINE_USER", "label": "Machine User (optional)", "placeholder": "hermes-reader", "type": "text"},
+        {"key": "CROWDSEC_MACHINE_PASS", "label": "Machine Pass (optional)", "placeholder": "", "type": "password"},
+    ],
+    "cloudflare": [
+        {"key": "CLOUDFLARE_TOKEN", "label": "API Token", "placeholder": "", "type": "password"},
+        {"key": "CLOUDFLARE_ZONE_ID", "label": "Zone ID", "placeholder": "", "type": "text"},
+    ],
+    "limacharlie": [
+        {"key": "LIMACHARLIE_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+        {"key": "LIMACHARLIE_OID", "label": "Organization ID (OID)", "placeholder": "", "type": "text"},
+    ],
+    "unifi": [
+        {"key": "UNIFI_URL", "label": "URL", "placeholder": "https://10.10.10.1", "type": "text"},
+        {"key": "UNIFI_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
+        {"key": "UNIFI_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "tailscale": [
+        {"key": "TAILSCALE_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+    ],
+    "nginx_proxy": [
+        {"key": "NPM_URL", "label": "URL", "placeholder": "http://10.10.10.237:81", "type": "text"},
+        {"key": "NPM_EMAIL", "label": "Email", "placeholder": "admin@example.com", "type": "text"},
+        {"key": "NPM_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "adguard": [
+        {"key": "ADGUARD_URL", "label": "URL", "placeholder": "http://10.10.10.21", "type": "text"},
+        {"key": "ADGUARD_USERNAME", "label": "Username", "placeholder": "mdziegiel", "type": "text"},
+        {"key": "ADGUARD_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "uptime_kuma": [
+        {"key": "UPTIME_KUMA_URL", "label": "URL", "placeholder": "http://10.10.10.237:3661", "type": "text"},
+        {"key": "UPTIME_KUMA_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+    ],
+    "qnap": [
+        {"key": "QNAP1_HOST", "label": "QNAP1 Host", "placeholder": "http://10.10.10.x:8080", "type": "text"},
+        {"key": "QNAP2_HOST", "label": "QNAP2 Host (optional)", "placeholder": "http://10.10.10.x:8080", "type": "text"},
+        {"key": "QNAP3_HOST", "label": "QNAP3 Host (optional)", "placeholder": "http://10.10.10.x:8080", "type": "text"},
+        {"key": "QNAP_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
+        {"key": "QNAP_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
+    ],
+    "plex": [
+        {"key": "PLEX_URL", "label": "URL", "placeholder": "http://10.10.10.101:32400", "type": "text"},
+        {"key": "PLEX_TOKEN", "label": "X-Plex-Token", "placeholder": "", "type": "password"},
+    ],
+    "tautulli": [
+        {"key": "TAUTULLI_URL", "label": "URL", "placeholder": "http://10.10.10.101:8181", "type": "text"},
+        {"key": "TAUTULLI_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+    ],
+    "sonarr": [
+        {"key": "SONARR_URL", "label": "URL", "placeholder": "http://10.10.10.x:8989", "type": "text"},
+        {"key": "SONARR_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+    ],
+    "radarr": [
+        {"key": "RADARR_URL", "label": "URL", "placeholder": "http://10.10.10.x:7878", "type": "text"},
+        {"key": "RADARR_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+    ],
+    "prowlarr": [
+        {"key": "PROWLARR_URL", "label": "URL", "placeholder": "http://10.10.10.x:9696", "type": "text"},
+        {"key": "PROWLARR_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+    ],
+    "sabnzbd": [
+        {"key": "SABNZBD_URL", "label": "URL", "placeholder": "http://10.10.10.x:8080", "type": "text"},
+        {"key": "SABNZBD_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+    ],
+    "overseerr": [
+        {"key": "OVERSEERR_URL", "label": "URL", "placeholder": "http://10.10.10.x:5055", "type": "text"},
+        {"key": "OVERSEERR_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
+    ],
+    "smart_health": [
+        # Smart health re-uses Proxmox connection — no separate fields, just informational
+    ],
+    "malware_sources": [
+        # No credentials needed — public feeds
+    ],
+}
+
+# Which card types require credentials (used to determine if an integration is "configured")
+# Types not in INTEGRATION_FIELDS or with empty fields are always-available (no creds needed)
+ALWAYS_AVAILABLE = {"malware_sources", "smart_health"}
+
+
+def load_config_json() -> dict:
+    """Load state/config.json. Returns empty dict if not present."""
+    STATE_DIR.mkdir(exist_ok=True)
+    if CONFIG_JSON.exists():
+        try:
+            with open(CONFIG_JSON) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_config_json(cfg: dict):
+    STATE_DIR.mkdir(exist_ok=True)
+    with open(CONFIG_JSON, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
+# Merge config.json into E on startup so collectors get credentials immediately
+_startup_cfg = load_config_json()
+if _startup_cfg.get("integrations"):
+    for _itype, _ifields in _startup_cfg["integrations"].items():
+        if isinstance(_ifields, dict):
+            for _k, _v in _ifields.items():
+                if _v and str(_v).strip():
+                    E[_k] = str(_v).strip()
+
+
+def _build_integration_env(cfg_json: dict) -> dict:
+    """Merge env vars: .env first, config.json wins. Returns merged E dict."""
+    merged = dict(E)  # start with .env values
+    integrations = cfg_json.get("integrations", {})
+    for itype, fields in integrations.items():
+        if isinstance(fields, dict):
+            for k, v in fields.items():
+                if v and v.strip():
+                    merged[k] = v.strip()
+    return merged
+
+
+def _is_configured(itype: str, cfg_json: dict) -> bool:
+    """True if all required fields for this integration are set (via .env or config.json)."""
+    if itype in ALWAYS_AVAILABLE:
+        return True
+    fields = INTEGRATION_FIELDS.get(itype, [])
+    if not fields:
+        return True
+    merged = _build_integration_env(cfg_json)
+    # At minimum, the first non-optional field must be set
+    required_fields = [f for f in fields if "optional" not in f.get("label", "").lower()]
+    if not required_fields:
+        required_fields = fields[:1]
+    return all(bool(merged.get(f["key"], "").strip()) for f in required_fields[:1])
+
+
+def _get_env_for_type(itype: str, cfg_json: dict) -> dict:
+    """Get merged env dict for a specific integration type."""
+    return _build_integration_env(cfg_json)
+
+
+@app.get("/api/integrations")
+def api_get_integrations():
+    """Return all integration type definitions with field specs and current config status."""
+    cfg_json = load_config_json()
+    merged = _build_integration_env(cfg_json)
+    result = {}
+    for itype, meta in CARD_TYPE_META.items():
+        if itype in ("section_header", "wan_health", "wan_health_sec",
+                     "adguard2", "uptime_kuma_detail"):
+            continue  # aliases / virtual types
+        fields = INTEGRATION_FIELDS.get(itype, [])
+        configured = _is_configured(itype, cfg_json)
+        # Return current values (masked for passwords)
+        current_values = {}
+        for field in fields:
+            raw = merged.get(field["key"], "")
+            if field["type"] == "password" and raw:
+                current_values[field["key"]] = "••••••••"
+            else:
+                current_values[field["key"]] = raw
+        result[itype] = {
+            "label": meta["label"],
+            "description": meta["description"],
+            "category": meta["category"],
+            "icon": meta["icon"],
+            "fields": fields,
+            "current_values": current_values,
+            "configured": configured,
+            "always_available": itype in ALWAYS_AVAILABLE or not fields,
+        }
+    return result
+
+
+@app.post("/api/integrations/{itype}")
+async def api_save_integration(itype: str, request: Request):
+    """Save integration credentials to state/config.json."""
+    if itype not in INTEGRATION_FIELDS and itype not in ALWAYS_AVAILABLE:
+        raise HTTPException(status_code=404, detail=f"Unknown integration: {itype}")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    # Validate keys are known
+    allowed_keys = {f["key"] for f in INTEGRATION_FIELDS.get(itype, [])}
+    clean = {}
+    for k, v in body.items():
+        if k in allowed_keys:
+            # Don't overwrite with masked value
+            if v and v != "••••••••":
+                clean[k] = str(v).strip()
+            elif not v:
+                clean[k] = ""
+    cfg_json = load_config_json()
+    integrations = cfg_json.setdefault("integrations", {})
+    existing = integrations.get(itype, {})
+    existing.update(clean)
+    integrations[itype] = existing
+    save_config_json(cfg_json)
+    # Rebuild the global E dict
+    global E
+    E = _build_integration_env(cfg_json)
+    return {"ok": True, "itype": itype}
+
+
+@app.delete("/api/integrations/{itype}")
+def api_delete_integration(itype: str):
+    """Remove integration config from config.json (reverts to .env fallback)."""
+    cfg_json = load_config_json()
+    cfg_json.get("integrations", {}).pop(itype, None)
+    save_config_json(cfg_json)
+    global E
+    E = _build_integration_env(cfg_json)
+    return {"ok": True}
+
+
+@app.post("/api/integrations/{itype}/test")
+async def api_test_integration(itype: str, request: Request):
+    """
+    Test an integration by running its collector with provided (or saved) credentials.
+    Returns {ok: bool, message: str, elapsed: float}.
+    Body: same as save — optional field overrides for testing before saving.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    # Build a temporary E dict with body overrides
+    cfg_json = load_config_json()
+    tmp_E = _build_integration_env(cfg_json)
+    allowed_keys = {f["key"] for f in INTEGRATION_FIELDS.get(itype, [])}
+    for k, v in body.items():
+        if k in allowed_keys and v and v != "••••••••":
+            tmp_E[k] = str(v).strip()
+    # Run the collector
+    cmap = get_collectors()
+    # For test, wan_health -> unifi
+    effective_type = itype
+    if itype == "wan_health":
+        effective_type = "unifi"
+    fn = cmap.get(effective_type)
+    if fn is None:
+        # No collector = always available (e.g. malware_sources has a collector but
+        # smart_health uses proxmox). Try the actual key.
+        fn = cmap.get(itype)
+    if fn is None:
+        return {"ok": True, "message": "No connection test available for this type.", "elapsed": 0}
+    try:
+        t0 = time.time()
+        data = fn(tmp_E, {})
+        elapsed = round(time.time() - t0, 3)
+        state = data.get("state", "ok")
+        if state in ("error",):
+            note = data.get("note", "Collector returned error")
+            return {"ok": False, "message": note, "elapsed": elapsed}
+        return {"ok": True, "message": f"Connected — state: {state}", "elapsed": elapsed}
+    except Exception as e:
+        elapsed = round(time.time() - t0, 3)
+        return {"ok": False, "message": str(e)[:200], "elapsed": elapsed}
+
+
+_integration_status_cache: dict = {}
+_integration_status_ts: float = 0
+_INTEGRATION_STATUS_TTL = 55  # seconds
+
+
+@app.get("/api/integrations/status")
+def api_integration_status():
+    """
+    Live status of all configured integrations. Cached for 55s (UI refreshes at 60s).
+    Returns {itype: {ok: bool, error: str|null, ts: int}}.
+    """
+    global _integration_status_cache, _integration_status_ts
+    now = time.time()
+    if now - _integration_status_ts < _INTEGRATION_STATUS_TTL and _integration_status_cache:
+        return _integration_status_cache
+    cfg_json = load_config_json()
+    cmap = get_collectors()
+    result = {}
+    for itype in INTEGRATION_FIELDS:
+        if not _is_configured(itype, cfg_json):
+            continue
+        # Aliases handled by skipping them; run unique ones
+        fn = cmap.get(itype)
+        if fn is None:
+            continue
+        try:
+            t0 = time.time()
+            data = fn(_build_integration_env(cfg_json), {})
+            elapsed = round(time.time() - t0, 3)
+            state = data.get("state", "ok")
+            if state == "error":
+                result[itype] = {"ok": False, "error": data.get("note", "Error"), "elapsed": elapsed, "ts": int(now)}
+            else:
+                result[itype] = {"ok": True, "error": None, "elapsed": elapsed, "ts": int(now)}
+        except Exception as e:
+            result[itype] = {"ok": False, "error": str(e)[:120], "elapsed": 0, "ts": int(now)}
+    _integration_status_cache = result
+    _integration_status_ts = now
+    return result
+
+
+@app.get("/api/first-launch")
+def api_first_launch():
+    """Return whether this is a first-launch (no integrations configured yet)."""
+    cfg_json = load_config_json()
+    integrations = cfg_json.get("integrations", {})
+    # Count actually-configured integrations
+    count = sum(1 for itype in INTEGRATION_FIELDS if _is_configured(itype, cfg_json)
+                and itype not in ALWAYS_AVAILABLE)
+    return {"first_launch": count == 0, "configured_count": count}
+
 
 
 # ── Static file serving (React app) ───────────────────────────────────────────

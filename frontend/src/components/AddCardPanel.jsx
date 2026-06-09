@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { fetchCardTypes } from '../api.js'
+import { fetchCardTypes, fetchIntegrations } from '../api.js'
 
 const CATEGORY_ORDER = ['Infrastructure', 'Security', 'Network', 'Storage', 'Media', 'Monitoring']
 
@@ -58,12 +58,22 @@ function Icon({ name, size = 16, color = 'currentColor' }) {
 
 export default function AddCardPanel({ onAdd, onClose }) {
   const [cardTypes, setCardTypes] = useState({})
+  const [integrations, setIntegrations] = useState({})
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState(null)
+  const [showUnconfigured, setShowUnconfigured] = useState(false)
 
   useEffect(() => {
     fetchCardTypes().then(setCardTypes).catch(console.error)
+    fetchIntegrations().then(setIntegrations).catch(console.error)
   }, [])
+
+  // An integration is available if: no fields (always-available) OR configured=true
+  function isAvailable(type, info) {
+    const intInfo = integrations[type]
+    if (!intInfo) return true  // not in integrations map = no creds needed
+    return intInfo.always_available || intInfo.configured
+  }
 
   // Group by category
   const grouped = {}
@@ -73,15 +83,20 @@ export default function AddCardPanel({ onAdd, onClose }) {
     grouped[cat].push([type, info])
   })
 
-  // Filter by search + active category
+  // Filter by search + active category + configured state
   const categories = CATEGORY_ORDER.filter(c => grouped[c])
 
   function getFiltered(cat) {
     return (grouped[cat] || []).filter(([type, info]) => {
-      if (!search) return true
-      const q = search.toLowerCase()
-      return type.toLowerCase().includes(q) || (info.label || '').toLowerCase().includes(q) ||
-             (info.description || '').toLowerCase().includes(q)
+      // Filter by search
+      if (search) {
+        const q = search.toLowerCase()
+        if (!type.toLowerCase().includes(q) && !(info.label || '').toLowerCase().includes(q) &&
+            !(info.description || '').toLowerCase().includes(q)) return false
+      }
+      // If not showing unconfigured, hide unconfigured types (unless always-available)
+      if (!showUnconfigured && !isAvailable(type, info)) return false
+      return true
     })
   }
 
@@ -131,10 +146,23 @@ export default function AddCardPanel({ onAdd, onClose }) {
           }}>
             Add Card
           </span>
-          <button
-            style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 16, fontFamily: 'inherit' }}
-            onClick={onClose}
-          >✕</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 10, color: showUnconfigured ? 'var(--warn)' : 'var(--muted)',
+                letterSpacing: '0.05em',
+              }}
+              onClick={() => setShowUnconfigured(v => !v)}
+              title={showUnconfigured ? 'Showing all card types (including unconfigured)' : 'Only showing configured integrations'}
+            >
+              {showUnconfigured ? '⊙ All types' : '⊙ Configured only'}
+            </button>
+            <button
+              style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 16, fontFamily: 'inherit' }}
+              onClick={onClose}
+            >✕</button>
+          </div>
         </div>
 
         {/* Search + category tabs */}
@@ -219,6 +247,7 @@ export default function AddCardPanel({ onAdd, onClose }) {
                         display: 'flex',
                         gap: 8,
                         alignItems: 'flex-start',
+                        opacity: (showUnconfigured && !isAvailable(type, info)) ? 0.5 : 1,
                       }}
                       onMouseEnter={e => {
                         e.currentTarget.style.borderColor = catColor
@@ -233,15 +262,23 @@ export default function AddCardPanel({ onAdd, onClose }) {
                       <span style={{ flexShrink: 0, marginTop: 1 }}>
                         <Icon name={info.icon || 'Activity'} size={14} color={catColor} />
                       </span>
-                      <div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{
                           fontSize: 11,
                           fontWeight: 700,
                           color: catColor,
                           marginBottom: 2,
                           letterSpacing: '0.04em',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5,
                         }}>
                           {info.label || type}
+                          {showUnconfigured && !isAvailable(type, info) && (
+                            <span style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 400, letterSpacing: '0.08em' }}>
+                              not configured
+                            </span>
+                          )}
                         </div>
                         <div style={{
                           fontSize: 10,
@@ -259,7 +296,17 @@ export default function AddCardPanel({ onAdd, onClose }) {
           })}
           {visibleCats.length === 0 && (
             <div style={{ color: 'var(--muted)', fontSize: 12, padding: 8, textAlign: 'center' }}>
-              No card types found for "{search}"
+              {search ? (
+                `No card types found for "${search}"`
+              ) : (
+                <div>
+                  <div style={{ marginBottom: 8 }}>No integrations configured yet.</div>
+                  <div style={{ fontSize: 11 }}>
+                    Go to <b>⚙ Settings</b> to configure integrations,<br />
+                    or click <b>⊙ Configured only</b> above to see all available types.
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

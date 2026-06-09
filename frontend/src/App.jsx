@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchLayout, fetchThemes, fetchConfig, saveLayout } from './api.js'
+import { fetchLayout, fetchThemes, fetchConfig, saveLayout, fetchFirstLaunch } from './api.js'
 import CardWrapper from './components/CardWrapper.jsx'
 import AddCardPanel from './components/AddCardPanel.jsx'
 import SettingsPanel from './components/SettingsPanel.jsx'
+import IntegrationsPage from './components/IntegrationsPage.jsx'
 
 // Section definitions matching generate_dashboard.py exactly
 const SECTION_ORDER = [
@@ -47,6 +48,8 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [editMode, setEditMode] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  const [showIntegrations, setShowIntegrations] = useState(false)
+  const [firstLaunch, setFirstLaunch] = useState(false)
   const [cardData, setCardData] = useState({})
   const [settingsCard, setSettingsCard] = useState(null)
   const [overallHealth, setOverallHealth] = useState('ok')
@@ -55,13 +58,16 @@ export default function App() {
   const sortablesRef = useRef([])
 
   useEffect(() => {
-    Promise.all([fetchLayout(), fetchConfig()])
-      .then(([lay, cfg]) => {
+    Promise.all([fetchLayout(), fetchConfig(), fetchFirstLaunch()])
+      .then(([lay, cfg, fl]) => {
         setLayout(lay); setConfig(cfg)
         setLastUpdated(new Date())
         layoutRef.current = lay
         applyThemeAttr(lay?.theme || 'dark-noc')
         setLoading(false)
+        if (fl?.first_launch) {
+          setFirstLaunch(true)
+        }
       })
       .catch(() => setLoading(false))
   }, [])
@@ -232,6 +238,14 @@ export default function App() {
         <div className="top-right">
           <div className="ts">UPDATED <b>{lastUpdated ? formatDate(lastUpdated) : '—'}</b></div>
           <div className={`health h-${overallHealth}`}><span className="led" />{overallTxt}</div>
+          <button
+            className="theme-btn"
+            onClick={() => setShowIntegrations(true)}
+            title="Settings / Integrations"
+            style={{ padding: '3px 8px' }}
+          >
+            ⚙
+          </button>
           <button className={`theme-btn${editMode ? ' active' : ''}`} onClick={() => setEditMode(m => !m)} title="Edit card layout">
             {editMode ? '✓ DONE' : '✎ EDIT'}
           </button>
@@ -322,6 +336,51 @@ export default function App() {
       )}
       {settingsCard && (
         <SettingsPanel card={settingsCard} onSave={updates => { handleUpdateCard(settingsCard.id, updates); setSettingsCard(null) }} onRemove={id => { handleRemoveCard(id); setSettingsCard(null) }} onClose={() => setSettingsCard(null)} />
+      )}
+      {showIntegrations && (
+        <IntegrationsPage onClose={() => { setShowIntegrations(false); setFirstLaunch(false) }} />
+      )}
+      {firstLaunch && !showIntegrations && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 400,
+          background: 'rgba(0,0,0,0.88)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          animation: 'fadeIn 0.2s ease',
+        }}>
+          <div style={{
+            background: 'var(--panel)', border: '1px solid var(--green)',
+            borderRadius: 6, padding: '36px 48px', maxWidth: 460, textAlign: 'center',
+            boxShadow: '0 0 40px rgba(0,255,65,0.15)',
+          }}>
+            <div style={{ fontSize: 28, marginBottom: 12 }}>⚡</div>
+            <div style={{
+              fontSize: 16, fontWeight: 700, color: 'var(--green)',
+              letterSpacing: '0.06em', marginBottom: 10,
+            }}>
+              Welcome to NOC Dashboard
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.7, marginBottom: 24 }}>
+              No integrations configured yet. Add your first integration to start
+              pulling live data into your cards. Click Settings to get started.
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button
+                className="btn-accent"
+                style={{ fontSize: 12, padding: '8px 24px' }}
+                onClick={() => setShowIntegrations(true)}
+              >
+                ⚙ Open Settings
+              </button>
+              <button
+                className="btn-ghost"
+                style={{ fontSize: 12, padding: '8px 16px' }}
+                onClick={() => setFirstLaunch(false)}
+              >
+                Skip for now
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
