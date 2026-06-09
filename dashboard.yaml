@@ -117,6 +117,13 @@ sections:
         graph: false
         notes: ""
 
+      - type: hyperv
+        title: "HYPER-V"
+        size: normal
+        show: [vm_count, running, stopped, cpu, mem, host]
+        graph: false
+        notes: ""
+
   # ── SECURITY ──────────────────────────────────────────────────────────────
   - name: "Security"
     cards:

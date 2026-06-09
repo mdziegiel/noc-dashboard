@@ -5,20 +5,24 @@ import AddCardPanel from './components/AddCardPanel.jsx'
 import SettingsPanel from './components/SettingsPanel.jsx'
 import IntegrationsPage from './components/IntegrationsPage.jsx'
 
-// Section definitions matching generate_dashboard.py exactly
+// Section definitions matching generate_dashboard.py exactly (same order, same names)
+// Special sections (proxmox_storage_panel, uptime_history_panel, certs_alerts_panel)
+// are rendered as panelbox/twocol — not card grids.
 const SECTION_ORDER = [
   { label: 'System Status', types: ['wan_health','proxmox','home_assistant','uptime_kuma','docker','pbs','urbackup','smart_health'] },
-  { label: 'Security & Network', types: ['unifi','nginx_proxy','cloudflare','wazuh','crowdsec','limacharlie','adguard','adguard2','tailscale','malware_sources','wan_health_sec'] },
+  { label: 'Security & Network', types: ['unifi','nginx_proxy','cloudflare','wazuh','crowdsec','limacharlie','adguard','adguard2','tailscale','malware_sources'] },
   { label: 'Media & Downloads', types: ['plex','tautulli','sonarr','radarr','sabnzbd','overseerr','prowlarr'] },
-  { label: 'Storage', types: ['qnap','proxmox_storage'] },
-  { label: 'Monitoring', types: ['uptime_kuma_detail','custom_url'] },
+  { label: 'QNAP Storage Appliances', types: ['qnap'] },
+  { label: 'Proxmox Storage Utilization', types: ['proxmox_storage'], panelbox: true },
+  { label: 'Uptime History (last 24h)', types: ['uptime_kuma_detail'], panelbox: true, historyPanel: true },
+  { label: 'Certificates & Active Alerts', types: ['custom_url'], twocol: true, certsPanel: true },
 ]
 
 function cardSection(type) {
   for (const s of SECTION_ORDER) {
     if (s.types.includes(type)) return s.label
   }
-  return 'Monitoring'
+  return 'System Status'
 }
 
 function formatDate(d) {
@@ -39,6 +43,140 @@ function updateFavicon(health) {
     document.head.appendChild(el)
   }
   el.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
+}
+
+// Proxmox Storage panelbox — renders gauges exactly like 9969's panelbox section
+function ProxmoxStoragePanel({ data }) {
+  if (!data) return <div className="panelbox"><div className="empty">Loading storage data…</div></div>
+  const storages = data.storage || []
+  if (storages.length === 0) return <div className="panelbox"><div className="empty">No storage data</div></div>
+  const circ = 2 * Math.PI * 52
+  return (
+    <div className="panelbox">
+      <div className="gauges">
+        {storages.map((s, i) => {
+          const pct = Math.round(s.pct ?? s.used_pct ?? 0)
+          const state = pct >= 90 ? 'crit' : pct >= 80 ? 'warn' : 'ok'
+          const dash = ((pct / 100) * circ).toFixed(1)
+          return (
+            <div key={i} className="gauge">
+              <svg viewBox="0 0 140 140" className={`g-${state}`}>
+                <circle cx="70" cy="70" r="52" className="g-track"/>
+                <circle cx="70" cy="70" r="52" className="g-val"
+                  strokeDasharray={`${dash} ${circ.toFixed(1)}`}
+                  transform="rotate(-90 70 70)"/>
+                <text x="70" y="64" className="g-pct">{pct}%</text>
+                <text x="70" y="86" className="g-lbl">{s.name}</text>
+              </svg>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// Uptime History panel — hbar rows matching 9969's panelbox with hbar-row structure
+function UptimeHistoryPanel({ data }) {
+  const monitors = data?.history_monitors || data?.monitors || []
+  if (monitors.length === 0) {
+    return (
+      <div className="panelbox">
+        <div className="hbar-head">
+          <span className="hbar-name"></span>
+          <span className="hbar-legend">
+            -24h → now &nbsp;
+            <span className="hbar b-up" style={{display:'inline-block',width:13,height:13,borderRadius:2,verticalAlign:'middle',margin:'0 2px 0 8px'}}></span>up&nbsp;
+            <span className="hbar b-down" style={{display:'inline-block',width:13,height:13,borderRadius:2,verticalAlign:'middle',margin:'0 2px'}}></span>down&nbsp;
+            <span className="hbar b-other" style={{display:'inline-block',width:13,height:13,borderRadius:2,verticalAlign:'middle',margin:'0 2px'}}></span>other&nbsp;
+            <span className="hbar b-none" style={{display:'inline-block',width:13,height:13,borderRadius:2,verticalAlign:'middle',margin:'0 2px'}}></span>no data
+          </span>
+        </div>
+        <div className="empty">Uptime Kuma history loading…</div>
+      </div>
+    )
+  }
+  return (
+    <div className="panelbox">
+      <div className="hbar-head">
+        <span className="hbar-name"></span>
+        <span className="hbar-legend">
+          -24h → now &nbsp;
+          <span className="hbar b-up" style={{display:'inline-block',width:13,height:13,borderRadius:2,verticalAlign:'middle',margin:'0 2px 0 8px'}}></span>up&nbsp;
+          <span className="hbar b-down" style={{display:'inline-block',width:13,height:13,borderRadius:2,verticalAlign:'middle',margin:'0 2px'}}></span>down&nbsp;
+          <span className="hbar b-other" style={{display:'inline-block',width:13,height:13,borderRadius:2,verticalAlign:'middle',margin:'0 2px'}}></span>other&nbsp;
+          <span className="hbar b-none" style={{display:'inline-block',width:13,height:13,borderRadius:2,verticalAlign:'middle',margin:'0 2px'}}></span>no data
+        </span>
+      </div>
+      {monitors.map((m, i) => {
+        const cells = m.cells || []
+        return (
+          <div key={i} className="hbar-row">
+            <span className="hbar-name">{m.name}</span>
+            <span className="hbar-cells">
+              {cells.map((c, j) => {
+                const cls = c === 1 ? 'b-up' : c === 0 ? 'b-down' : c === 2 ? 'b-other' : 'b-none'
+                return <span key={j} className={`hbar ${cls}`}></span>
+              })}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Certs & Alerts twocol panel — exact 9969 structure
+function CertsAlertsPanel({ nginxData, uptimeData, alertItems }) {
+  // Gather certs from nginx_proxy and uptime_kuma
+  const allCerts = []
+  if (nginxData?.cert_list) {
+    for (const c of nginxData.cert_list) allCerts.push(c)
+  } else if (nginxData?.certs && Array.isArray(nginxData.certs)) {
+    for (const c of nginxData.certs) allCerts.push(c)
+  }
+  if (uptimeData?.certs && Array.isArray(uptimeData.certs)) {
+    for (const c of uptimeData.certs) allCerts.push(c)
+  }
+
+  return (
+    <div className="twocol">
+      <div className="panelbox">
+        <h4>TLS CERT EXPIRY</h4>
+        {allCerts.length === 0 ? (
+          <div className="empty">No cert data</div>
+        ) : (
+          <div className="certs">
+            {allCerts.map((c, i) => {
+              const days = c.days ?? c.days_remaining ?? null
+              const valid = c.valid !== false && c.is_valid !== false
+              const cls = !valid ? 'c-crit' : days != null && days <= 14 ? 'c-crit' : days != null && days <= 30 ? 'c-warn' : 'c-ok'
+              const label = !valid ? 'INVALID' : days != null ? `${days}d` : '?'
+              const name = c.name || c.domain || c.host || '—'
+              return (
+                <div key={i} className={`cert ${cls}`}>
+                  <div className="cert-d">{label}</div>
+                  <div className="cert-n">{name}</div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+      <div className="panelbox">
+        <h4>ACTIVE ALERTS</h4>
+        {alertItems.length === 0 ? (
+          <div className="empty ok-empty">All clear — no active alerts</div>
+        ) : (
+          <ul className="alerts">
+            {alertItems.map((item, i) => (
+              <li key={i}>{item.text}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function App() {
@@ -75,7 +213,6 @@ export default function App() {
   // Auto theme switch REMOVED — dark-noc is permanent. Timer block deleted.
   // Manual cycling still works via cycleTheme() below.
 
-
   // applyThemeAttr: dark-noc is always the default (no data-theme attr).
   // Manual switching via cycle button is still supported, but on every page load
   // we unconditionally apply dark-noc. The name param is used only for manual cycling.
@@ -87,7 +224,7 @@ export default function App() {
   }
 
   function cycleTheme() {
-    const names = ['dark-noc','light-clean','midnight-blue','solarized-dark','dracula','nord','gruvbox']
+    const names = ['dark-noc','light-clean','midnight-blue','solarized-dark','dracula','nord','gruvbox','tokyo']
     const cur = layoutRef.current?.theme || 'dark-noc'
     const next = names[(names.indexOf(cur) + 1) % names.length]
     const newLayout = { ...layoutRef.current, theme: next }
@@ -137,7 +274,7 @@ export default function App() {
     const cards = layoutRef.current?.cards || []
     const newCard = {
       id: `${cardType}_${Date.now()}`, type: cardType,
-      title: cardTypeInfo?.label || cardType.toUpperCase(),
+      title: cardTypeInfo?.label || cardType.toUpperCase().replace(/_/g,' '),
       x: 0, y: 0, w: 1, h: 3, config: { refresh_seconds: 60 }
     }
     const newLayout = { ...layoutRef.current, cards: [...cards, newCard] }
@@ -204,7 +341,7 @@ export default function App() {
   const extraCards = []
   for (const card of cards) {
     const sec = cardSection(card.type)
-    if (sectionMap[sec]) sectionMap[sec].push(card)
+    if (sectionMap[sec] !== undefined) sectionMap[sec].push(card)
     else extraCards.push(card)
   }
 
@@ -217,9 +354,14 @@ export default function App() {
     if (st === 'crit' || st === 'critical' || st === 'error') tickerItems.push({ text: d.note || d.error || `${card.title} CRITICAL`, level: 'crit' })
     else if (st === 'warn') tickerItems.push({ text: d.note || `${card.title} warning`, level: 'warn' })
   }
+  // Duplicate ticker items for seamless scroll (matches 9969)
+  const tickerDisplay = [...tickerItems, ...tickerItems]
   const tickerWorst = tickerItems.some(i => i.level === 'crit') ? 'crit' : tickerItems.some(i => i.level === 'warn') ? 'warn' : 'ok'
   const themeLabel = (layout?.theme || 'dark-noc').toUpperCase().replace(/-/g,' ')
   const overallTxt = overallHealth === 'crit' ? 'CRITICAL' : overallHealth === 'warn' ? 'WARNING' : 'ALL SYSTEMS OK'
+
+  // Alert items for Certs & Alerts panel
+  const alertItems = tickerItems
 
   return (
     <div>
@@ -252,27 +394,78 @@ export default function App() {
         </div>
       </div>
 
-      {/* Ticker */}
+      {/* Ticker — duplicated content for seamless loop, exact 9969 structure */}
       <div className="ticker-bar">
         <div className={`tk-badge tb-${tickerWorst}`}>{tickerWorst === 'crit' ? 'ALERT' : tickerWorst === 'warn' ? 'WARN' : 'OK'}</div>
         <div className="tk-track">
           <div className="tk-content" id="tk-content">
-            {tickerItems.length === 0 ? (
+            {tickerDisplay.length === 0 ? (
               <span className="tk-item t-ok">All systems nominal</span>
-            ) : tickerItems.map((item, i) => (
+            ) : tickerDisplay.map((item, i) => (
               <React.Fragment key={i}>
                 <span className={`tk-item t-${item.level}`}>{item.text}</span>
-                {i < tickerItems.length - 1 && <span className="tk-sep">◆</span>}
+                {i < tickerDisplay.length - 1 && <span className="tk-sep">◆</span>}
               </React.Fragment>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Main content — section-label + row structure */}
+      {/* Main content — section-label + row structure matching 9969 exactly */}
       <div className="wrap">
         {SECTION_ORDER.map(section => {
           const sectionCards = sectionMap[section.label] || []
+
+          // Proxmox Storage Utilization — panelbox with donut gauges
+          if (section.panelbox && !section.historyPanel && !section.certsPanel) {
+            const pxCard = sectionCards[0]
+            const pxData = pxCard ? cardData[pxCard.type] : null
+            return (
+              <React.Fragment key={section.label}>
+                <div className="section-label">{section.label}</div>
+                <ProxmoxStoragePanel data={pxData} />
+                {/* Still fetch data for the storage card */}
+                {pxCard && (
+                  <div style={{display:'none'}}>
+                    <CardWrapper card={pxCard} onUpdate={handleUpdateCard} onRemove={handleRemoveCard} onData={handleCardData} editMode={false} />
+                  </div>
+                )}
+              </React.Fragment>
+            )
+          }
+
+          // Uptime History — panelbox with hbar rows
+          if (section.historyPanel) {
+            const ukCard = sectionCards[0]
+            const ukData = ukCard ? cardData[ukCard.type] : cardData['uptime_kuma']
+            return (
+              <React.Fragment key={section.label}>
+                <div className="section-label">{section.label}</div>
+                <UptimeHistoryPanel data={ukData} />
+                {ukCard && (
+                  <div style={{display:'none'}}>
+                    <CardWrapper card={ukCard} onUpdate={handleUpdateCard} onRemove={handleRemoveCard} onData={handleCardData} editMode={false} />
+                  </div>
+                )}
+              </React.Fragment>
+            )
+          }
+
+          // Certificates & Active Alerts — twocol panelboxes
+          if (section.certsPanel) {
+            return (
+              <React.Fragment key={section.label}>
+                <div className="section-label">{section.label}</div>
+                <CertsAlertsPanel
+                  nginxData={cardData['nginx_proxy']}
+                  uptimeData={cardData['uptime_kuma']}
+                  alertItems={alertItems}
+                />
+              </React.Fragment>
+            )
+          }
+
+          // Normal card sections
           if (sectionCards.length === 0) return null
           return (
             <React.Fragment key={section.label}>

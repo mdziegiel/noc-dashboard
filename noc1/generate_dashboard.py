@@ -275,6 +275,86 @@ def collect_smart_health():
     return d
 
 
+def collect_hyperv():
+    """Hyper-V host via WinRM / NTLM. Returns VM list + host resource summary."""
+    host = E.get("HYPERV_HOST", "").strip()
+    user = E.get("HYPERV_USERNAME", "").strip()
+    pwd  = E.get("HYPERV_PASSWORD", "").strip()
+    base = {"vms": [], "vm_count": 0, "running": 0, "stopped": 0,
+            "host_cpus": "?", "host_mem_gb": "?"}
+    if not host or not user or not pwd or pwd.startswith("<"):
+        return {**base, "state": "degraded", "note": "Hyper-V creds not configured"}
+    try:
+        import winrm
+    except ImportError:
+        return {**base, "state": "error", "note": "pywinrm not installed"}
+    try:
+        sess = winrm.Session(host, auth=(user, pwd), transport="ntlm",
+                             server_cert_validation="ignore",
+                             operation_timeout_sec=20, read_timeout_sec=25)
+        ps_vms = (
+            "try { $vms = Get-VM | Select-Object Name, State, CPUUsage, "
+            "@{N='MemAssignedGB';E={[math]::Round($_.MemoryAssigned/1GB,2)}}, "
+            "@{N='MemDemandGB';E={[math]::Round($_.MemoryDemand/1GB,2)}}, "
+            "@{N='UptimeHours';E={[math]::Round($_.Uptime.TotalHours,1)}}; "
+            "if ($vms -eq $null) { Write-Output '[]' } "
+            "else { ConvertTo-Json -InputObject @($vms) -Depth 3 } "
+            "} catch { Write-Output '[]' }"
+        )
+        r_vms = sess.run_ps(ps_vms)
+        if r_vms.status_code != 0:
+            err = (r_vms.std_err or b"").decode("utf-8", "replace")[:200].strip()
+            return {**base, "state": "error", "note": f"PS: {err or 'unknown'}"}
+        raw = (r_vms.std_out or b"").decode("utf-8", "replace").strip()
+        try:
+            import json as _json
+            vms_raw = _json.loads(raw) if raw else []
+        except Exception:
+            vms_raw = []
+        if isinstance(vms_raw, dict):
+            vms_raw = [vms_raw]
+        ps_host = (
+            "try { $h = Get-VMHost | Select-Object LogicalProcessorCount, "
+            "@{N='MemCapGB';E={[math]::Round($_.MemoryCapacity/1GB,1)}}; "
+            "ConvertTo-Json -InputObject $h } catch { Write-Output '{}' }"
+        )
+        r_host = sess.run_ps(ps_host)
+        host_raw = (r_host.std_out or b"").decode("utf-8", "replace").strip()
+        try:
+            import json as _json
+            host_info = _json.loads(host_raw) if host_raw else {}
+        except Exception:
+            host_info = {}
+        if isinstance(host_info, list):
+            host_info = host_info[0] if host_info else {}
+        vms = []
+        running = stopped = 0
+        for vm in vms_raw:
+            if not isinstance(vm, dict):
+                continue
+            sr = str(vm.get("State", "")).strip()
+            if sr in ("2", "Running"):
+                vs, running = "Running", running + 1
+            elif sr in ("3", "Off"):
+                vs, stopped = "Off", stopped + 1
+            elif sr in ("9", "Paused"):
+                vs, stopped = "Paused", stopped + 1
+            elif sr in ("6", "Saved"):
+                vs, stopped = "Saved", stopped + 1
+            else:
+                vs, stopped = sr or "Unknown", stopped + 1
+            vms.append({"name": str(vm.get("Name", "?")), "state": vs,
+                        "cpu": float(vm.get("CPUUsage", 0) or 0),
+                        "mem_gb": float(vm.get("MemAssignedGB", 0) or 0)})
+        overall = "error" if (not vms and not host_info) else ("warn" if stopped > 0 else "ok")
+        return {"state": overall, "vm_count": len(vms), "running": running,
+                "stopped": stopped, "vms": vms,
+                "host_cpus": host_info.get("LogicalProcessorCount", "?"),
+                "host_mem_gb": host_info.get("MemCapGB", "?")}
+    except Exception as e:
+        return {**base, "state": "error", "note": f"{type(e).__name__}: {str(e)[:140]}"}
+
+
 def collect_docker():
     d = {"state": "ok", "running": 0, "total": 0, "envs": 0, "bad": []}
     base = E.get("PORTAINER_URL", "").strip().rstrip("/")
@@ -1636,6 +1716,7 @@ def collect_wan_health():
 SOURCES = [
     ("proxmox", collect_proxmox),
     ("smart", collect_smart_health),
+    ("hyperv", collect_hyperv),
     ("docker", collect_docker),
     ("pbs", collect_pbs),
     ("kuma", collect_uptime_kuma),
@@ -1914,6 +1995,7 @@ def render(data, gen_epoch, errors, trends=None):
     LC = data.get("limacharlie", {})
     SM = data.get("smart", {})
     WAN = data.get("wan", {})
+    HV = data.get("hyperv", {})
 
     # overall health
     states = [v.get("state", "error") for v in data.values()]
@@ -2039,6 +2121,49 @@ def render(data, gen_epoch, errors, trends=None):
     else:
         ha_sub = (f'{HA.get("domains",0)} domains · {HA.get("notifications",0)} notification(s)')
 
+    # Hyper-V card
+    hv_vms = HV.get("vms", [])
+    hv_running = HV.get("running", 0)
+    hv_total = HV.get("vm_count", len(hv_vms))
+    hv_avg_cpu = (sum(v.get("cpu", 0) for v in hv_vms) / len(hv_vms)) if hv_vms else None
+    hv_mem_alloc = sum(v.get("mem_gb", 0) for v in hv_vms)
+    hv_cpu_state = ("crit" if hv_avg_cpu is not None and hv_avg_cpu >= 90
+                    else "warn" if hv_avg_cpu is not None and hv_avg_cpu >= 75 else "")
+    hv_vm_state = ("crit" if HV.get("state") == "error"
+                   else "warn" if HV.get("stopped", 0) > 0 else "ok")
+    hv_body = (
+        metric(f"{hv_running}/{hv_total}", "VMs", hv_vm_state)
+        + metric(f'{hv_avg_cpu:.0f}%' if hv_avg_cpu is not None else "—", "CPU avg", hv_cpu_state)
+        + metric(f'{hv_mem_alloc:.1f} GB' if hv_vms else "—", "RAM alloc")
+    )
+    # Per-VM rows (up to 4)
+    if hv_vms and HV.get("state") != "error":
+        vm_rows = []
+        for v in hv_vms[:4]:
+            dot_cls = "dot-ok" if v["state"] == "Running" else "dot-crit" if v["state"] == "Off" else "dot-warn"
+            cpu_txt = f' {v["cpu"]:.0f}%' if v["state"] == "Running" and v.get("cpu", 0) > 0 else f' {v["state"]}'
+            vm_rows.append(
+                f'<div style="font-size:10px;padding:1px 0;display:flex;align-items:center;gap:4px">'
+                f'<span class="dot {dot_cls}" style="width:6px;height:6px;min-width:6px"></span>'
+                f'<span style="opacity:.9">{esc(v["name"])}</span>'
+                f'<span style="margin-left:auto;opacity:.65">{cpu_txt}</span>'
+                f'</div>'
+            )
+        if len(hv_vms) > 4:
+            vm_rows.append(f'<div style="font-size:10px;opacity:.5">+{len(hv_vms)-4} more</div>')
+        hv_body += "".join(vm_rows)
+    hv_stopped = HV.get("stopped", 0)
+    if HV.get("state") == "error":
+        hv_sub = HV.get("note", "host unreachable")
+    elif hv_stopped > 0:
+        down_names = [v["name"] for v in hv_vms if v.get("state") != "Running"][:3]
+        hv_sub = f'OFF: {", ".join(down_names)}'
+    else:
+        cpus = HV.get("host_cpus", "?")
+        mem = HV.get("host_mem_gb", "?")
+        hv_sub = (f'host {cpus} vCPU · {mem} GB' if HV.get("vm_count", 0) > 0
+                  else (HV.get("note") or "all VMs running"))
+
     row1 = (card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
             + card("PROXMOX", P.get("state", "error"), prox_body, prox_sub)
             + card("HOME ASSISTANT", HA.get("state", "error"), ha_body, ha_sub)
@@ -2046,7 +2171,8 @@ def render(data, gen_epoch, errors, trends=None):
             + card("DOCKER / PORTAINER", D.get("state", "error"), dock_body, dock_sub)
             + card("PBS BACKUPS", B.get("state", "error"), pbs_body, pbs_sub)
             + card("URBACKUP", UB.get("state", "error"), ub_body, ub_sub)
-            + card("SMART / DISK HEALTH", SM.get("state", "error"), smart_body, smart_sub))
+            + card("SMART / DISK HEALTH", SM.get("state", "error"), smart_body, smart_sub)
+            + card("HYPER-V", HV.get("state", "error"), hv_body, hv_sub))
 
     # ---- Row 2: security ----
     daily = trends.get("daily", {})
@@ -2368,6 +2494,11 @@ def render(data, gen_epoch, errors, trends=None):
             alerts.append(f'Storage {s["name"]} at {s["pct"]:.0f}%')
     for p in SM.get("problems", []):
         alerts.append(f"SMART: {p}")
+    if HV.get("state") == "error":
+        alerts.append(f'Hyper-V: {HV.get("note", "host unreachable")}')
+    elif HV.get("stopped", 0) > 0:
+        down_hv = [v["name"] for v in HV.get("vms", []) if v.get("state") != "Running"][:3]
+        alerts.append(f'Hyper-V stopped: {", ".join(down_hv)}')
     if WAN.get("state") in ("warn", "crit"):
         alerts.append(f'WAN: {WAN.get("status","?")} latency={WAN.get("latency","n/a")}ms uptime={_fmt_duration(WAN.get("uptime"))}')
     if D.get("bad"):

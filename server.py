@@ -140,7 +140,8 @@ def get_collector_map():
     from collectors import (
         proxmox, wazuh, malware_sources, docker_portainer, pbs, uptime_kuma,
         crowdsec, unifi, adguard, home_assistant, smart_health, urbackup,
-        qnap, media, cloudflare, nginx_proxy, tailscale, limacharlie, custom_url
+        qnap, media, cloudflare, nginx_proxy, tailscale, limacharlie, custom_url,
+        hyperv
     )
     return {
         "proxmox": proxmox.collect,
@@ -170,6 +171,7 @@ def get_collector_map():
         "limacharlie": limacharlie.collect,
         "custom_url": custom_url.collect,
         "wan_health": unifi.collect,
+        "hyperv": hyperv.collect,
     }
 
 
@@ -181,6 +183,7 @@ CARD_TYPE_META = {
     "urbackup":         {"label": "URBackup",             "description": "Client backup status",                      "category": "Infrastructure", "icon": "RotateCcw"},
     "home_assistant":   {"label": "Home Assistant",       "description": "Entity counts, alerts, notifications",      "category": "Infrastructure", "icon": "Home"},
     "smart_health":     {"label": "Disk Health",          "description": "SMART disk health from Proxmox",            "category": "Infrastructure", "icon": "Activity"},
+    "hyperv":           {"label": "Hyper-V",             "description": "Hyper-V VMs, CPU/memory, host resources",    "category": "Infrastructure", "icon": "Server"},
     "wazuh":            {"label": "Wazuh SIEM",           "description": "Agent status, alerts 24h",                  "category": "Security",       "icon": "Shield"},
     "malware_sources":  {"label": "Malware Detect",       "description": "Malware feed detections",                   "category": "Security",       "icon": "AlertTriangle"},
     "crowdsec":         {"label": "CrowdSec",             "description": "Bans and detections",                       "category": "Security",       "icon": "ShieldAlert"},
@@ -465,6 +468,14 @@ def _extract_ticker_items(cache: dict) -> tuple:
             for d in (data.get("warning") or [])[:2]:
                 add(f"SMART warn: {d}", "warn")
 
+        elif card_type == "hyperv":
+            stopped = data.get("stopped", 0)
+            if data.get("state") == "error":
+                add(f"Hyper-V: {data.get('note', 'unreachable')}", "crit")
+            elif stopped > 0:
+                names = [v["name"] for v in data.get("vms", []) if v.get("state") != "Running"][:3]
+                add(f"Hyper-V: {stopped} VM(s) not running: {', '.join(names)}", "warn")
+
         elif card_type == "malware_sources":
             det = data.get("total_detections", 0) or data.get("detections", 0)
             if det > 0:
@@ -648,6 +659,59 @@ def api_data(card_type: str, request: Request):
         pass
 
     return data
+
+
+@app.get("/api/data/uptime_kuma_detail")
+def api_uptime_kuma_detail():
+    """
+    Uptime Kuma history hbar data.
+    Builds 24-cell arrays from the kuma trend data stored in trends.json.
+    Falls back to current status_map if no trend history yet.
+    """
+    import time as _time
+    now = int(_time.time())
+    hours = 24
+
+    # Try to get trend data from trends.json
+    try:
+        trends = load_trends()
+    except Exception:
+        trends = {}
+
+    monitors_out = []
+
+    # Check if we have kuma history trends
+    kuma_trends = {k.split(".", 1)[1]: v for k, v in trends.items()
+                   if k.startswith("uptime_kuma.")}
+
+    if kuma_trends:
+        start = now - hours * 3600
+        for name, series in sorted(kuma_trends.items()):
+            buckets: list = [None] * hours
+            for ts, val in series:
+                idx = int((ts - start) // 3600)
+                if 0 <= idx < hours:
+                    # val: 1=up, 0=down, 0.5=other — map to our codes
+                    sev = 3 if val == 0 else 2 if (0 < val < 1) else 1
+                    cur_sev = {None: 0, 1: 1, 2: 2, 0: 3}.get(buckets[idx], 0)
+                    if sev >= cur_sev:
+                        buckets[idx] = 0 if sev == 3 else (2 if sev == 2 else 1)
+            cells = [b if b is not None else -1 for b in buckets]
+            monitors_out.append({"name": name, "cells": cells})
+    else:
+        # Fall back to current status_map from cache
+        uk_cache = _card_cache.get("uptime_kuma", {}).get("data", {})
+        status_map = uk_cache.get("status_map", {})
+        for name, val in sorted(status_map.items()):
+            # Show only current status in last cell
+            cells = [-1] * (hours - 1) + [val]
+            monitors_out.append({"name": name, "cells": cells})
+
+    return {
+        "state": "ok",
+        "history_monitors": monitors_out,
+        "_ts": now,
+    }
 
 
 @app.get("/api/ticker")
@@ -857,6 +921,14 @@ def _extract_alert_events(card_type: str, data: dict) -> list:
             events.append({"text": f"SMART FAIL: {d}", "level": "crit"})
         for d in (data.get("warning") or [])[:3]:
             events.append({"text": f"SMART warning: {d}", "level": "warn"})
+
+    elif card_type == "hyperv":
+        stopped = data.get("stopped", 0)
+        if data.get("state") == "error":
+            events.append({"text": f"Hyper-V: {data.get('note', 'unreachable')}", "level": "crit"})
+        elif stopped > 0:
+            names = [v["name"] for v in data.get("vms", []) if v.get("state") != "Running"][:3]
+            events.append({"text": f"Hyper-V: {stopped} VM(s) not running: {', '.join(names)}", "level": "warn"})
 
     elif card_type == "malware_sources":
         det = data.get("total_detections", 0) or data.get("detections", 0)
@@ -1070,6 +1142,11 @@ INTEGRATION_FIELDS = {
     ],
     "smart_health": [
         # Smart health re-uses Proxmox connection — no separate fields, just informational
+    ],
+    "hyperv": [
+        {"key": "HYPERV_HOST",     "label": "Host",     "placeholder": "10.10.10.90",  "type": "text"},
+        {"key": "HYPERV_USERNAME", "label": "Username", "placeholder": "administrator", "type": "text"},
+        {"key": "HYPERV_PASSWORD", "label": "Password", "placeholder": "",              "type": "password"},
     ],
     "malware_sources": [
         # No credentials needed — public feeds

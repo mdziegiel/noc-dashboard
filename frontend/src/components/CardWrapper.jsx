@@ -30,6 +30,7 @@ const CARD_MAP = {
   overseerr:      () => import('./cards/OverseerrCard.jsx'),
   limacharlie:    () => import('./cards/LimaCharlieCard.jsx'),
   custom_url:     () => import('./cards/CustomUrlCard.jsx'),
+  hyperv:         () => import('./cards/HypervCard.jsx'),
 }
 
 function useCardComponent(type) {
