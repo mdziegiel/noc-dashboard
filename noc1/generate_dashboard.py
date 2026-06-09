@@ -2717,12 +2717,73 @@ def render(data, gen_epoch, errors, trends=None):
     else:
         hist_block = '<div class="empty">Collecting uptime history&hellip; bars populate after a few regen cycles.</div>'
 
+    # Build integration status for settings page
+    LABELS = {
+        "proxmox": "Proxmox", "smart": "SMART/Disk Health", "hyperv": "Hyper-V",
+        "docker": "Docker/Portainer", "pbs": "PBS Backups", "kuma": "Uptime Kuma",
+        "crowdsec": "CrowdSec", "wazuh": "Wazuh SIEM", "malware_sources": "Malware Detect",
+        "unifi": "UniFi UDM-SE", "wan": "WAN/Internet", "adguard": "AdGuard · DNS1",
+        "adguard2": "AdGuard · DNS2", "urbackup": "URBackup", "qnap": "QNAP NAS",
+        "homeassistant": "Home Assistant", "cloudflare": "Cloudflare",
+        "npm": "Nginx Proxy Mgr", "tailscale": "Tailscale", "wgdashboard": "WGDashboard",
+        "limacharlie": "LimaCharlie (LC)", "plex": "Plex", "tautulli": "Tautulli",
+        "sonarr": "Sonarr", "radarr": "Radarr", "sabnzbd": "SABnzbd",
+        "overseerr": "Overseerr", "prowlarr": "Prowlarr",
+    }
+    COMING_SOON = {
+        # Homelab
+        "pihole": "Pi-hole", "pfsense": "pfSense", "opnsense": "OPNsense",
+        "truenas": "TrueNAS", "unraid": "Unraid", "synology": "Synology DSM",
+        "jellyfin": "Jellyfin", "emby": "Emby", "nextcloud": "Nextcloud",
+        "gitea": "Gitea", "traefik": "Traefik", "caddy": "Caddy",
+        "authentik": "Authentik", "authelia": "Authelia",
+        "speedtest_tracker": "Speedtest Tracker", "glances": "Glances", "netdata": "Netdata",
+        # VPN
+        "zerotier": "ZeroTier", "twingate": "Twingate", "netbird": "Netbird",
+        "headscale": "Headscale", "pangolin": "Pangolin",
+        # Hypervisors
+        "vmware": "VMware ESXi/vCenter", "xcpng": "XCP-ng", "libvirt": "libvirt/KVM",
+        # Microsoft
+        "intune": "Microsoft Intune", "entra": "Entra ID",
+        "m365": "M365 Health", "azure_vms": "Azure VMs",
+        "exchange": "Exchange Online", "sharepoint": "SharePoint",
+        # Security
+        "sophos": "Sophos", "meraki": "Cisco Meraki",
+        # Networking
+        "mikrotik": "MikroTik", "openwrt": "OpenWrt", "snmp": "SNMP Generic",
+        # Hardware
+        "ipmi": "IPMI", "ilo": "HPE iLO", "idrac": "Dell iDRAC",
+        "node_exporter": "Prometheus node_exporter",
+        # Cloud
+        "aws": "AWS Health", "gcp": "GCP Status",
+        "digitalocean": "DigitalOcean", "linode": "Linode/Akamai",
+    }
+    integ_list = []
+    active_keys = set()
+    for key, val in data.items():
+        label = LABELS.get(key, key.title())
+        state = val.get("state", "error") if isinstance(val, dict) else "error"
+        note = ""
+        if isinstance(val, dict):
+            note = (val.get("error") or val.get("note") or "")[:120]
+        integ_list.append({"key": key, "label": label, "state": state, "note": note})
+        active_keys.add(key)
+    # Append coming-soon items not already active
+    for key, label in COMING_SOON.items():
+        if key not in active_keys:
+            integ_list.append({"key": key, "label": label, "state": "coming_soon", "note": ""})
+    # Custom placeholder
+    integ_list.append({"key": "custom", "label": "Custom Integration", "state": "custom", "note": ""})
+    integ_list.sort(key=lambda x: (0 if x["state"] == "ok" else 1 if x["state"] == "warn" else 2, x["label"]))
+    integrations_json = json.dumps(integ_list)
+
     return PAGE.format(
         ts=esc(ts), overall=overall, overall_txt=overall_txt,
         ticker_bar=ticker_bar,
         row1=row1, row2=row2, media_row=media_row, row3=row3,
         qnap_cards=qnap_cards, kuma_history=hist_block,
-        cert_tiles=cert_tiles, alert_block=alert_block)
+        cert_tiles=cert_tiles, alert_block=alert_block,
+        integrations_json=integrations_json)
 
 
 PAGE = """<!DOCTYPE html>
@@ -2885,13 +2946,39 @@ PAGE = """<!DOCTYPE html>
   .wrap {{ padding:18px 22px 40px; max-width:1500px; margin:0 auto; }}
   .section-label {{ color:var(--green-dim); font-size:11px; letter-spacing:3px;
     margin:22px 4px 10px; text-transform:uppercase; border-bottom:1px solid var(--line);
-    padding-bottom:6px; }}
+    padding-bottom:6px; cursor:pointer; user-select:none; display:flex;
+    align-items:center; gap:8px; }}
+  .section-label .sec-title {{ flex:1; }}
+  .section-collapse-icon {{ font-size:10px; color:var(--muted); transition:transform .2s; flex-shrink:0; }}
+  .section-collapsed .section-collapse-icon {{ transform:rotate(-90deg); }}
+  .section-drag-handle {{ display:none; cursor:grab; color:var(--muted); font-size:14px;
+    padding:0 4px; flex-shrink:0; }}
+  .edit-mode .section-drag-handle {{ display:block; }}
+  .section-del-btn {{ display:none; background:none; border:none; color:var(--muted);
+    font-size:11px; cursor:pointer; padding:0 3px; flex-shrink:0; }}
+  .edit-mode .section-del-btn {{ display:block; }}
+  .section-del-btn:hover {{ color:var(--crit); }}
+  .section-add-btn {{ display:none; background:rgba(0,255,65,.08); border:1px dashed var(--green-dim);
+    color:var(--green-dim); padding:6px 16px; border-radius:4px; font-size:10px;
+    letter-spacing:2px; cursor:pointer; font-family:inherit; text-transform:uppercase;
+    margin:12px 4px; }}
+  .edit-mode .section-add-btn {{ display:block; }}
+  .section-add-btn:hover {{ border-color:var(--green); color:var(--green);
+    background:rgba(0,255,65,.13); }}
+  .section-label input.sec-rename {{ background:transparent; border:none; border-bottom:1px solid var(--green);
+    color:var(--green-dim); font:inherit; font-size:11px; letter-spacing:3px;
+    text-transform:uppercase; outline:none; width:auto; min-width:80px; padding:0; }}
   .row {{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }}
   @media(max-width:1100px){{ .row{{grid-template-columns:repeat(2,1fr);}} }}
   @media(max-width:620px){{ .row{{grid-template-columns:1fr;}} }}
   .card {{ background:linear-gradient(180deg,var(--panel),var(--panel2));
     border:1px solid var(--line); border-left:3px solid var(--degr); border-radius:6px;
-    padding:14px 16px; box-shadow:0 2px 10px rgba(0,0,0,.4); }}
+    padding:14px 16px; box-shadow:0 2px 10px rgba(0,0,0,.4);
+    transition:box-shadow .18s ease,border-color .18s ease,filter .18s ease; cursor:pointer; }}
+  .card:hover {{ box-shadow:0 4px 18px rgba(0,0,0,.55),0 0 0 1px var(--line); filter:brightness(1.07); }}
+  .card.s-ok:hover {{ box-shadow:0 4px 18px rgba(0,0,0,.5),0 0 8px rgba(0,255,65,.18); border-color:var(--green-dim); }}
+  .card.s-warn:hover {{ box-shadow:0 4px 18px rgba(0,0,0,.5),0 0 8px rgba(255,204,0,.18); border-color:var(--warn); }}
+  .card.s-crit:hover {{ box-shadow:0 4px 18px rgba(0,0,0,.5),0 0 10px rgba(255,59,59,.25); border-color:var(--crit); }}
   .card.s-ok {{ border-left-color:var(--green); }}
   .card.s-warn {{ border-left-color:var(--warn); }}
   .card.s-crit {{ border-left-color:var(--crit); }}
@@ -2942,8 +3029,10 @@ PAGE = """<!DOCTYPE html>
   .ok-empty {{ color:var(--green-dim); }}
   .twocol {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }}
   @media(max-width:900px){{ .twocol{{grid-template-columns:1fr;}} }}
-  .panelbox {{ background:linear-gradient(180deg,var(--panel),var(--panel2));
-    border:1px solid var(--line); border-radius:6px; padding:16px; }}
+  .card-full {{ grid-column:1 / -1; }}
+  .card-half {{ grid-column:span 2; }}
+  @media(max-width:900px) {{ .card-half {{ grid-column:1 / -1; }} }}
+  .panelbox {{ background:transparent; border:none; padding:0; margin:0; }}
   .panelbox h4 {{ margin:0 0 12px; font-size:11px; letter-spacing:2px; color:var(--green-dim); }}
   /* sparkline trend */
   .trend {{ width:100%; margin-top:10px; padding-top:9px; border-top:1px dashed var(--line); }}
@@ -3089,6 +3178,117 @@ PAGE = """<!DOCTYPE html>
   .bell-badge {{ background:var(--crit); color:#fff; border-radius:50%;
     font-size:9px; padding:1px 4px; margin-left:3px;
     display:none; vertical-align:super; }}
+  /* ── Edit mode ── */
+  .edit-mode .row {{ outline:1px dashed var(--green-dim); outline-offset:4px; }}
+  .edit-mode .card {{ cursor:grab !important; position:relative; }}
+  .edit-mode .card:active {{ cursor:grabbing !important; }}
+  .sortable-ghost {{ opacity:0.35; outline:2px solid var(--green) !important; }}
+  .sortable-drag {{ opacity:0.9; box-shadow:0 8px 24px rgba(0,255,65,0.35) !important; }}
+  #edit-btn.active {{ color:var(--green); border-color:var(--green); background:rgba(0,255,65,0.08); }}
+  .card-rm-btn {{ display:none; position:absolute; top:4px; right:4px; z-index:10;
+    background:rgba(255,51,51,.85); border:none; color:#fff; width:18px; height:18px;
+    border-radius:3px; font-size:12px; line-height:18px; text-align:center;
+    cursor:pointer; padding:0; font-weight:700; }}
+  .edit-mode .card-rm-btn {{ display:block; }}
+  .card-rm-btn:hover {{ background:var(--crit); }}
+  .card-resize-btn {{ display:none; position:absolute; top:4px; right:26px; z-index:10;
+    background:rgba(0,80,40,.85); border:1px solid var(--green-dim); color:var(--green);
+    width:18px; height:18px; border-radius:3px; font-size:10px; line-height:16px;
+    text-align:center; cursor:pointer; padding:0; font-weight:700; }}
+  .edit-mode .card-resize-btn {{ display:block; }}
+  /* ── Settings / integrations overlay ── */
+  .settings-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.88);
+    backdrop-filter:blur(4px); z-index:9500; padding:20px; box-sizing:border-box; }}
+  .settings-overlay.open {{ display:flex; align-items:center; justify-content:center; }}
+  .settings-shell {{ display:flex; flex-direction:column; width:100%; max-width:960px;
+    max-height:88vh; background:var(--panel); border-radius:8px;
+    box-shadow:0 8px 60px rgba(0,0,0,.85); overflow:hidden; border:1px solid var(--line); }}
+  .settings-modal-hdr {{ display:flex; align-items:center; justify-content:space-between;
+    padding:12px 18px; border-bottom:1px solid var(--line); background:var(--panel2);
+    flex-shrink:0; }}
+  .settings-modal-title {{ font-size:11px; font-weight:700; letter-spacing:3px;
+    color:var(--green); text-transform:uppercase; }}
+  .settings-modal-sub {{ font-size:9px; color:var(--muted); margin-top:1px; }}
+  .settings-modal-close {{ background:none; border:none; color:var(--muted);
+    font-size:20px; cursor:pointer; padding:0 4px; line-height:1; }}
+  .settings-modal-close:hover {{ color:var(--green); }}
+  .settings-body {{ display:flex; flex:1; overflow:hidden; }}
+  .settings-sidebar {{ width:200px; flex-shrink:0; background:var(--panel2);
+    border-right:1px solid var(--line); overflow-y:auto; display:flex;
+    flex-direction:column; }}
+  .settings-sidebar-hdr {{ padding:14px 14px 8px; border-bottom:1px solid var(--line); }}
+  .settings-sidebar-title {{ font-size:11px; font-weight:700; letter-spacing:3px;
+    color:var(--green); text-transform:uppercase; }}
+  .settings-sidebar-sub {{ font-size:9px; color:var(--muted); margin-top:2px; }}
+  .sidebar-cat {{ padding:10px 14px 3px; font-size:9px; letter-spacing:2px;
+    color:var(--green-dim); text-transform:uppercase; font-weight:700; }}
+  .sidebar-item {{ display:flex; align-items:center; justify-content:space-between;
+    padding:6px 14px; cursor:pointer; font-size:11px; color:var(--txt);
+    border-left:2px solid transparent; transition:background .1s; }}
+  .sidebar-item:hover {{ background:rgba(0,255,65,.06); color:var(--green); }}
+  .sidebar-item.active {{ background:rgba(0,255,65,.09); color:var(--green);
+    border-left-color:var(--green); font-weight:700; }}
+  .sidebar-dot {{ width:6px; height:6px; border-radius:50%; flex-shrink:0; background:var(--degr); }}
+  .sidebar-dot.ok {{ background:var(--green); box-shadow:0 0 4px var(--green); }}
+  .sidebar-dot.warn {{ background:var(--warn); }}
+  .sidebar-dot.error, .sidebar-dot.crit {{ background:var(--crit); }}
+  .settings-content {{ flex:1; overflow-y:auto; padding:22px 28px; position:relative; }}
+  .settings-close {{ display:none; }}
+  .settings-welcome {{ color:var(--muted); font-size:12px; padding-top:60px;
+    text-align:center; letter-spacing:1px; }}
+  .settings-welcome-icon {{ font-size:32px; display:block; margin-bottom:12px; opacity:.3; }}
+  .integ-form-title {{ font-size:13px; font-weight:700; letter-spacing:2px;
+    color:var(--green); margin-bottom:6px; text-transform:uppercase; }}
+  .integ-form-status {{ display:inline-flex; align-items:center; gap:6px; font-size:10px;
+    letter-spacing:1px; text-transform:uppercase; margin-bottom:18px; padding:4px 10px;
+    border-radius:3px; background:var(--panel2); border:1px solid var(--line); }}
+  .form-section-hdr {{ grid-column:1/-1; font-size:9px; font-weight:700; letter-spacing:2px;
+    text-transform:uppercase; color:var(--green-dim); padding:10px 0 4px;
+    border-bottom:1px solid var(--line); margin-top:6px; }}
+  .form-section-hdr:first-child {{ margin-top:0; }}
+  .form-field.span2 {{ grid-column:1/-1; }}
+  .form-grid {{ display:grid; grid-template-columns:repeat(2,1fr); gap:12px 20px; }}
+  @media(max-width:700px) {{ .form-grid {{ grid-template-columns:1fr; }} }}
+  .form-field {{ display:flex; flex-direction:column; gap:4px; }}
+  .form-field label {{ font-size:10px; color:var(--muted); letter-spacing:1px; text-transform:uppercase; }}
+  .form-field input {{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
+    padding:6px 10px; border-radius:4px; font-size:12px; font-family:inherit;
+    transition:border-color .15s; }}
+  .form-field input:focus {{ outline:none; border-color:var(--green); }}
+  .form-field input::placeholder {{ color:var(--muted); opacity:.5; }}
+  .form-actions {{ display:flex; gap:10px; margin-top:16px; align-items:center; }}
+  .btn-test {{ background:none; border:1px solid var(--green-dim); color:var(--green-dim);
+    padding:6px 16px; border-radius:4px; font-size:11px; font-family:inherit;
+    cursor:pointer; letter-spacing:1px; transition:all .15s; }}
+  .btn-test:hover {{ border-color:var(--green); color:var(--green); }}
+  .btn-test:disabled {{ opacity:.4; cursor:default; }}
+  .btn-save {{ background:var(--green); border:none; color:#000;
+    padding:6px 16px; border-radius:4px; font-size:11px; font-family:inherit;
+    cursor:pointer; font-weight:700; letter-spacing:1px; transition:opacity .15s; }}
+  .btn-save:hover {{ opacity:.85; }}
+  .btn-save:disabled {{ opacity:.4; cursor:default; }}
+  .test-result {{ font-size:11px; padding:4px 10px; border-radius:3px; }}
+  .test-result.ok {{ color:var(--green); background:rgba(0,255,65,.08); }}
+  .test-result.error {{ color:var(--crit); background:rgba(255,59,59,.08); }}
+  .test-result.testing {{ color:var(--muted); }}
+  .badge-soon {{ font-size:8px; font-weight:700; letter-spacing:1px;
+    text-transform:uppercase; padding:1px 5px; border-radius:2px;
+    background:rgba(100,100,100,.18); color:var(--muted); border:1px solid var(--line);
+    flex-shrink:0; }}
+  .badge-custom {{ font-size:8px; font-weight:700; letter-spacing:1px;
+    text-transform:uppercase; padding:1px 5px; border-radius:2px;
+    background:rgba(0,255,65,.10); color:var(--green); border:1px solid var(--green-dim);
+    flex-shrink:0; }}
+  .sidebar-item.coming-soon {{ opacity:.6; }}
+  .sidebar-item.coming-soon:hover {{ opacity:.85; }}
+  .coming-soon-panel {{ padding:24px; text-align:center; }}
+  .coming-soon-icon {{ font-size:28px; display:block; margin-bottom:10px; opacity:.35; }}
+  .coming-soon-title {{ font-size:14px; font-weight:700; letter-spacing:2px; color:var(--txt);
+    text-transform:uppercase; margin-bottom:6px; }}
+  .coming-soon-msg {{ font-size:11px; color:var(--muted); line-height:1.6; }}
+  .custom-panel {{ padding:4px 0 12px; }}
+  .custom-panel-note {{ font-size:11px; color:var(--muted); margin-bottom:16px;
+    padding:8px 10px; background:var(--panel2); border-radius:4px; border-left:3px solid var(--green-dim); }}
 </style></head>
 <body>
   <div class="topbar">
@@ -3099,6 +3299,9 @@ PAGE = """<!DOCTYPE html>
       <div class="ts">UPDATED <b>{ts}</b></div>
       <div class="health h-{overall}"><span class="led"></span>{overall_txt}</div>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
+      <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
+      <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
+      <button id="settings-btn" class="theme-btn" onclick="toggleSettings()" title="Integrations &amp; Settings">&#9881;</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
     </div>
   </div>
@@ -3113,15 +3316,16 @@ PAGE = """<!DOCTYPE html>
     <div class="section-label">QNAP Storage Appliances</div>
     <div class="row">{qnap_cards}</div>
     <div class="section-label">Proxmox Storage Utilization</div>
-    <div class="panelbox">{row3}</div>
+    <div class="row"><div class="card card-full" data-card-id="proxmox-storage"><h3>PROXMOX STORAGE</h3><div class="panelbox">{row3}</div></div></div>
     <div class="section-label">Uptime History (last 24h)</div>
-    <div class="panelbox">{kuma_history}</div>
+    <div class="row"><div class="card card-full" data-card-id="kuma-history"><h3>UPTIME HISTORY</h3><div class="panelbox">{kuma_history}</div></div></div>
     <div class="section-label">Certificates &amp; Active Alerts</div>
-    <div class="twocol">
-      <div class="panelbox"><h4>TLS CERT EXPIRY</h4><div class="certs">{cert_tiles}</div></div>
-      <div class="panelbox"><h4>ACTIVE ALERTS</h4>{alert_block}</div>
+    <div class="row">
+      <div class="card card-half" data-card-id="cert-expiry"><h3>TLS CERT EXPIRY</h3><div class="panelbox"><div class="certs">{cert_tiles}</div></div></div>
+      <div class="card card-half" data-card-id="active-alerts"><h3>ACTIVE ALERTS</h3><div class="panelbox">{alert_block}</div></div>
     </div>
   </div>
+  <button class="section-add-btn" id="add-section-btn" onclick="addSection()">&#10010; Add Section</button>
   <div id="card-modal" class="card-modal" onclick="closeCardModal(event)">
     <div class="card-modal-box">
       <button class="card-modal-close" onclick="closeCardModal(null)">&times;</button>
@@ -3138,6 +3342,36 @@ PAGE = """<!DOCTYPE html>
     </div>
     <ul id="alert-feed" class="alert-feed"></ul>
     <div class="alert-panel-empty" id="alert-empty">No alert history recorded yet.</div>
+  </div>
+  <!-- Settings / Integrations overlay -->
+  <div id="settings-overlay" class="settings-overlay" onclick="settingsOverlayClick(event)">
+    <div class="settings-shell">
+      <div class="settings-modal-hdr">
+        <div>
+          <div class="settings-modal-title">&#9881; Integrations &amp; Settings</div>
+          <div class="settings-modal-sub">Configure credentials for all integrations</div>
+        </div>
+        <button class="settings-modal-close" onclick="toggleSettings()" title="Close">&times;</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-sidebar">
+          <div class="settings-sidebar-hdr">
+            <div class="settings-sidebar-title">Integrations</div>
+            <div class="settings-sidebar-sub">Select to configure</div>
+          </div>
+          <div id="settings-sidebar-list"></div>
+        </div>
+        <div class="settings-content">
+          <button class="settings-close" onclick="toggleSettings()">&times;</button>
+          <div id="settings-right">
+            <div class="settings-welcome">
+              <span class="settings-welcome-icon">&#9881;</span>
+              Select an integration from the sidebar to configure credentials.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
   <footer>MRDTECH INFRASTRUCTURE MONITORING · AUTO-REFRESH 60s · REGEN 15m</footer>
 <script>
@@ -3267,6 +3501,580 @@ PAGE = """<!DOCTYPE html>
   }};
   ingestCurrentAlerts();
   renderAlertHistory();
+
+  /* ── Edit mode + SortableJS layout persistence ── */
+  var LAYOUT_KEY = 'noc-layout';
+  var _sortables = [];
+
+  function destroySortables() {{
+    _sortables.forEach(function(s) {{ try {{ s.destroy(); }} catch(e) {{}} }});
+    _sortables = [];
+  }}
+
+  function initSortables() {{
+    destroySortables();
+    document.querySelectorAll('.row').forEach(function(row) {{
+      if (typeof Sortable !== 'undefined') {{
+        _sortables.push(Sortable.create(row, {{
+          animation: 150,
+          ghostClass: 'sortable-ghost',
+          dragClass: 'sortable-drag',
+          onEnd: function() {{
+            // Persist immediately after each drag
+            persistLayout();
+          }}
+        }}));
+      }}
+    }});
+  }}
+
+  function persistLayout() {{
+    var layout = {{}};
+    document.querySelectorAll('.section-label').forEach(function(lbl) {{
+      var section = lbl.textContent.trim();
+      var row = lbl.nextElementSibling;
+      if (row && row.classList.contains('row')) {{
+        layout[section] = Array.from(row.children).map(function(card) {{
+          return card.querySelector('h3') ? card.querySelector('h3').textContent.trim() : '';
+        }}).filter(Boolean);
+      }}
+    }});
+    try {{ localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); }} catch(e) {{}}
+  }}
+
+  function applyStoredLayout() {{
+    var stored;
+    try {{ stored = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); }} catch(e) {{ return; }}
+    if (!stored) return;
+    document.querySelectorAll('.section-label').forEach(function(lbl) {{
+      var section = lbl.textContent.trim();
+      if (!stored[section]) return;
+      var row = lbl.nextElementSibling;
+      if (!row || !row.classList.contains('row')) return;
+      var order = stored[section];
+      var cards = Array.from(row.children);
+      order.forEach(function(title) {{
+        var card = cards.find(function(c) {{
+          var h3 = c.querySelector('h3');
+          return h3 && h3.textContent.trim() === title;
+        }});
+        if (card) row.appendChild(card);
+      }});
+    }});
+  }}
+
+  window.toggleEditMode = function() {{
+    var body = document.body;
+    var editBtn = document.getElementById('edit-btn');
+    var saveBtn = document.getElementById('save-btn');
+    var isEdit = body.classList.toggle('edit-mode');
+    if (editBtn) {{ editBtn.classList.toggle('active', isEdit); editBtn.textContent = isEdit ? '✕ EDITING' : '✎ EDIT'; }}
+    if (saveBtn) saveBtn.style.display = isEdit ? 'inline-block' : 'none';
+    if (isEdit) {{
+      // Inject remove + resize buttons into every card
+      document.querySelectorAll('.card').forEach(function(card) {{
+        if (!card.querySelector('.card-rm-btn')) {{
+          var rmBtn = document.createElement('button');
+          rmBtn.className = 'card-rm-btn';
+          rmBtn.title = 'Remove card';
+          rmBtn.textContent = '✕';
+          rmBtn.addEventListener('click', function(e) {{
+            e.stopPropagation();
+            if (confirm('Remove this card? (Reload page to restore)')) {{
+              card.remove();
+              persistLayout();
+            }}
+          }});
+          card.appendChild(rmBtn);
+        }}
+        if (!card.querySelector('.card-resize-btn')) {{
+          var rsBtn = document.createElement('button');
+          rsBtn.className = 'card-resize-btn';
+          rsBtn.title = 'Cycle size';
+          rsBtn.textContent = '⤢';
+          rsBtn.addEventListener('click', function(e) {{
+            e.stopPropagation();
+            var sizes = ['', 'card-wide', 'card-full', 'card-half'];
+            var cur = sizes.find(function(s) {{ return s && card.classList.contains(s); }}) || '';
+            var next = sizes[(sizes.indexOf(cur) + 1) % sizes.length];
+            sizes.forEach(function(s) {{ if (s) card.classList.remove(s); }});
+            if (next) card.classList.add(next);
+            persistLayout();
+          }});
+          card.appendChild(rsBtn);
+        }}
+      }});
+      if (typeof Sortable === 'undefined') {{
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js';
+        s.onload = function() {{ initSortables(); }};
+        document.head.appendChild(s);
+      }} else {{
+        initSortables();
+      }}
+    }} else {{
+      // Remove injected buttons
+      document.querySelectorAll('.card-rm-btn, .card-resize-btn').forEach(function(btn) {{ btn.remove(); }});
+      destroySortables();
+    }}
+  }};
+
+  window.saveLayout = function() {{
+    persistLayout();
+    window.toggleEditMode();
+  }};
+
+  // Apply saved layout on page load (before user edits)
+  applyStoredLayout();
+
+  /* ── Section Management ── */
+  var SEC_KEY = 'noc-sections';
+  var _sectionSortable = null;
+
+  function _getSections() {{
+    return Array.from(document.querySelectorAll('.section-label'));
+  }}
+
+  function _getSectionRows(lbl) {{
+    // Return all sibling .row elements immediately following this label
+    var rows = [];
+    var el = lbl.nextElementSibling;
+    while (el && el.classList.contains('row')) {{
+      rows.push(el);
+      el = el.nextElementSibling;
+    }}
+    return rows;
+  }}
+
+  function _initSectionLabels() {{
+    _getSections().forEach(function(lbl) {{
+      // Wrap text in span if not already done
+      if (!lbl.querySelector('.sec-title')) {{
+        var titleText = lbl.textContent.trim();
+        lbl.innerHTML =
+          '<span class="section-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>'\
+          +'<span class="sec-title">'+titleText+'</span>'\
+          +'<span class="section-collapse-icon">&#9660;</span>'\
+          +'<button class="section-del-btn" title="Delete section">&#128465;</button>';
+      }}
+      // Click to collapse (but not when clicking buttons inside)
+      lbl.onclick = function(e) {{
+        if (e.target.classList.contains('section-del-btn')) {{ return; }}
+        if (e.target.classList.contains('section-drag-handle')) {{ return; }}
+        if (e.target.classList.contains('sec-rename')) {{ return; }}
+        var rows = _getSectionRows(lbl);
+        var isCollapsed = lbl.classList.toggle('section-collapsed');
+        rows.forEach(function(r) {{ r.style.display = isCollapsed ? 'none' : ''; }});
+        _persistSectionState();
+      }};
+      // Double-click sec-title to rename
+      var titleSpan = lbl.querySelector('.sec-title');
+      if (titleSpan) {{
+        titleSpan.ondblclick = function(e) {{
+          e.stopPropagation();
+          var cur = titleSpan.textContent.trim();
+          var inp = document.createElement('input');
+          inp.className = 'sec-rename';
+          inp.value = cur;
+          titleSpan.textContent = '';
+          titleSpan.appendChild(inp);
+          inp.focus();
+          inp.select();
+          function _commit() {{
+            var val = inp.value.trim() || cur;
+            titleSpan.textContent = val;
+            _persistSectionState();
+          }}
+          inp.onblur = _commit;
+          inp.onkeydown = function(ev) {{
+            if (ev.key === 'Enter') {{ inp.blur(); }}
+            if (ev.key === 'Escape') {{ inp.value = cur; inp.blur(); }}
+          }};
+        }};
+      }}
+      // Delete button
+      var delBtn = lbl.querySelector('.section-del-btn');
+      if (delBtn) {{
+        delBtn.onclick = function(e) {{
+          e.stopPropagation();
+          var titleText = (lbl.querySelector('.sec-title')||lbl).textContent.trim();
+          if (!confirm('Delete section "'+titleText+'"? Cards will move to the last section.')) return;
+          var rows = _getSectionRows(lbl);
+          // Find or create Unsorted section
+          var labels = _getSections();
+          var lastLabel = labels[labels.length - 1];
+          var targetRow = lastLabel ? _getSectionRows(lastLabel)[0] : null;
+          if (!targetRow) {{
+            // Create Unsorted section
+            window.addSection('Unsorted');
+            labels = _getSections();
+            lastLabel = labels[labels.length - 1];
+            targetRow = _getSectionRows(lastLabel)[0];
+          }}
+          rows.forEach(function(row) {{
+            Array.from(row.children).forEach(function(card) {{
+              if (targetRow) targetRow.appendChild(card);
+            }});
+            row.remove();
+          }});
+          lbl.remove();
+          _persistSectionState();
+          persistLayout();
+          if (document.body.classList.contains('edit-mode')) {{
+            destroySortables(); initSortables();
+          }}
+        }};
+      }}
+    }});
+  }}
+
+  function _persistSectionState() {{
+    var state = {{}};
+    _getSections().forEach(function(lbl) {{
+      var title = (lbl.querySelector('.sec-title')||lbl).textContent.trim();
+      state[title] = {{ collapsed: lbl.classList.contains('section-collapsed') }};
+    }});
+    // Save section order
+    state['__order__'] = _getSections().map(function(lbl) {{
+      return (lbl.querySelector('.sec-title')||lbl).textContent.trim();
+    }});
+    try {{ localStorage.setItem(SEC_KEY, JSON.stringify(state)); }} catch(e) {{}}
+  }}
+
+  function _applySectionState() {{
+    var stored;
+    try {{ stored = JSON.parse(localStorage.getItem(SEC_KEY)||'null'); }} catch(e) {{ return; }}
+    if (!stored) return;
+    _getSections().forEach(function(lbl) {{
+      var title = (lbl.querySelector('.sec-title')||lbl).textContent.trim();
+      if (stored[title] && stored[title].collapsed) {{
+        lbl.classList.add('section-collapsed');
+        _getSectionRows(lbl).forEach(function(r) {{ r.style.display = 'none'; }});
+      }}
+    }});
+  }}
+
+  window.addSection = function(name) {{
+    var title = name || prompt('Section name:', 'New Section');
+    if (!title) return;
+    var wrap = document.querySelector('.wrap');
+    if (!wrap) return;
+    var lbl = document.createElement('div');
+    lbl.className = 'section-label';
+    lbl.innerHTML =
+      '<span class="section-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>'\
+      +'<span class="sec-title">'+title+'</span>'\
+      +'<span class="section-collapse-icon">&#9660;</span>'\
+      +'<button class="section-del-btn" title="Delete section">&#128465;</button>';
+    var row = document.createElement('div');
+    row.className = 'row';
+    var addBtn = document.getElementById('add-section-btn');
+    if (addBtn) {{
+      wrap.insertBefore(row, addBtn);
+      wrap.insertBefore(lbl, row);
+    }} else {{
+      wrap.appendChild(lbl);
+      wrap.appendChild(row);
+    }}
+    _initSectionLabels();
+    _persistSectionState();
+    if (document.body.classList.contains('edit-mode')) {{
+      destroySortables(); initSortables();
+      if (_sectionSortable) {{ _sectionSortable.destroy(); }}
+      _initSectionSort();
+    }}
+  }};
+
+  function _initSectionSort() {{
+    var wrap = document.querySelector('.wrap');
+    if (!wrap || typeof Sortable === 'undefined') return;
+    _sectionSortable = Sortable.create(wrap, {{
+      handle: '.section-drag-handle',
+      animation: 150,
+      ghostClass: 'sortable-ghost',
+      filter: '.row,.card',
+      preventOnFilter: false,
+      onEnd: function() {{
+        _persistSectionState();
+        persistLayout();
+      }}
+    }});
+  }}
+
+  // Patch toggleEditMode to handle section sort
+  var _origToggleEditMode = window.toggleEditMode;
+  window.toggleEditMode = function() {{
+    _origToggleEditMode();
+    var isEdit = document.body.classList.contains('edit-mode');
+    if (isEdit) {{
+      if (typeof Sortable !== 'undefined') {{
+        if (_sectionSortable) {{ _sectionSortable.destroy(); }}
+        _initSectionSort();
+      }} else {{
+        // Sortable loads async — init section sort after it loads
+        var existing = document.querySelector('script[src*="sortablejs"]');
+        if (existing) {{
+          existing.addEventListener('load', function() {{
+            if (_sectionSortable) {{ _sectionSortable.destroy(); }}
+            _initSectionSort();
+          }});
+        }}
+      }}
+    }} else {{
+      if (_sectionSortable) {{ _sectionSortable.destroy(); _sectionSortable = null; }}
+    }}
+  }};
+
+  // Init on load
+  _initSectionLabels();
+  _applySectionState();
+  var INTEGRATIONS = {integrations_json};
+  var _fieldDefs = null;
+  var _currentCfg = null;
+  var _selectedType = null;
+
+  var CATEGORIES = [
+    {{ id:'infra',      label:'Infrastructure',
+      keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
+    {{ id:'security',   label:'Security',
+      keys:['wazuh','crowdsec','limacharlie','cloudflare','malware_sources','sophos','meraki'] }},
+    {{ id:'network',    label:'Network',
+      keys:['unifi','wan','npm','adguard','adguard2','tailscale','wgdashboard','mikrotik','openwrt','snmp'] }},
+    {{ id:'vpn',        label:'VPN',
+      keys:['zerotier','twingate','netbird','headscale','pangolin'] }},
+    {{ id:'storage',    label:'Storage', keys:['qnap','truenas','unraid','synology'] }},
+    {{ id:'media',      label:'Media',
+      keys:['plex','tautulli','sonarr','radarr','sabnzbd','overseerr','prowlarr','jellyfin','emby'] }},
+    {{ id:'monitoring', label:'Monitoring', keys:['homeassistant','netdata','glances','speedtest_tracker','node_exporter'] }},
+    {{ id:'homelab',    label:'Homelab Apps',
+      keys:['nextcloud','gitea','traefik','caddy','authentik','authelia','pihole'] }},
+    {{ id:'hypervisors',label:'Hypervisors',
+      keys:['vmware','xcpng','libvirt','pfsense','opnsense'] }},
+    {{ id:'microsoft',  label:'Microsoft',
+      keys:['intune','entra','m365','azure_vms','exchange','sharepoint'] }},
+    {{ id:'hardware',   label:'Hardware',
+      keys:['ipmi','ilo','idrac'] }},
+    {{ id:'cloud',      label:'Cloud',
+      keys:['aws','gcp','digitalocean','linode'] }},
+    {{ id:'custom',     label:'Custom', keys:['custom'] }},
+  ];
+
+  function _integByKey(k) {{ return INTEGRATIONS.find(function(i){{return i.key===k;}}); }}
+  function _stateColor(s) {{
+    return s==='ok'?'ok':s==='warn'?'warn':(s==='error'||s==='crit')?'error':'degraded';
+  }}
+
+  function _loadFieldDefs(cb) {{
+    if (_fieldDefs) {{ cb(_fieldDefs); return; }}
+    fetch('/api/integration-fields').then(function(r){{return r.json();}})
+      .then(function(d){{_fieldDefs=d;cb(d);}}).catch(function(){{cb({{}});}});
+  }}
+  function _loadCurrentCfg(cb) {{
+    fetch('/api/current-config').then(function(r){{return r.json();}})
+      .then(function(d){{_currentCfg=d;cb(d);}}).catch(function(){{cb({{}});}});
+  }}
+
+  function buildSidebar() {{
+    var list = document.getElementById('settings-sidebar-list');
+    if (!list) return;
+    var html = '';
+    CATEGORIES.forEach(function(cat) {{
+      var items = cat.keys.filter(function(k) {{
+        if (k === 'custom') return true;
+        var i = _integByKey(k);
+        return !!i;
+      }});
+      if (!items.length) return;
+      html += '<div class="sidebar-cat">'+cat.label+'</div>';
+      items.forEach(function(key) {{
+        if (key === 'custom') {{
+          html += '<div class="sidebar-item" data-key="custom">'\
+            +'<span>Custom Integration</span>'\
+            +'<span class="badge-custom">+NEW</span>'\
+            +'</div>';
+          return;
+        }}
+        var integ = _integByKey(key);
+        if (!integ) return;
+        var isSoon = integ.state === 'coming_soon';
+        var sc = isSoon ? 'degraded' : _stateColor(integ.state);
+        html += '<div class="sidebar-item'+(isSoon?' coming-soon':'')+'" data-key="'+key+'">'\
+          +'<span>'+integ.label+'</span>';
+        if (isSoon) {{
+          html += '<span class="badge-soon">Soon</span>';
+        }} else {{
+          html += '<span class="sidebar-dot '+sc+'"></span>';
+        }}
+        html += '</div>';
+      }});
+    }});
+    list.innerHTML = html;
+    list.onclick = function(e) {{
+      var item = e.target.closest('.sidebar-item');
+      if (item) selectInteg(item.dataset.key);
+    }};
+  }}
+
+  function selectInteg(key) {{
+    _selectedType = key;
+    document.querySelectorAll('.sidebar-item').forEach(function(el) {{
+      el.classList.toggle('active', el.dataset.key === key);
+    }});
+    var right = document.getElementById('settings-right');
+    if (!right) return;
+
+    // Custom integration panel
+    if (key === 'custom') {{
+      right.innerHTML = '<div class="integ-form-title">&#10010; Custom Integration</div>'\
+        +'<div class="custom-panel">'\
+        +'<div class="custom-panel-note">Define your own integration: name, URL, auth type, and a JSONPath to extract a status value. The collector will make a periodic HTTP request and surface the result as a card.</div>'\
+        +'<div class="form-grid">'\
+        +'<div class="form-field span2"><label>Integration Name</label>'\
+        +'<input id="field-CUSTOM_NAME" type="text" placeholder="My Service" data-key="CUSTOM_NAME" autocomplete="off"></div>'\
+        +'<div class="form-field span2"><label>URL</label>'\
+        +'<input id="field-CUSTOM_URL" type="text" placeholder="http://host:port/api/status" data-key="CUSTOM_URL" autocomplete="off"></div>'\
+        +'<div class="form-field"><label>Auth Type</label>'\
+        +'<select id="field-CUSTOM_AUTH" data-key="CUSTOM_AUTH" style="background:var(--panel);border:1px solid var(--line);color:var(--txt);padding:6px 10px;border-radius:4px;font-size:12px;font-family:inherit">'\
+        +'<option value="none">None</option>'\
+        +'<option value="bearer">Bearer Token</option>'\
+        +'<option value="basic">Basic Auth (user:pass)</option>'\
+        +'<option value="apikey">API Key Header</option>'\
+        +'</select></div>'\
+        +'<div class="form-field"><label>Auth Value</label>'\
+        +'<input id="field-CUSTOM_AUTH_VALUE" type="password" placeholder="token or user:pass" data-key="CUSTOM_AUTH_VALUE" autocomplete="off"></div>'\
+        +'<div class="form-field span2"><label>JSONPath (optional)</label>'\
+        +'<input id="field-CUSTOM_JSONPATH" type="text" placeholder=".status or .data.health" data-key="CUSTOM_JSONPATH" autocomplete="off"></div>'\
+        +'</div>'\
+        +'<div class="form-actions">'\
+        +'<button class="btn-save" id="btn-save" onclick="saveConfig()">&#10003; Save &amp; Apply</button>'\
+        +'<span id="test-result" class="test-result" style="display:none"></span>'\
+        +'</div></div>';\
+      return;
+    }}
+
+    var integ = _integByKey(key);
+    if (!integ) return;
+
+    // Coming Soon panel
+    if (integ.state === 'coming_soon') {{
+      right.innerHTML = '<div class="coming-soon-panel">'\
+        +'<span class="coming-soon-icon">&#9899;</span>'\
+        +'<div class="coming-soon-title">'+integ.label+'</div>'\
+        +'<div class="badge-soon" style="display:inline-block;margin-bottom:14px">Coming Soon</div>'\
+        +'<div class="coming-soon-msg">A collector for '+integ.label+' is on the roadmap.<br>'\
+        +'Star the repo or open an issue to request it sooner.</div>'\
+        +'</div>';
+      return;
+    }}
+
+    var sc = _stateColor(integ.state);
+    var statusLabel = integ.state==='ok'?'&#10003; Connected'\
+      :integ.state==='warn'?'&#9888; Warning'\
+      :integ.state==='degraded'?'&#8212; Not Configured':'&#10005; Error';
+    var statusColor = integ.state==='ok'?'var(--green)':integ.state==='warn'?'var(--warn)'\
+      :integ.state==='degraded'?'var(--degr)':'var(--crit)';
+    right.innerHTML = '<div class="integ-form-title">'+integ.label+'</div>'\
+      +'<div class="integ-form-status" style="color:'+statusColor+';border-color:'+statusColor+'">'\
+      +'<span class="sidebar-dot '+sc+'"></span>&nbsp;'+statusLabel\
+      +(integ.note?' &mdash; <span style="font-weight:normal;text-transform:none;color:var(--muted)">'+integ.note+'</span>':'')\
+      +'</div>'\
+      +'<div id="form-grid" class="form-grid"><div style="color:var(--muted);font-size:11px">Loading&hellip;</div></div>'\
+      +'<div class="form-actions">'\
+      +'<button class="btn-test" id="btn-test" onclick="testConnection()">&#9654; Test Connection</button>'\
+      +'<button class="btn-save" id="btn-save" onclick="saveConfig()">&#10003; Save &amp; Apply</button>'\
+      +'<span id="test-result" class="test-result" style="display:none"></span>'\
+      +'</div>';
+    _loadFieldDefs(function(defs) {{
+      _loadCurrentCfg(function(cfg) {{
+        var fields = defs[key]||[];
+        var fg = document.getElementById('form-grid');
+        if (!fg) return;
+        if (!fields.length) {{
+          fg.innerHTML='<div style="color:var(--muted);font-size:11px;padding:8px">No configurable fields.</div>';
+          return;
+        }}
+        fg.innerHTML = fields.map(function(f) {{
+          var isSet = cfg[f.key] && cfg[f.key]!=='&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;';
+          var ph = f.type==='password'?(isSet?'(set \u2014 enter new to change)':'enter password'):(f.label||f.key);
+          return '<div class="form-field">'\
+            +'<label for="field-'+f.key+'">'+(f.label||f.key)+'</label>'\
+            +'<input id="field-'+f.key+'" type="'+f.type+'" placeholder="'+ph+'" '\
+            +'autocomplete="off" data-key="'+f.key+'">'\
+            +'</div>';
+        }}).join('');
+      }});
+    }});
+  }}
+
+  function _getFormValues() {{
+    var vals = {{}};
+    document.querySelectorAll('#form-grid input[data-key]').forEach(function(inp){{
+      if (inp.value.trim()) vals[inp.dataset.key]=inp.value.trim();
+    }});
+    return vals;
+  }}
+
+  window.testConnection = function() {{
+    if (!_selectedType) return;
+    var btn=document.getElementById('btn-test'), tr=document.getElementById('test-result');
+    if (!btn||!tr) return;
+    btn.disabled=true; tr.style.display='inline-block';
+    tr.className='test-result testing'; tr.textContent='⧙ Testing…';
+    fetch('/test-connection',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify({{type:_selectedType,creds:_getFormValues()}})}})
+    .then(function(r){{return r.json();}})
+    .then(function(d){{
+      btn.disabled=false;
+      tr.className='test-result '+(d.ok?'ok':'error');
+      if (d.ok) {{
+        var detail=Object.entries(d.detail||{{}}).slice(0,4)
+          .map(function(e){{return e[0].replace(/_/g,' ')+': '+e[1];}}).join(' · ');
+        tr.textContent='✓ Connected'+(detail?' — '+detail:'');
+      }} else {{ tr.textContent='✕ '+(d.note||d.error||'Connection failed'); }}
+    }})
+    .catch(function(e){{btn.disabled=false;tr.className='test-result error';tr.textContent='✕ '+e.message;}});
+  }};
+
+  window.saveConfig = function() {{
+    if (!_selectedType) return;
+    var vals=_getFormValues();
+    if (!Object.keys(vals).length){{alert('No values entered.');return;}}
+    var btn=document.getElementById('btn-save'), tr=document.getElementById('test-result');
+    if (!btn) return;
+    btn.disabled=true; btn.textContent='⧙ Saving…';
+    fetch('/save-config',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(vals)}})
+    .then(function(r){{return r.json();}})
+    .then(function(d){{
+      btn.disabled=false; btn.textContent='✓ Save & Apply'; _currentCfg=null;
+      if (tr){{tr.style.display='inline-block';tr.className='test-result ok';tr.textContent='✓ Saved — regen started';}}
+    }})
+    .catch(function(e){{btn.disabled=false;btn.textContent='✓ Save & Apply';alert('Save failed: '+e.message);}});
+  }};
+
+  window.toggleSettings = function() {{
+    var ov=document.getElementById('settings-overlay');
+    var isOpen=ov.classList.toggle('open');
+    if (isOpen) {{
+      buildSidebar(); document.body.style.overflow='hidden';
+      _selectedType=null;
+      var right=document.getElementById('settings-right');
+      if (right) right.innerHTML='<div class="settings-welcome">'
+        +'<span class="settings-welcome-icon">&#9881;</span>'
+        +'Select an integration from the sidebar to configure credentials.</div>';
+    }} else {{ document.body.style.overflow=''; }}
+  }};
+
+  window.settingsOverlayClick = function(e) {{
+    if (e.target===document.getElementById('settings-overlay')) window.toggleSettings();
+  }};
+
+  document.addEventListener('keydown', function(e) {{
+    if (e.key==='Escape') {{
+      var ov=document.getElementById('settings-overlay');
+      if (ov&&ov.classList.contains('open')){{window.toggleSettings();return;}}
+    }}
+  }});
+
 }})();
 </script>
 </body></html>"""
