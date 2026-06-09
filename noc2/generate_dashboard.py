@@ -2810,11 +2810,203 @@ def render(data, gen_epoch, errors, trends=None):
         qnap_cards=qnap_cards, kuma_history=hist_block,
         cert_tiles=cert_tiles, alert_block=alert_block,
         integrations_json=integrations_json,
-        cc_css=_CC_CSS,
-        cc_btn=_CC_BTN_HTML,
-        cc_overlay=_CC_OVERLAY_HTML,
-        cc_js=_CC_JS_TMPL.replace("__CC_SEED__", _cc_seed_json()),
+        cc_css=_CC_CSS + _ACP_CSS,
+        cc_btn=_ACP_BTN_HTML + "\n" + _CC_BTN_HTML,
+        cc_overlay=_ACP_HTML + "\n" + _CC_OVERLAY_HTML,
+        cc_js=_ACP_JS_TMPL.replace("__ACP_JSON__", _ACP_JSON) + "\n" + _CC_JS_TMPL.replace("__CC_SEED__", _cc_seed_json()),
     )
+
+
+
+# ── Add Card Panel — CSS, HTML, JS ────────────────────────────────────────────
+import json as _json_acp
+
+_ACP_CARD_TYPES = [
+    {"key":"proxmox",        "label":"Proxmox",          "cat":"Infrastructure", "integ":"proxmox"},
+    {"key":"docker",         "label":"Docker/Portainer",  "cat":"Infrastructure", "integ":"docker"},
+    {"key":"pbs",            "label":"PBS Backups",        "cat":"Infrastructure", "integ":"pbs"},
+    {"key":"kuma",           "label":"Uptime Kuma",        "cat":"Infrastructure", "integ":"kuma"},
+    {"key":"urbackup",       "label":"URBackup",           "cat":"Infrastructure", "integ":"urbackup"},
+    {"key":"hyperv",         "label":"Hyper-V",            "cat":"Infrastructure", "integ":"hyperv"},
+    {"key":"smart",          "label":"SMART/Disk Health",  "cat":"Infrastructure", "integ":None},
+    {"key":"wazuh",          "label":"Wazuh SIEM",         "cat":"Security",       "integ":"wazuh"},
+    {"key":"crowdsec",       "label":"CrowdSec",            "cat":"Security",       "integ":"crowdsec"},
+    {"key":"cloudflare",     "label":"Cloudflare",         "cat":"Security",       "integ":"cloudflare"},
+    {"key":"limacharlie",    "label":"LimaCharlie",        "cat":"Security",       "integ":"limacharlie"},
+    {"key":"malware_sources","label":"Malware Detect",     "cat":"Security",       "integ":None},
+    {"key":"cert-expiry",    "label":"TLS Cert Expiry",    "cat":"Security",       "integ":None},
+    {"key":"active-alerts",  "label":"Active Alerts",      "cat":"Security",       "integ":None},
+    {"key":"unifi",          "label":"UniFi UDM-SE",       "cat":"Network",        "integ":"unifi"},
+    {"key":"wan",            "label":"WAN/Internet",        "cat":"Network",        "integ":"unifi"},
+    {"key":"adguard",        "label":"AdGuard DNS1",        "cat":"Network",        "integ":"adguard"},
+    {"key":"adguard2",       "label":"AdGuard DNS2",        "cat":"Network",        "integ":"adguard2"},
+    {"key":"npm",            "label":"Nginx Proxy Mgr",    "cat":"Network",        "integ":"npm"},
+    {"key":"tailscale",      "label":"Tailscale",          "cat":"Network",        "integ":"tailscale"},
+    {"key":"wgdashboard",    "label":"WGDashboard",        "cat":"Network",        "integ":"wgdashboard"},
+    {"key":"qnap",           "label":"QNAP NAS",            "cat":"Storage",        "integ":"qnap"},
+    {"key":"proxmox-storage","label":"Proxmox Storage",    "cat":"Storage",        "integ":"proxmox"},
+    {"key":"plex",           "label":"Plex",                "cat":"Media",          "integ":"plex"},
+    {"key":"tautulli",       "label":"Tautulli",            "cat":"Media",          "integ":"tautulli"},
+    {"key":"sonarr",         "label":"Sonarr",              "cat":"Media",          "integ":"sonarr"},
+    {"key":"radarr",         "label":"Radarr",              "cat":"Media",          "integ":"radarr"},
+    {"key":"lidarr",         "label":"Lidarr",              "cat":"Media",          "integ":"lidarr"},
+    {"key":"sabnzbd",        "label":"SABnzbd",             "cat":"Media",          "integ":"sabnzbd"},
+    {"key":"overseerr",      "label":"Seerr",               "cat":"Media",          "integ":"overseerr"},
+    {"key":"prowlarr",       "label":"Prowlarr",            "cat":"Media",          "integ":"prowlarr"},
+    {"key":"homeassistant",  "label":"Home Assistant",      "cat":"Monitoring",     "integ":"homeassistant"},
+    {"key":"kuma-history",   "label":"Uptime History",      "cat":"Monitoring",     "integ":"kuma"},
+]
+
+_ACP_JSON = _json_acp.dumps(_ACP_CARD_TYPES)
+
+_ACP_CSS = """
+  /* ── Add Card Panel ── */
+  .acp-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);
+    backdrop-filter:blur(4px);z-index:3000;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;}
+  .acp-overlay.open{display:flex;}
+  .acp-shell{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    width:min(820px,100%);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;}
+  .acp-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;
+    border-bottom:1px solid var(--line);background:var(--panel2);flex-shrink:0;}
+  .acp-title{font-size:11px;font-weight:700;letter-spacing:3px;color:var(--green);text-transform:uppercase;}
+  .acp-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0 4px;}
+  .acp-close:hover{color:var(--green);}
+  .acp-body{overflow-y:auto;padding:16px 18px 20px;}
+  .acp-cat-hdr{font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;
+    color:var(--green-dim);margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--line);}
+  .acp-cat-hdr:first-child{margin-top:0;}
+  .acp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:4px;}
+  .acp-card{background:var(--panel2);border:1px solid var(--line);border-radius:5px;
+    padding:10px 12px;cursor:pointer;transition:border-color .15s,background .15s;}
+  .acp-card:hover{border-color:var(--green-dim);background:rgba(0,255,65,.05);}
+  .acp-card.needs-cfg{opacity:.55;cursor:default;}
+  .acp-card.needs-cfg:hover{border-color:var(--line);background:var(--panel2);}
+  .acp-card-label{font-size:11px;color:var(--txt);font-weight:600;}
+  .acp-card-hint{font-size:9px;color:var(--muted);margin-top:3px;}
+  .acp-custom-btn{display:block;width:100%;margin-top:14px;padding:10px;border:1px dashed var(--green-dim);
+    background:rgba(0,255,65,.05);border-radius:5px;color:var(--green-dim);font-size:11px;
+    letter-spacing:2px;text-transform:uppercase;cursor:pointer;font-family:inherit;text-align:center;}
+  .acp-custom-btn:hover{border-color:var(--green);color:var(--green);background:rgba(0,255,65,.1);}
+  #add-card-btn{display:none;}
+"""
+
+_ACP_HTML = """  <!-- Add Card Panel -->
+  <div id="acp-overlay" class="acp-overlay" onclick="acpOverlayClick(event)">
+    <div class="acp-shell">
+      <div class="acp-hdr">
+        <div class="acp-title">&#10010; Add Card</div>
+        <button class="acp-close" onclick="closeACP()">&times;</button>
+      </div>
+      <div class="acp-body" id="acp-body"></div>
+    </div>
+  </div>
+"""
+
+_ACP_BTN_HTML = """      <button id="add-card-btn" class="theme-btn" onclick="openACP()" title="Add card (edit mode only)">&#10010; ADD CARD</button>"""
+
+_ACP_JS_TMPL = r"""
+  var ACP_CARD_TYPES = __ACP_JSON__;
+
+  window.openACP = function() {
+    var ov = document.getElementById('acp-overlay');
+    if (!ov) return;
+    _acpBuild();
+    ov.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  };
+  window.closeACP = function() {
+    var ov = document.getElementById('acp-overlay');
+    if (ov) ov.classList.remove('open');
+    document.body.style.overflow = '';
+  };
+  window.acpOverlayClick = function(e) {
+    if (e.target === document.getElementById('acp-overlay')) closeACP();
+  };
+  function _acpIsConfigured(integKey) {
+    if (!integKey) return true;
+    var integ = (typeof INTEGRATIONS !== 'undefined' ? INTEGRATIONS : [])
+      .find(function(i) { return i.key === integKey; });
+    if (!integ) return false;
+    return integ.state !== 'coming_soon' && integ.state !== 'custom' && integ.state !== 'error';
+  }
+  function _acpBuild() {
+    var body = document.getElementById('acp-body');
+    if (!body) return;
+    var cats = {};
+    ACP_CARD_TYPES.forEach(function(ct) {
+      if (!cats[ct.cat]) cats[ct.cat] = [];
+      cats[ct.cat].push(ct);
+    });
+    var html = '';
+    Object.keys(cats).forEach(function(cat) {
+      html += '<div class="acp-cat-hdr">' + cat + '</div><div class="acp-grid">';
+      cats[cat].forEach(function(ct) {
+        var ok = _acpIsConfigured(ct.integ);
+        html += '<div class="acp-card' + (ok ? '' : ' needs-cfg') + '" data-card-key="' + ct.key + '" data-configured="' + ok + '">'
+          + '<div class="acp-card-label">' + ct.label + '</div>'
+          + '<div class="acp-card-hint">' + (ok ? 'Click to add' : 'Configure in Settings first') + '</div></div>';
+      });
+      html += '</div>';
+    });
+    html += '<button class="acp-custom-btn" onclick="closeACP();openCustomCardBuilder(null)">&#9881; Build Custom Card</button>';
+    body.innerHTML = html;
+    body.onclick = function(e) {
+      var card = e.target.closest('.acp-card');
+      if (!card || card.dataset.configured === 'false') return;
+      _acpAddCard(card.dataset.cardKey);
+    };
+  }
+  function _acpAddCard(key) {
+    var existing = document.querySelector('[data-card-id="' + key + '"]');
+    if (!existing) {
+      document.querySelectorAll('.card h3').forEach(function(h3) {
+        if (!existing && h3.textContent.trim().toUpperCase() === key.replace(/-/g,' ').toUpperCase())
+          existing = h3.closest('.card');
+      });
+    }
+    if (existing) {
+      existing.style.display = '';
+      closeACP();
+      existing.scrollIntoView({behavior:'smooth',block:'center'});
+      return;
+    }
+    var firstRow = document.querySelector('.row');
+    if (!firstRow) { closeACP(); return; }
+    var ph = document.createElement('div');
+    ph.className = 'card s-degraded'; ph.setAttribute('data-card-id', key);
+    ph.innerHTML = '<h3>' + key.replace(/-/g,' ').toUpperCase() + '</h3>'
+      + '<div class="sub">Will appear after next dashboard refresh</div>';
+    firstRow.appendChild(ph);
+    if (document.body.classList.contains('edit-mode')) {
+      if (!ph.querySelector('.card-rm-btn')) {
+        var rmBtn = document.createElement('button');
+        rmBtn.className = 'card-rm-btn'; rmBtn.title = 'Remove card'; rmBtn.textContent = '✕';
+        rmBtn.addEventListener('click', function(ev) {
+          ev.stopPropagation();
+          if (confirm('Remove this card? (Reload page to restore)')) { ph.remove(); persistLayout(); }
+        });
+        ph.appendChild(rmBtn);
+      }
+    }
+    persistLayout();
+    closeACP();
+    ph.scrollIntoView({behavior:'smooth',block:'center'});
+  }
+  var _origTEM2 = window.toggleEditMode;
+  window.toggleEditMode = function() {
+    _origTEM2();
+    var isEdit = document.body.classList.contains('edit-mode');
+    var btn = document.getElementById('add-card-btn');
+    if (btn) btn.style.display = isEdit ? 'inline-block' : 'none';
+  };
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      var ov = document.getElementById('acp-overlay');
+      if (ov && ov.classList.contains('open')) { closeACP(); return; }
+    }
+  });
+"""
+
 
 
 # ── Custom Card Builder — CSS, HTML and JS constants ─────────────────────────
