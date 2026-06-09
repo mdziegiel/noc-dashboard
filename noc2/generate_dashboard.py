@@ -1196,7 +1196,7 @@ def collect_overseerr():
     base = E.get("OVERSEERR_URL", "").strip().rstrip("/")
     key = E.get("OVERSEERR_API_KEY", "").strip()
     if not base or not key:
-        return {"state": "degraded", "note": "OVERSEERR not configured"}
+        return {"state": "degraded", "note": "SEERR not configured"}
     h = {"X-Api-Key": key, "User-Agent": UA_BROWSER, "Accept": "application/json"}
     # Primary is the local IP (set in .env). If that fails, fall back to the
     # public domain so a container/IP change still has a chance. The 403 seen
@@ -2448,7 +2448,7 @@ def render(data, gen_epoch, errors, trends=None):
                or f'status {esc(str(SB.get("status","Idle")))}'
                + (f' · {esc(str(SB.get("timeleft")))} left' if SB.get("slots") else ""))
 
-    # Overseerr
+    # Seerr
     ov_body = (metric("Pending", OV.get("pending", 0),
                      "warn" if OV.get("pending", 0) else "ok")
                + metric("Approved", OV.get("approved", 0))
@@ -2478,7 +2478,7 @@ def render(data, gen_epoch, errors, trends=None):
                  + card("SONARR", SO.get("state", "error"), son_body, son_sub)
                  + card("RADARR", RA.get("state", "error"), rad_body, rad_sub)
                  + card("SABNZBD", SB.get("state", "error"), sab_body, sab_sub)
-                 + card("OVERSEERR", OV.get("state", "error"), ov_body, ov_sub)
+                 + card("SEERR", OV.get("state", "error"), ov_body, ov_sub)
                  + card("PROWLARR", PR.get("state", "error"), pr_body, pr_sub)
                  + card("LIDARR", LI.get("state", "error"), lid_body, lid_sub))
 
@@ -2754,7 +2754,7 @@ def render(data, gen_epoch, errors, trends=None):
         "npm": "Nginx Proxy Mgr", "tailscale": "Tailscale", "wgdashboard": "WGDashboard",
         "limacharlie": "LimaCharlie (LC)", "plex": "Plex", "tautulli": "Tautulli",
         "sonarr": "Sonarr", "radarr": "Radarr", "sabnzbd": "SABnzbd",
-        "overseerr": "Overseerr", "prowlarr": "Prowlarr", "lidarr": "Lidarr",
+        "overseerr": "Seerr", "prowlarr": "Prowlarr", "lidarr": "Lidarr",
     }
     COMING_SOON = {
         # Homelab
