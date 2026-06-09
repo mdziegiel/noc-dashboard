@@ -3506,11 +3506,16 @@ PAGE = """<!DOCTYPE html>
         : integ.state === 'warn' ? '⚠ WARN'
         : integ.state === 'degraded' ? '— NOT CONFIGURED'
         : '✕ ERROR';
-      return '<div class="integ-card s-' + integ.state + '" data-type="' + integ.key + '" onclick="selectInteg(\'' + integ.key + '\',\'' + integ.label.replace(/'/g,"\\'") + '\')">'
+      return '<div class="integ-card s-' + integ.state + '" data-type="' + integ.key + '" data-label="' + integ.label.replace(/"/g,'&quot;') + '">'
         + '<div class="integ-name">' + integ.label + '</div>'
         + '<div class="integ-badge ' + integ.state + '">' + badge + '</div>'
         + '</div>';
     }}).join('');
+    // Attach click via event delegation on the grid
+    grid.onclick = function(e) {{
+      var card = e.target.closest('.integ-card');
+      if (card) selectInteg(card.dataset.type, card.dataset.label || card.dataset.type);
+    }};
   }}
 
   function selectInteg(itype, label) {{
