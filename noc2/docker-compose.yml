@@ -1,7 +1,7 @@
 version: "3.8"
 
 services:
-  noc1:
+  noc2:
     image: noc2:latest
     build:
       context: .

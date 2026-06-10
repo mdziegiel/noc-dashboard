@@ -2171,14 +2171,8 @@ def health_score_body(summary):
 
 
 def health_score_card(summary):
-    """Deprecated standalone grid card; kept for compatibility, not rendered."""
-    score = int(summary.get("score", 0))
-    state = health_state_for_score(score)
-    body = health_score_body(summary)
-    return f"""<div class="card s-{state} health-score-card" data-title="NOC HEALTH SCORE" data-state="{state}" data-health-card="true" onclick="openHealthModal(event)" style="cursor:pointer">
-      <div class="card-h"><span class="dot"></span><h3>NOC HEALTH SCORE</h3></div>
-      <div class="card-b health-card-body">{body}</div>
-    </div>"""
+    """Standalone NOC Health Score grid card intentionally disabled. INTEL owns it."""
+    return ""
 
 
 def _health_history(range_seconds):
@@ -2266,10 +2260,10 @@ def intelligence_panel_html(data, summary):
     cert_rows = ''.join(f'<div class="intel-list-row"><span>{esc(n)}</span><em>{src}</em><b class="q-{("crit" if (v is False or (d is not None and d<15)) else "warn" if (d is not None and d<=30) else "ok")}">{"INVALID" if v is False else str(d) + "d" if d is not None else "?"}</b></div>' for n,d,v,src in sorted(certs, key=lambda x: (x[2] is not False, 9999 if x[1] is None else x[1]))) or '<div class="empty">No certificate data.</div>'
     return f"""<div id="intel-overlay" class="intel-overlay" onclick="intelOverlayClick(event)"></div><aside id="intel-panel" class="intel-panel"><div class="intel-panel-hdr"><span>📊 NOC INTELLIGENCE</span><button onclick="toggleIntel(false)">&times;</button></div><div class="intel-panel-scroll">
       <div class="intel-card intel-health-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Health Score</span><b>−</b></button><div class="intel-card-body health-card-body" onclick="openHealthModal(event)">{health_body}</div></div>
-      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Backup Coverage</span><b>−</b></button><div class="intel-card-body"><div class="intel-dual-score"><span>File <b class="q-{health_state_for_score(file_pct)}">{file_pct}%</b></span><span>Image <b class="q-{health_state_for_score(img_pct)}">{img_pct}%</b></span></div>{backup_rows}</div></div>
-      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Security Posture</span><b>−</b></button><div class="intel-card-body"><div class="intel-big-score q-{sec_state}">{sec_score}%</div><div class="hs-row"><span>Wazuh high/crit 24h</span><b>{waz_high}</b></div><div class="hs-row"><span>CrowdSec active bans</span><b>{bans}</b></div><div class="hs-row"><span>LimaCharlie detections 24h</span><b>{lc_det}</b></div></div></div>
-      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Storage Health</span><b>−</b></button><div class="intel-card-body"><div class="hs-row"><span>Total aggregate</span><b>{agg}% used</b></div>{vol_rows}</div></div>
-      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Certificate Expiry</span><b>−</b></button><div class="intel-card-body">{flag_html}{cert_rows}</div></div>
+      <div class="intel-card intel-backup-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Backup Coverage</span><b>−</b></button><div class="intel-card-body"><div class="intel-dual-score"><span>File <b class="q-{health_state_for_score(file_pct)}">{file_pct}%</b></span><span>Image <b class="q-{health_state_for_score(img_pct)}">{img_pct}%</b></span></div>{backup_rows}</div></div>
+      <div class="intel-card intel-security-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Security Posture</span><b>−</b></button><div class="intel-card-body"><div class="intel-big-score q-{sec_state}">{sec_score}%</div><div class="hs-row"><span>Wazuh high/crit 24h</span><b>{waz_high}</b></div><div class="hs-row"><span>CrowdSec active bans</span><b>{bans}</b></div><div class="hs-row"><span>LimaCharlie detections 24h</span><b>{lc_det}</b></div></div></div>
+      <div class="intel-card intel-storage-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Storage Health</span><b>−</b></button><div class="intel-card-body"><div class="hs-row"><span>Total aggregate</span><b>{agg}% used</b></div>{vol_rows}</div></div>
+      <div class="intel-card intel-cert-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Certificate Expiry</span><b>−</b></button><div class="intel-card-body">{flag_html}{cert_rows}</div></div>
     </div></aside>{health_modal_html(summary)}"""
 
 
@@ -3278,7 +3272,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         integrations_json=integrations_json,
         cc_css=_CC_CSS + _ACP_CSS,
         intel_css=INTEL_CSS,
-        cc_btn=_ACP_BTN_HTML + "\n" + _CC_BTN_HTML,
+        cc_btn=_ACP_BTN_HTML,
         cc_overlay=_ACP_HTML + "\n" + _CC_OVERLAY_HTML,
         intel_panel=intelligence_panel_html(data, health_summary),
         intel_js=INTEL_JS,
@@ -3465,10 +3459,11 @@ _ACP_JS_TMPL = r"""
   }
   var _origTEM2 = window.toggleEditMode;
   window.toggleEditMode = function() {
-    _origTEM2();
+    var ret = _origTEM2.apply(this, arguments);
     var isEdit = document.body.classList.contains('edit-mode');
     var btn = document.getElementById('add-card-btn');
     if (btn) btn.style.display = isEdit ? 'inline-block' : 'none';
+    return ret;
   };
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
@@ -3570,7 +3565,7 @@ _CC_CSS = """
   .cb-hint{font-size:10px;color:var(--muted);margin-bottom:8px;line-height:1.6;}
   .cb-hint code{background:var(--panel2);padding:1px 4px;border-radius:2px;font-family:monospace;}
   #add-custom-card-btn{display:none;}
-  .edit-mode #add-custom-card-btn{display:inline-block;}
+  .edit-mode #add-custom-card-btn{display:none!important;}
   .custom-card-loading{font-size:11px;color:var(--muted);font-style:italic;}
   .kv-rows{display:flex;flex-direction:column;gap:4px;width:100%;}
   .kv-row{display:flex;justify-content:space-between;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--line);font-size:12px;}
@@ -4123,10 +4118,10 @@ _CC_JS_TMPL = r"""
   /* Patch toggleEditMode to wire edit-pencil + CARD btn visibility */
   var _origToggleEM=window.toggleEditMode;
   window.toggleEditMode=function(){
-    _origToggleEM();
+    var ret=_origToggleEM.apply(this, arguments);
     var isEdit=document.body.classList.contains('edit-mode');
     var addBtn=document.getElementById('add-custom-card-btn');
-    if(addBtn) addBtn.style.display=isEdit?'inline-block':'none';
+    if(addBtn) addBtn.style.display='none';
     if(isEdit){
       document.querySelectorAll('[data-custom-card="true"]').forEach(function(c){_ccInjectEditBtns(c);});
     } else {
@@ -4270,12 +4265,34 @@ _CC_JS_TMPL = r"""
 
 
 INTEL_CSS = """
+  .intel-panel,.intel-panel-scroll,.intel-card-body,.hs-breakdown{scrollbar-width:auto;scrollbar-color:var(--green) rgba(0,0,0,.32)}.intel-panel::-webkit-scrollbar,.intel-panel-scroll::-webkit-scrollbar,.intel-card-body::-webkit-scrollbar,.hs-breakdown::-webkit-scrollbar{width:10px;height:10px}.intel-panel::-webkit-scrollbar-track,.intel-panel-scroll::-webkit-scrollbar-track,.intel-card-body::-webkit-scrollbar-track,.hs-breakdown::-webkit-scrollbar-track{background:rgba(0,0,0,.32);border-left:1px solid var(--line)}.intel-panel::-webkit-scrollbar-thumb,.intel-panel-scroll::-webkit-scrollbar-thumb,.intel-card-body::-webkit-scrollbar-thumb,.hs-breakdown::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--green),var(--green-dim));border-radius:999px;border:2px solid rgba(0,0,0,.32)}.intel-panel-scroll{overflow-y:scroll;scrollbar-gutter:stable;padding-right:10px}.intel-card-body{max-height:min(260px,34vh);overflow-y:auto;scrollbar-gutter:stable;padding-right:8px}.intel-health-card .intel-card-body{max-height:min(300px,38vh)}.hs-breakdown{max-height:190px;overflow-y:auto;padding-right:6px}.intel-card.closed .intel-card-body{display:none!important}
   .health-card-body{display:flex;gap:12px;align-items:center;width:100%;}.hs-donut-wrap{width:110px;flex:none}.hs-donut{width:110px;height:110px}.hs-track{fill:none;stroke:#162016;stroke-width:10}.hs-val{fill:none;stroke-width:10;stroke-linecap:round}.hs-ok .hs-val{stroke:var(--green)}.hs-warn .hs-val{stroke:var(--warn)}.hs-crit .hs-val{stroke:var(--crit)}.hs-pct{font-size:23px;font-weight:800;text-anchor:middle;fill:var(--txt)}.hs-breakdown{flex:1;min-width:0}.hs-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px dashed rgba(111,138,111,.18);font-size:11px}.hs-row span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}.hs-row b{color:var(--txt);white-space:nowrap}.q-ok{color:var(--green)!important}.q-warn{color:var(--warn)!important}.q-crit{color:var(--crit)!important}.intel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:8500}.intel-overlay.open{display:block}.intel-panel{position:fixed;top:0;right:-520px;width:min(500px,94vw);height:100vh;background:linear-gradient(180deg,var(--panel),var(--bg));border-left:1px solid var(--line);z-index:8501;transition:right .26s ease;box-shadow:-10px 0 34px rgba(0,0,0,.65);display:flex;flex-direction:column;overflow-y:auto}.intel-panel.open{right:0}.intel-panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line);color:var(--green);font-weight:800;letter-spacing:.12em;font-size:12px}.intel-panel-hdr button{background:none;border:1px solid var(--line);color:var(--muted);cursor:pointer;border-radius:3px;font-size:18px;line-height:1;padding:2px 8px}.intel-panel-scroll{overflow-y:auto;overflow-x:hidden;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0;flex:1}.intel-card{border:1px solid var(--line);border-radius:6px;background:rgba(0,0,0,.18);overflow:hidden}.intel-card.closed .intel-card-body{display:none}.intel-card.closed .intel-card-title b{font-size:0}.intel-card.closed .intel-card-title b:after{content:'+';font-size:16px}.intel-card-title{width:100%;display:flex;justify-content:space-between;align-items:center;background:rgba(0,255,65,.035);border:none;border-bottom:1px solid var(--line);color:var(--green-dim);cursor:pointer;padding:10px 12px;font-size:11px;letter-spacing:.12em;font-weight:700}.intel-card-body{padding:12px;max-height:32vh;overflow-y:auto;overflow-x:hidden}.intel-big-score{font-size:30px;font-weight:800;text-align:center;border:1px solid var(--line);border-radius:4px;padding:10px;margin-bottom:8px}.intel-dual-score{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.intel-dual-score span{border:1px solid var(--line);border-radius:4px;padding:8px;text-align:center;color:var(--muted);font-size:11px}.intel-dual-score b{display:block;font-size:22px}.intel-list-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed rgba(111,138,111,.16);font-size:11px}.intel-list-row span{color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.intel-list-row em{color:var(--muted);font-style:normal;font-size:10px}.intel-storage-row{margin:10px 0}.intel-storage-row div:first-child{display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-bottom:4px}.intel-bar{height:8px;background:#0c140c;border:1px solid var(--line);border-radius:5px;overflow:hidden}.intel-bar span{display:block;height:100%;background:var(--green)}.intel-bar span.q-warn{background:var(--warn)}.intel-bar span.q-crit{background:var(--crit)}.intel-cert-flag{color:var(--crit);border:1px solid rgba(255,59,59,.35);background:rgba(255,59,59,.08);padding:8px 10px;border-radius:4px;font-size:11px;margin-bottom:8px}.intel-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(4px);z-index:9100;align-items:center;justify-content:center}.intel-modal.open{display:flex}.intel-modal-box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:24px;width:min(860px,94vw);max-height:86vh;overflow:auto;position:relative}.intel-tabs{display:flex;gap:8px;margin:0 0 14px}.intel-tabs button{background:none;border:1px solid var(--line);color:var(--muted);cursor:pointer;border-radius:3px;padding:5px 10px;font-size:10px;letter-spacing:.1em}.intel-tabs button.active{color:var(--green);border-color:var(--green);background:rgba(0,255,65,.07)}.intel-tab,.intel-range-pane{display:none}.intel-tab.active,.intel-range-pane.active{display:block}.hs-modal-score{font-size:42px;font-weight:800;text-align:center;margin-bottom:10px}.hs-line{height:180px;width:100%;border:1px solid var(--line);background:rgba(0,0,0,.18)}.hs-line polyline{fill:none;stroke:var(--green);stroke-width:2}.hs-incident{border-left:3px solid var(--line);background:rgba(0,0,0,.18);padding:8px 10px;font-size:11px;margin-bottom:8px}.hs-incident span{color:var(--muted);display:block;font-size:10px}.hs-incident b{color:var(--txt);margin-right:8px}.hs-incident em{color:var(--muted);font-style:normal}.hs-incident p{margin:4px 0 0;color:var(--txt)}@media(max-width:900px){.health-card-body{flex-direction:column;align-items:flex-start}.top-right{gap:8px;flex-wrap:wrap}}
+  /* INTEL hybrid scrolling: panel scrolls, only Certificate Expiry scrolls internally. */
+  .intel-panel,.intel-panel-scroll,.intel-card-body,.intel-cert-card .intel-card-body,.intel-modal-box,.settings-content,.settings-sidebar,.alert-panel,.reports-panel,.card-modal-box{scrollbar-width:thin;scrollbar-color:var(--green) rgba(0,0,0,.24)}
+  .intel-panel::-webkit-scrollbar,.intel-panel-scroll::-webkit-scrollbar,.intel-card-body::-webkit-scrollbar,.intel-cert-card .intel-card-body::-webkit-scrollbar,.intel-modal-box::-webkit-scrollbar,.settings-content::-webkit-scrollbar,.settings-sidebar::-webkit-scrollbar,.alert-panel::-webkit-scrollbar,.reports-panel::-webkit-scrollbar,.card-modal-box::-webkit-scrollbar{width:6px;height:6px}
+  .intel-panel::-webkit-scrollbar-track,.intel-panel-scroll::-webkit-scrollbar-track,.intel-card-body::-webkit-scrollbar-track,.intel-cert-card .intel-card-body::-webkit-scrollbar-track,.intel-modal-box::-webkit-scrollbar-track,.settings-content::-webkit-scrollbar-track,.settings-sidebar::-webkit-scrollbar-track,.alert-panel::-webkit-scrollbar-track,.reports-panel::-webkit-scrollbar-track,.card-modal-box::-webkit-scrollbar-track{background:rgba(0,0,0,.24)}
+  .intel-panel::-webkit-scrollbar-thumb,.intel-panel-scroll::-webkit-scrollbar-thumb,.intel-card-body::-webkit-scrollbar-thumb,.intel-cert-card .intel-card-body::-webkit-scrollbar-thumb,.intel-modal-box::-webkit-scrollbar-thumb,.settings-content::-webkit-scrollbar-thumb,.settings-sidebar::-webkit-scrollbar-thumb,.alert-panel::-webkit-scrollbar-thumb,.reports-panel::-webkit-scrollbar-thumb,.card-modal-box::-webkit-scrollbar-thumb{background:var(--green);border-radius:999px;border:1px solid rgba(0,0,0,.35)}
+  .intel-panel{overflow-y:auto!important;scrollbar-gutter:stable;height:100vh}
+  .intel-panel-scroll{overflow:visible!important;display:flex;flex-direction:column;gap:10px;min-height:auto!important;flex:0 0 auto!important;padding:12px 16px 18px 12px!important}
+  .intel-card{overflow:visible!important}
+  .intel-card-body{max-height:none!important;overflow:visible!important;scrollbar-gutter:auto;padding-right:12px!important}
+  .intel-health-card .intel-card-body,.intel-backup-card .intel-card-body,.intel-security-card .intel-card-body,.intel-storage-card .intel-card-body{max-height:none!important;overflow:visible!important}
+  .intel-cert-card .intel-card-body{max-height:min(360px,42vh)!important;overflow-y:auto!important;overflow-x:hidden!important;scrollbar-gutter:stable;padding-right:8px!important}
+  .hs-breakdown{max-height:none!important;overflow:visible!important;padding-right:0!important}
+
 """
 
 INTEL_JS = """
+  function _nocBackdropClick(e, overlay, panelSelector){
+    if(!e||!overlay||e.target!==overlay) return false;
+    if(e.clientX>=document.documentElement.clientWidth||e.clientY>=document.documentElement.clientHeight) return false;
+    var p=panelSelector?document.querySelector(panelSelector):null;
+    var path=e.composedPath?e.composedPath():[];
+    if(p&&(p.contains(e.target)||path.indexOf(p)!==-1)) return false;
+    return true;
+  }
   window.toggleIntel=function(open){var ov=document.getElementById('intel-overlay'),p=document.getElementById('intel-panel'); if(!ov||!p)return; var show=(open===undefined)?!p.classList.contains('open'):!!open; ov.classList.toggle('open',show); p.classList.toggle('open',show);};
-  window.intelOverlayClick=function(e){var ov=document.getElementById('intel-overlay'); if(e&&e.target===ov)toggleIntel(false);};
+  window.intelOverlayClick=function(e){var ov=document.getElementById('intel-overlay'); if(_nocBackdropClick(e,ov,'#intel-panel'))toggleIntel(false);};
   window.openHealthModal=function(e){if(e)e.stopPropagation(); var m=document.getElementById('health-modal'); if(m)m.classList.add('open');};
   window.closeHealthModal=function(){var m=document.getElementById('health-modal'); if(m)m.classList.remove('open');};
   window.intelTab=function(e,id){var box=e.target.closest('.intel-modal-box'); Array.prototype.forEach.call(box.querySelectorAll('.intel-tabs:first-of-type button'),function(b){b.classList.remove('active')}); e.target.classList.add('active'); Array.prototype.forEach.call(box.querySelectorAll('.intel-tab'),function(p){p.classList.remove('active')}); var p=document.getElementById(id); if(p)p.classList.add('active');};
@@ -4287,7 +4304,6 @@ PAGE = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60">
 <title>{doc_title}</title>
 <link rel="icon" id="noc-favicon" type="image/svg+xml" href="">
 <style>
@@ -4320,9 +4336,9 @@ PAGE = """<!DOCTYPE html>
   [data-theme='light'] footer {{ color:#9ca3af; }}
   [data-theme='light'] .alerts li {{ background:#fef2f2; color:#7f1d1d; }}
   /* ── Dark NOC scrollbars ── */
-  * {{ scrollbar-width:thin; scrollbar-color:var(--green) rgba(0,0,0,.18); }}
+  * {{ scrollbar-width:thin; scrollbar-color:var(--green) rgba(0,0,0,.24); }}
   *::-webkit-scrollbar {{ width:6px; height:6px; }}
-  *::-webkit-scrollbar-track {{ background:rgba(0,0,0,.18); }}
+  *::-webkit-scrollbar-track {{ background:rgba(0,0,0,.24); }}
   *::-webkit-scrollbar-thumb {{ background:var(--green); border-radius:999px; border:1px solid rgba(0,0,0,.35); }}
   *::-webkit-scrollbar-thumb:hover {{ background:var(--green-dim); }}
   /* ── Midnight-blue theme ── */
@@ -4760,20 +4776,10 @@ PAGE = """<!DOCTYPE html>
   .sidebar-dot.warn {{ background:var(--warn); }}
   .sidebar-dot.error, .sidebar-dot.crit {{ background:var(--crit); }}
   .sidebar-check {{ width:14px; height:14px; accent-color:var(--green); cursor:pointer; }}
-  .auth-user-menu,.gear-menu {{ position:relative; display:inline-flex; align-items:center; }}
-  .auth-user-chip {{ background:var(--panel2); border:1px solid var(--line); color:var(--green);
-    font-size:10px; letter-spacing:1px; font-family:inherit; padding:3px 8px;
-    border-radius:4px; cursor:pointer; display:inline-flex; align-items:center; gap:5px;
-    text-transform:uppercase; }}
-  .auth-user-chip:hover {{ border-color:var(--line); background:var(--panel2); }}
-  .auth-user-chevron {{ display:none; }}
-  .auth-user-dropdown {{ display:none; position:absolute; right:0; top:calc(100% + 6px); min-width:190px;
-    background:var(--panel); border:1px solid var(--line); border-radius:5px;
-    box-shadow:0 8px 28px rgba(0,0,0,.85); z-index:10050; padding:7px 0;
-    font-size:11px; letter-spacing:1px; }}
-  .auth-user-menu.open .auth-user-dropdown {{ display:block; }}
-  .auth-user-info {{ padding:5px 12px 7px; color:var(--green); text-transform:uppercase; }}
-  .auth-user-role {{ color:var(--muted); font-size:9px; margin-top:2px; }}
+  .gear-menu {{ position:relative; display:inline-flex; align-items:center; }}
+  .gear-user-display {{ padding:5px 12px 7px; color:var(--muted); text-transform:uppercase; cursor:default; user-select:none; }}
+  .gear-user-display b {{ display:block; color:var(--muted); font-size:11px; letter-spacing:1px; opacity:.82; font-weight:700; }}
+  .gear-user-role {{ display:block; color:var(--muted); font-size:9px; margin-top:2px; letter-spacing:1px; opacity:.68; }}
   .auth-user-divider {{ height:1px; background:var(--line); margin:5px 0; }}
   .auth-user-logout {{ width:100%; background:none; border:none; color:var(--green); font-family:inherit;
     font-size:11px; letter-spacing:1px; text-align:left; padding:7px 12px; cursor:pointer; text-transform:uppercase; }}
@@ -4783,7 +4789,10 @@ PAGE = """<!DOCTYPE html>
   .gear-dropdown button {{ width:100%; background:none; border:none; color:var(--green); font-family:inherit; font-size:11px; letter-spacing:1px; text-align:left; padding:7px 12px; cursor:pointer; text-transform:uppercase; }}
   .gear-dropdown button:hover {{ background:rgba(0,255,65,.08); color:var(--txt); }}
   #intel-btn,#settings-gear-btn {{ min-width:34px; padding-left:8px; padding-right:8px; text-align:center; }}
-  .viewer-role #edit-btn,.viewer-role #save-btn,.viewer-role #add-card-btn,.viewer-role #add-custom-card-btn {{ display:none!important; }}
+  .edit-mode .top-right {{ gap:8px; }}
+  .edit-mode .ts {{ display:none; }}
+  .edit-mode .theme-btn {{ padding-left:9px; padding-right:9px; }}
+  .viewer-role #edit-btn,.viewer-role #save-btn,.viewer-role #cancel-edit-btn,.viewer-role #add-card-btn,.viewer-role #add-custom-card-btn {{ display:none!important; }}
   .user-table {{ width:100%; border-collapse:collapse; font-size:11px; margin:10px 0 16px; }}
   .user-table th,.user-table td {{ border-bottom:1px solid var(--line); padding:7px; text-align:left; }}
   .user-table th {{ color:var(--green-dim); text-transform:uppercase; letter-spacing:1px; font-size:9px; }}
@@ -4878,14 +4887,16 @@ PAGE = """<!DOCTYPE html>
       <div class="ts">UPDATED <b>{ts}</b></div>
       <div class="health h-{overall}"><span class="led"></span>{overall_txt}</div>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
-      <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="intel-btn" class="theme-btn" onclick="toggleIntel(true)" title="NOC Intelligence" aria-label="NOC Intelligence">📊</button>
+      <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
+      <button id="cancel-edit-btn" class="theme-btn" onclick="cancelEditMode()" title="Cancel edit mode without saving" style="display:none;border-color:var(--crit);color:var(--crit)">&#10005; CANCEL</button>
       {cc_btn}
       <div id="gear-menu" class="gear-menu">
         <button id="settings-gear-btn" class="theme-btn" onclick="toggleGearMenu(event)" title="Dashboard menu" aria-label="Dashboard menu">&#9881;&#9662;</button>
         <div class="gear-dropdown" role="menu">
-          <button type="button" onclick="toggleGearMenu(false);logoutUser()" role="menuitem">Logout</button>
+          <div class="gear-user-display" aria-label="Signed in user"><b id="gear-user-name">USER</b><span id="gear-user-role" class="gear-user-role">ROLE</span></div>
           <div class="auth-user-divider"></div>
+          <button type="button" onclick="toggleGearMenu(false);logoutUser()" role="menuitem">Logout</button>
           <button id="edit-btn" type="button" onclick="toggleGearMenu(false);toggleEditMode()" role="menuitem">Edit Dashboard</button>
           <button id="settings-btn" type="button" onclick="toggleGearMenu(false);toggleSettings()" role="menuitem">Settings</button>
         </div>
@@ -5009,6 +5020,15 @@ PAGE = """<!DOCTYPE html>
   var THEMES = ['dark','light','midnight','solarized','dracula','nord','gruvbox','tokyo'];
   var LABELS = {{dark:'DARK',light:'LIGHT',midnight:'MIDNIGHT',solarized:'SOLAR',dracula:'DRACULA',nord:'NORD',gruvbox:'GRUVBOX',tokyo:'TOKYO'}};
   var DEFAULT_THEME = 'dark';
+
+  var _nocLastActivity = Date.now();
+  ['click','keydown','pointerdown','wheel','touchstart'].forEach(function(evt){{document.addEventListener(evt,function(){{_nocLastActivity=Date.now();}},{{passive:true}});}});
+  function _nocUiBusy(){{
+    return document.body.classList.contains('edit-mode')
+      || !!document.querySelector('.settings-overlay.open,.intel-panel.open,.intel-modal.open,.alert-panel.open,.reports-panel.open')
+      || (Date.now() - _nocLastActivity) < 15000;
+  }}
+  setInterval(function(){{ if(!_nocUiBusy()) location.reload(); }}, 60000);
 
   function applyTheme(t) {{
     if (THEMES.indexOf(t) === -1) t = DEFAULT_THEME;
@@ -5314,9 +5334,15 @@ PAGE = """<!DOCTYPE html>
     var body = document.body;
     var editBtn = document.getElementById('edit-btn');
     var saveBtn = document.getElementById('save-btn');
+    var cancelBtn = document.getElementById('cancel-edit-btn');
     var isEdit = body.classList.toggle('edit-mode');
-    if (editBtn) {{ editBtn.classList.toggle('active', isEdit); editBtn.textContent = isEdit ? 'Done Editing' : 'Edit Dashboard'; }}
+    if (isEdit) {{
+      window._editLayoutSnapshot = localStorage.getItem(LAYOUT_KEY);
+      window._editSectionSnapshot = localStorage.getItem(SEC_KEY);
+    }}
+    if (editBtn) {{ editBtn.classList.toggle('active', isEdit); editBtn.textContent = isEdit ? 'Editing' : 'Edit Dashboard'; }}
     if (saveBtn) saveBtn.style.display = isEdit ? 'inline-block' : 'none';
+    if (cancelBtn) cancelBtn.style.display = isEdit ? 'inline-block' : 'none';
     if (isEdit) {{
       // Inject remove + resize buttons into every card
       document.querySelectorAll('.card').forEach(function(card) {{
@@ -5368,7 +5394,20 @@ PAGE = """<!DOCTYPE html>
 
   window.saveLayout = function() {{
     persistLayout();
+    window._editLayoutSnapshot = null;
+    window._editSectionSnapshot = null;
     window.toggleEditMode();
+  }};
+
+  window.cancelEditMode = function() {{
+    if (!document.body.classList.contains('edit-mode')) return;
+    if (window._editLayoutSnapshot === null || window._editLayoutSnapshot === undefined) localStorage.removeItem(LAYOUT_KEY);
+    else localStorage.setItem(LAYOUT_KEY, window._editLayoutSnapshot);
+    if (window._editSectionSnapshot === null || window._editSectionSnapshot === undefined) localStorage.removeItem(SEC_KEY);
+    else localStorage.setItem(SEC_KEY, window._editSectionSnapshot);
+    window._editLayoutSnapshot = null;
+    window._editSectionSnapshot = null;
+    location.reload();
   }};
 
   // Apply saved layout on page load (before user edits)
@@ -5551,7 +5590,7 @@ PAGE = """<!DOCTYPE html>
   // Patch toggleEditMode to handle section sort
   var _origToggleEditMode = window.toggleEditMode;
   window.toggleEditMode = function() {{
-    _origToggleEditMode();
+    var ret = _origToggleEditMode.apply(this, arguments);
     var isEdit = document.body.classList.contains('edit-mode');
     if (isEdit) {{
       if (typeof Sortable !== 'undefined') {{
@@ -5570,6 +5609,7 @@ PAGE = """<!DOCTYPE html>
     }} else {{
       if (_sectionSortable) {{ _sectionSortable.destroy(); _sectionSortable = null; }}
     }}
+    return ret;
   }};
 
   // Init on load
@@ -6059,7 +6099,12 @@ PAGE = """<!DOCTYPE html>
 
   window.settingsOverlayClick = function(e) {{
     var ov=document.getElementById('settings-overlay');
-    if (e&&e.target===ov) window.toggleSettings();
+    var shell=document.querySelector('.settings-shell');
+    if (!e || !ov || e.target !== ov) return;
+    if (e.clientX >= document.documentElement.clientWidth || e.clientY >= document.documentElement.clientHeight) return;
+    var path=e.composedPath?e.composedPath():[];
+    if (shell && (shell.contains(e.target) || path.indexOf(shell)!==-1)) return;
+    window.toggleSettings();
   }};
 
   document.addEventListener('keydown', function(e) {{
@@ -6077,30 +6122,28 @@ PAGE = """<!DOCTYPE html>
   function applyRoleUI() {{
     var isViewer = CURRENT_USER && CURRENT_USER.role === 'viewer';
     document.body.classList.toggle('viewer-role', !!isViewer);
-    var menu = document.getElementById('auth-user-menu');
-    if (!menu) {{
-      menu = document.createElement('div');
-      menu.id = 'auth-user-menu';
-      menu.className = 'auth-user-menu';
-      menu.innerHTML = '<span id="auth-user-chip" class="auth-user-chip" title="Signed in"><span class="auth-user-label"></span></span>';
-      var tr = document.querySelector('.top-right');
-      if (tr) tr.insertBefore(menu, document.getElementById('gear-menu'));
-    }}
-    if (menu && CURRENT_USER) {{
-      var username = CURRENT_USER.username || 'user';
-      var role = CURRENT_USER.role || 'viewer';
-      var label = menu.querySelector('.auth-user-label');
-      if (label) label.textContent = username;
-    }}
+    var old=document.getElementById('auth-user-menu');
+    if(old) old.remove();
+    var username = (CURRENT_USER && CURRENT_USER.username) || 'user';
+    var role = (CURRENT_USER && CURRENT_USER.role) || 'viewer';
+    var nameEl=document.getElementById('gear-user-name');
+    var roleEl=document.getElementById('gear-user-role');
+    if(nameEl) nameEl.textContent=username;
+    if(roleEl) roleEl.textContent=role;
   }}
   var _adminToggleEditMode = window.toggleEditMode;
   window.toggleEditMode = function() {{
     if (CURRENT_USER && CURRENT_USER.role !== 'admin') return;
     return _adminToggleEditMode.apply(this, arguments);
   }};
+  var _adminCancelEditMode = window.cancelEditMode;
+  window.cancelEditMode = function() {{
+    if (CURRENT_USER && CURRENT_USER.role !== 'admin') return;
+    return _adminCancelEditMode.apply(this, arguments);
+  }};
   window.toggleGearMenu = function(open) {{ var m=document.getElementById('gear-menu'); if(!m)return; var show=(open===undefined||open&&open.type)?!m.classList.contains('open'):!!open; m.classList.toggle('open',show); }};
-  document.addEventListener('click', function(e) {{ var m=document.getElementById('gear-menu'); if(m&&!m.contains(e.target)) m.classList.remove('open'); }});
-  document.addEventListener('keydown', function(e) {{ if(e.key==='Escape'){{ var m=document.getElementById('gear-menu'); if(m)m.classList.remove('open'); }} }});
+  document.addEventListener('click', function(e) {{ var gm=document.getElementById('gear-menu'); if(gm&&!gm.contains(e.target)) gm.classList.remove('open'); }});
+  document.addEventListener('keydown', function(e) {{ if(e.key==='Escape'){{ var gm=document.getElementById('gear-menu'); if(gm)gm.classList.remove('open'); }} }});
   window.logoutUser = function() {{ fetch('/api/logout',{{method:'POST'}}).then(function(){{ location.href='/login'; }}); }};
   function _acctMsg(id, ok, msg) {{ var el=document.getElementById(id); if(el){{el.style.display='inline-block';el.className='test-result '+(ok?'ok':'error');el.textContent=msg;}} }}
   window.changeOwnPassword = function() {{

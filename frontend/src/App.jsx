@@ -315,7 +315,6 @@ export default function App() {
   const [overallHealth, setOverallHealth] = useState('ok')
   const [authUser, setAuthUser] = useState({ username: 'admin', role: 'Administrator' })
   const [showAlerts, setShowAlerts] = useState(false)
-  const userMenuRef = useRef(null)
   const gearMenuRef = useRef(null)
   const [gearMenuOpen, setGearMenuOpen] = useState(false)
   const intelligence = useIntelligence()
@@ -323,6 +322,8 @@ export default function App() {
   const [addCardTargetSection, setAddCardTargetSection] = useState(null)
   const saveTimerRef = useRef(null)
   const layoutRef = useRef(null)
+  const editSnapshotRef = useRef(null)
+  const editModeRef = useRef(false)
   const sortablesRef = useRef([])          // card sortables
   const sectionSortableRef = useRef(null)  // section sortable
 
@@ -349,10 +350,9 @@ export default function App() {
 
   useEffect(() => {
     function onDocClick(e) {
-      const target = e.target
-      if (target && target.nodeType === Node.ELEMENT_NODE) {
-        if (gearMenuRef.current && !gearMenuRef.current.contains(target)) setGearMenuOpen(false)
-      }
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+      const menu = gearMenuRef.current
+      if (menu && !menu.contains(e.target) && !path.includes(menu)) setGearMenuOpen(false)
     }
     document.addEventListener('click', onDocClick)
     return () => document.removeEventListener('click', onDocClick)
@@ -404,8 +404,13 @@ export default function App() {
     setCardData(prev => ({ ...prev, [cardType]: nextData }))
   }, [])
 
+  useEffect(() => {
+    editModeRef.current = editMode
+  }, [editMode])
+
   const debouncedSave = useCallback((newLayout) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    if (editModeRef.current) return
     saveTimerRef.current = setTimeout(() => {
       saveLayout(newLayout).catch(() => {})
     }, 500)
@@ -711,6 +716,36 @@ export default function App() {
     )
   }
 
+
+
+  function enterEditMode() {
+    editSnapshotRef.current = layoutRef.current ? JSON.parse(JSON.stringify(layoutRef.current)) : null
+    setEditMode(true)
+  }
+
+  function saveEditMode() {
+    if (layoutRef.current) saveLayout(layoutRef.current).catch(() => {})
+    editSnapshotRef.current = null
+    setEditMode(false)
+  }
+
+  function cancelEditMode() {
+    if (editSnapshotRef.current) {
+      const restored = editSnapshotRef.current
+      setLayout(restored)
+      layoutRef.current = restored
+    }
+    editSnapshotRef.current = null
+    setEditMode(false)
+    setShowAdd(false)
+    setAddCardTargetSection(null)
+  }
+
+  function toggleEditFromMenu() {
+    if (editMode) saveEditMode()
+    else enterEditMode()
+  }
+
   return (
     <div>
       {/* Topbar */}
@@ -726,19 +761,11 @@ export default function App() {
           <button className="theme-btn nav-icon-btn" onClick={() => setShowIntel(true)} title="NOC Intelligence" aria-label="NOC Intelligence">📊</button>
           {editMode && (
             <>
-              <button className="theme-btn" onClick={() => { setAddCardTargetSection(null); setShowAdd(true) }} title="Add card" style={{ background:'var(--green)', color:'#000', border:'none', fontWeight:700 }}>
-                + ADD CARD
-              </button>
-              <button className="theme-btn" onClick={handleAddSection} title="Add section" style={{ background:'transparent', color:'var(--green)', border:'1px solid var(--green)', fontWeight:600 }}>
-                + ADD SECTION
-              </button>
+              <button className="theme-btn" onClick={saveEditMode} title="Save layout" style={{ background:'var(--green)', color:'#000', border:'none', fontWeight:700 }}>✓ SAVE</button>
+              <button className="theme-btn" onClick={cancelEditMode} title="Cancel edit mode without saving" style={{ borderColor:'var(--crit)', color:'var(--crit)' }}>✕ CANCEL</button>
+              <button className="theme-btn" onClick={() => { setAddCardTargetSection(null); setShowAdd(true) }} title="Add card" style={{ background:'var(--green)', color:'#000', border:'none', fontWeight:700 }}>+ ADD CARD</button>
             </>
           )}
-          <div className="user-menu" ref={userMenuRef}>
-            <span className="theme-btn user-menu-btn user-chip-static" title={authUser.role || 'Administrator'}>
-              {authUser.username || 'admin'}
-            </span>
-          </div>
           <div className="gear-menu" ref={gearMenuRef}>
             <button
               className="theme-btn nav-icon-btn"
@@ -750,9 +777,13 @@ export default function App() {
             </button>
             {gearMenuOpen && (
               <div className="user-dropdown gear-dropdown">
-                <button onClick={() => { setGearMenuOpen(false); handleLogout() }}>Logout</button>
+                <div className="user-dropdown-id" aria-label="Signed in user">
+                  <b>{authUser.username || 'admin'}</b>
+                  <span>{authUser.role || 'Administrator'}</span>
+                </div>
                 <div className="user-dropdown-divider" />
-                <button onClick={() => { setEditMode(m => !m); setGearMenuOpen(false) }}>{editMode ? 'Done Editing' : 'Edit Dashboard'}</button>
+                <button onClick={() => { setGearMenuOpen(false); handleLogout() }}>Logout</button>
+                <button onClick={() => { toggleEditFromMenu(); setGearMenuOpen(false) }}>{editMode ? 'Save Editing' : 'Edit Dashboard'}</button>
                 <button onClick={() => { setShowIntegrations(true); setGearMenuOpen(false) }}>Settings</button>
               </div>
             )}
@@ -793,7 +824,7 @@ export default function App() {
 
       {showAlerts && (
         <>
-          <div className="alert-overlay" style={{ display:'block' }} onClick={() => setShowAlerts(false)} />
+          <div className="alert-overlay" style={{ display:'block' }} onClick={(e) => { if (e.target === e.currentTarget) setShowAlerts(false) }} />
           <aside className="alert-panel open">
             <div className="alert-panel-hdr"><span>ALERT HISTORY</span><button onClick={() => setShowAlerts(false)}>×</button></div>
             {alertItems.length === 0 ? (

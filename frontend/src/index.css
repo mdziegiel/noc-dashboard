@@ -442,18 +442,15 @@
   }
 
 
-  /* ── User dropdown ── */
-  .user-menu, .gear-menu { position:relative; }
-  .user-menu-btn { color:var(--txt); border-color:var(--line); }
-  .user-chip-static { cursor:default; display:inline-flex; align-items:center; }
-  .user-chip-static:hover { border-color:var(--line); color:var(--txt); }
+  /* ── Gear dropdown ── */
+  .gear-menu { position:relative; }
   .nav-icon-btn { min-width:34px; padding:5px 8px; text-align:center; }
   .user-dropdown { position:absolute; right:0; top:calc(100% + 8px); min-width:190px;
     background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line);
     border-radius:6px; box-shadow:0 12px 32px rgba(0,0,0,.65); z-index:12000; padding:8px; }
-  .user-dropdown-id { display:flex; flex-direction:column; gap:3px; padding:8px 10px; }
-  .user-dropdown-id b { color:var(--green); font-size:12px; letter-spacing:.06em; }
-  .user-dropdown-id span { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; }
+  .user-dropdown-id { display:flex; flex-direction:column; gap:3px; padding:8px 10px; cursor:default; user-select:none; }
+  .user-dropdown-id b { color:var(--muted); font-size:12px; letter-spacing:.06em; opacity:.82; }
+  .user-dropdown-id span { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; opacity:.68; }
   .user-dropdown-divider { height:1px; background:var(--line); margin:6px 0; }
   .user-dropdown button { width:100%; text-align:left; background:none; border:none; color:var(--txt);
     cursor:pointer; padding:8px 10px; border-radius:3px; font-size:12px; }
@@ -516,3 +513,12 @@
   .intel-incident b { color:var(--txt); margin-right:8px; } .intel-incident em { color:var(--muted); font-style:normal; }
   .intel-incident p { margin:4px 0 0; color:var(--txt); }
   @media(max-width:900px){ .intel-health-card-body,.intel-overview{flex-direction:column; align-items:flex-start;} .top-right{gap:8px; flex-wrap:wrap;} }
+
+  .intel-panel,.intel-panel-scroll,.intel-card-body,.intel-modal-box,.settings-content,.alert-panel { scrollbar-width:thin; scrollbar-color:var(--green) rgba(0,0,0,.24); }
+  .intel-panel::-webkit-scrollbar,.intel-panel-scroll::-webkit-scrollbar,.intel-card-body::-webkit-scrollbar,.intel-modal-box::-webkit-scrollbar,.settings-content::-webkit-scrollbar,.alert-panel::-webkit-scrollbar { width:6px; height:6px; }
+  .intel-panel::-webkit-scrollbar-track,.intel-panel-scroll::-webkit-scrollbar-track,.intel-card-body::-webkit-scrollbar-track,.intel-modal-box::-webkit-scrollbar-track,.settings-content::-webkit-scrollbar-track,.alert-panel::-webkit-scrollbar-track { background:rgba(0,0,0,.24); }
+  .intel-panel::-webkit-scrollbar-thumb,.intel-panel-scroll::-webkit-scrollbar-thumb,.intel-card-body::-webkit-scrollbar-thumb,.intel-modal-box::-webkit-scrollbar-thumb,.settings-content::-webkit-scrollbar-thumb,.alert-panel::-webkit-scrollbar-thumb { background:var(--green); border-radius:999px; border:1px solid rgba(0,0,0,.35); }
+  .intel-panel { overflow-y:auto; scrollbar-gutter:stable; }
+  .intel-panel-scroll { overflow:visible; flex:0 0 auto; min-height:auto; padding-right:16px; }
+  .intel-card-body { max-height:none; overflow:visible; }
+  .intel-card.cert-expiry .intel-card-body,.intel-cert-card .intel-card-body { max-height:min(360px,42vh); overflow-y:auto; overflow-x:hidden; scrollbar-gutter:stable; }
