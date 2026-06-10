@@ -166,8 +166,8 @@ def password_error(password):
         return "Password must include at least one uppercase letter."
     if not re.search(r"[a-z]", password):
         return "Password must include at least one lowercase letter."
-    if not re.search(r"[0-9]", password):
-        return "Password must include at least one number."
+    if not (re.search(r"[0-9]", password) or re.search(r"[^A-Za-z0-9]", password)):
+        return "Password must include at least one number or symbol."
     return ""
 
 def normalize_username(username):
@@ -245,7 +245,7 @@ def login_page_html(setup_required=False, error=""):
           <label>Username</label><input id='username' autocomplete='username' autofocus>
           <label>Password</label><input id='password' type='password' autocomplete='new-password'>
           <label>Confirm Password</label><input id='confirm' type='password' autocomplete='new-password'>
-          <div class='req'>Minimum 8 characters, one uppercase, one lowercase, one number.</div>
+          <div class='req'>Minimum 8 characters, at least one uppercase, one lowercase, and one number OR symbol.</div>
           <button type='submit'>Create Admin Account</button>
         </form>"""
         endpoint = "/api/setup-admin"
@@ -278,7 +278,8 @@ const endpoint={json.dumps(endpoint)};
 document.getElementById('auth-form').addEventListener('submit', async e=>{{
   e.preventDefault();
   const payload={{username:username.value.trim(), password:password.value, remember:true}};
-  if (document.getElementById('confirm')) payload.confirm_password=confirm.value;
+  const confirmEl = document.getElementById('confirm');
+  if (confirmEl) payload.confirm_password=confirmEl.value;
   const err=document.getElementById('err'); err.style.display='none';
   const r=await fetch(endpoint,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}});
   const d=await r.json().catch(()=>({{error:'Authentication failed'}}));

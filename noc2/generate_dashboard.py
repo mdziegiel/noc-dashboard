@@ -5359,7 +5359,7 @@ PAGE = """<!DOCTYPE html>
     if (key === 'account_change_password') {{
       right.innerHTML = '<div class="integ-form-title">Account</div>'
         +'<div class="custom-panel">'
-        +'<div class="custom-panel-note">Change password for '+_escapeHtml((CURRENT_USER||{{}}).username||'current user')+'. Requirements: minimum 8 characters, one uppercase, one lowercase, one number.</div>'
+        +'<div class="custom-panel-note">Change password for '+_escapeHtml((CURRENT_USER||{{}}).username||'current user')+'. Requirements: minimum 8 characters, at least one uppercase, one lowercase, and one number OR symbol.</div>'
         +'<div id="form-grid" class="form-grid">'
         +'<div class="form-field span2"><label>Current Password</label><input id="acct-old" type="password" autocomplete="current-password"></div>'
         +'<div class="form-field"><label>New Password</label><input id="acct-new" type="password" autocomplete="new-password"></div>'
@@ -5374,7 +5374,7 @@ PAGE = """<!DOCTYPE html>
     if (key === 'account_manage_users') {{
       if (!CURRENT_USER || CURRENT_USER.role !== 'admin') {{ right.innerHTML='<div class="settings-welcome">Admin role required.</div>'; return; }}
       right.innerHTML = '<div class="integ-form-title">Manage Users</div>'
-        +'<div class="custom-panel"><div class="custom-panel-note">Create users, set role, reset passwords, or delete accounts. Password requirements: minimum 8 characters, one uppercase, one lowercase, one number.</div>'
+        +'<div class="custom-panel"><div class="custom-panel-note">Create users, set role, reset passwords, or delete accounts. Password requirements: minimum 8 characters, at least one uppercase, one lowercase, and one number OR symbol.</div>'
         +'<div id="users-list">Loading&hellip;</div>'
         +'<div class="bcc-section-hdr">Create User</div><div id="form-grid" class="form-grid">'
         +'<div class="form-field"><label>Username</label><input id="new-user" autocomplete="off"></div>'
@@ -5689,7 +5689,7 @@ PAGE = """<!DOCTYPE html>
       .then(function(x){{_acctMsg('users-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ User created':(x.d.error||'Create failed')); if(x.ok&&x.d.ok)loadUsers();}});
   }};
   window.resetUserPassword = function(username) {{
-    var p=prompt('New password for '+username+' (min 8, upper, lower, number):'); if(!p) return;
+    var p=prompt('New password for '+username+' (min 8, upper, lower, number OR symbol):'); if(!p) return;
     fetch('/api/users/reset-password',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{username:username,password:p}})}})
       .then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})
       .then(function(x){{_acctMsg('users-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ Password reset':(x.d.error||'Reset failed'));}});
