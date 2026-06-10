@@ -48,6 +48,7 @@ CONFIG_FILE = os.environ.get("NOC_CONFIG_FILE", os.path.join(STATE_DIR, "config.
 ENV_FILE    = "/root/.hermes/.env"
 GENERATOR   = "/app/generate_dashboard.py"
 CUSTOM_CARDS_FILE = os.path.join(OUTPUT_DIR, "custom_cards.json")
+BUILTIN_CARD_CONFIGS_FILE = os.path.join(OUTPUT_DIR, "builtin_card_configs.json")
 DEFAULT_DASHBOARD_CONFIG = {
     "dashboard_title": "NOC Dashboard",
     "dashboard_subtitle": "Infrastructure Monitoring",
@@ -291,6 +292,21 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data.encode())
             return
+        if self.path == "/api/builtin-card-configs":
+            # Return saved built-in card display configs
+            try:
+                with open(BUILTIN_CARD_CONFIGS_FILE) as f:
+                    data = f.read()
+            except FileNotFoundError:
+                data = "{}"
+            except Exception:
+                data = "{}"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data.encode())
+            return
         if self.path == "/api/current-config":
             # Return current env values (masked for passwords)
             e = read_env()
@@ -401,6 +417,20 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
                     return
                 import json as _json
                 with open(CUSTOM_CARDS_FILE, "w") as f:
+                    _json.dump(payload, f, indent=2)
+                self.send_json(200, {"ok": True, "count": len(payload)})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif self.path == "/save-builtin-card-configs":
+            # Receive object of built-in card display configs, persist to disk
+            try:
+                payload = self.read_body()
+                if not isinstance(payload, dict):
+                    self.send_json(400, {"error": "expected object"})
+                    return
+                import json as _json
+                with open(BUILTIN_CARD_CONFIGS_FILE, "w") as f:
                     _json.dump(payload, f, indent=2)
                 self.send_json(200, {"ok": True, "count": len(payload)})
             except Exception as e:

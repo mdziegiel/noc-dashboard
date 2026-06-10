@@ -2902,7 +2902,7 @@ def render(data, gen_epoch, errors, trends=None):
         cc_css=_CC_CSS + _ACP_CSS,
         cc_btn=_ACP_BTN_HTML + "\n" + _CC_BTN_HTML,
         cc_overlay=_ACP_HTML + "\n" + _CC_OVERLAY_HTML,
-        cc_js=_ACP_JS_TMPL.replace("__ACP_JSON__", _ACP_JSON) + "\n" + _CC_JS_TMPL.replace("__CC_SEED__", _cc_seed_json()),
+        cc_js=_ACP_JS_TMPL.replace("__ACP_JSON__", _ACP_JSON) + "\n" + _CC_JS_TMPL.replace("__CC_SEED__", _cc_seed_json()).replace("__BCC_SEED__", _bcc_seed_json()),
     )
 
 
@@ -2944,6 +2944,7 @@ _ACP_CARD_TYPES = [
     {"key":"prowlarr",       "label":"Prowlarr",            "cat":"Media",          "integ":"prowlarr"},
     {"key":"homeassistant",  "label":"Home Assistant",      "cat":"Monitoring",     "integ":"homeassistant"},
     {"key":"kuma-history",   "label":"Uptime History",      "cat":"Monitoring",     "integ":"kuma"},
+    {"key":"custom-card",    "label":"Custom Card",         "cat":"Custom",         "integ":None},
 ]
 
 _ACP_JSON = _json_acp.dumps(_ACP_CARD_TYPES)
@@ -3042,6 +3043,7 @@ _ACP_JS_TMPL = r"""
     body.onclick = function(e) {
       var card = e.target.closest('.acp-card');
       if (!card || card.dataset.configured === 'false') return;
+      if (card.dataset.cardKey === 'custom-card') { closeACP(); openCustomCardBuilder(null); return; }
       _acpAddCard(card.dataset.cardKey);
     };
   }
@@ -3106,6 +3108,25 @@ CUSTOM_CARDS_FILE = os.path.join(
     os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard")),
     "custom_cards.json"
 )
+BUILTIN_CARD_CONFIGS_FILE = os.path.join(
+    os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard")),
+    "builtin_card_configs.json"
+)
+
+def _bcc_seed_json():
+    """Load saved built-in card display configs from disk; return JSON object string for JS seed."""
+    path = os.path.join(
+        os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard")),
+        "builtin_card_configs.json"
+    )
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read().strip() or "{}"
+        obj = json.loads(raw)
+        return json.dumps(obj if isinstance(obj, dict) else {})
+    except Exception:
+        return "{}"
+
 
 def _cc_seed_json():
     """Load saved custom card configs from disk; return as JSON string for JS seed."""
@@ -3179,6 +3200,35 @@ _CC_CSS = """
   .card-edit-btn{position:absolute;top:6px;right:54px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:3px;width:22px;height:22px;font-size:11px;cursor:pointer;display:none;align-items:center;justify-content:center;z-index:10;padding:0;}
   .edit-mode .card-edit-btn{display:flex;}
   .card-edit-btn:hover{color:var(--green);border-color:var(--green-dim);}
+
+  /* ── Built-in Card Settings ── */
+  .card-gear-btn{display:none;position:absolute;top:4px;right:48px;z-index:11;background:var(--panel2);border:1px solid var(--line);color:var(--txt);width:20px;height:20px;border-radius:3px;font-size:12px;line-height:18px;text-align:center;cursor:pointer;padding:0;}
+  .edit-mode .card-gear-btn,.card:hover .card-gear-btn{display:block;}
+  .card-gear-btn:hover{color:var(--green);border-color:var(--green-dim);}
+  .builtin-card-config-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:2100;align-items:center;justify-content:center;}
+  .builtin-card-config-overlay.open{display:flex;}
+  .bcc-shell{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:min(760px,95vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;}
+  .bcc-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--panel2);}
+  .bcc-title{font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--green);}
+  .bcc-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:2px 6px;line-height:1;}
+  .bcc-close:hover{color:var(--green);}
+  .bcc-body{padding:18px;overflow:auto;}
+  .bcc-section-hdr{font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--green-dim);border-bottom:1px solid var(--line);padding-bottom:5px;margin:16px 0 10px;}
+  .bcc-section-hdr:first-child{margin-top:0;}
+  .bcc-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;}
+  .bcc-field{display:flex;flex-direction:column;gap:4px;}
+  .bcc-field.span2{grid-column:span 2;}
+  .bcc-field label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;}
+  .bcc-shell input,.bcc-shell select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:inherit;width:100%;box-sizing:border-box;}
+  .bcc-shell input:focus,.bcc-shell select:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 1px rgba(0,255,65,.16);}
+  .bcc-rows{display:flex;flex-direction:column;gap:6px;}
+  .bcc-row{display:grid;grid-template-columns:26px 1fr 28px 28px;gap:6px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:6px;}
+  .bcc-row input[type=checkbox]{width:auto;accent-color:var(--green);}
+  .bcc-row-name{font-size:11px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .bcc-row button{background:none;border:1px solid var(--line);color:var(--muted);border-radius:3px;cursor:pointer;height:24px;}
+  .bcc-row button:hover{border-color:var(--green-dim);color:var(--green);}
+  .bcc-footer{padding:14px 18px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .builtin-hidden-field{display:none!important;}
 """
 
 _CC_BTN_HTML = """      <button id="add-custom-card-btn" class="theme-btn" onclick="openCustomCardBuilder(null)" title="Add custom card (edit mode only)">&#43; CARD</button>"""
@@ -3195,6 +3245,18 @@ _CC_OVERLAY_HTML = """  <!-- Custom Card Builder overlay -->
         <button class="cb-btn-primary" onclick="saveCustomCard()">&#10003; Save Card</button>
         <button class="cb-btn-secondary" onclick="testCustomCardFetch()">&#9654; Test URL</button>
         <span id="cb-save-msg" class="cb-msg"></span>
+      </div>
+    </div>
+  </div>
+  <!-- Built-in Card Settings overlay -->
+  <div id="builtin-config-overlay" class="builtin-card-config-overlay" onclick="if(event.target===this)closeBuiltinCardConfig()">
+    <div class="bcc-shell">
+      <div class="bcc-hdr"><div class="bcc-title">&#9881; Built-in Card Settings</div><button class="bcc-close" onclick="closeBuiltinCardConfig()" title="Close">&times;</button></div>
+      <div class="bcc-body"><div id="bcc-form"></div></div>
+      <div class="bcc-footer">
+        <button class="cb-btn-primary" onclick="saveBuiltinCardConfig()">&#10003; Save Card Settings</button>
+        <button class="cb-btn-secondary" onclick="resetBuiltinCardConfig()">Reset Card</button>
+        <span id="bcc-save-msg" class="cb-msg"></span>
       </div>
     </div>
   </div>"""
@@ -3698,6 +3760,132 @@ _CC_JS_TMPL = r"""
     }
   });
   _ccRestore();
+
+  /* ── Built-in Card Customization System ── */
+  var BUILTIN_CARD_CONFIG_SEED = __BCC_SEED__;
+  var BUILTIN_CARD_CONFIG_KEY = 'noc-builtin-card-configs';
+  var _builtinCardConfigs = {};
+  var _builtinEditCard = null;
+
+  function _bccLoad() {
+    try {
+      var stored = JSON.parse(localStorage.getItem(BUILTIN_CARD_CONFIG_KEY) || '{}');
+      _builtinCardConfigs = Object.assign({}, BUILTIN_CARD_CONFIG_SEED || {}, stored || {});
+    } catch(e) { _builtinCardConfigs = Object.assign({}, BUILTIN_CARD_CONFIG_SEED || {}); }
+  }
+  function _bccSave() {
+    try { localStorage.setItem(BUILTIN_CARD_CONFIG_KEY, JSON.stringify(_builtinCardConfigs)); } catch(e) {}
+    fetch('/save-builtin-card-configs', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(_builtinCardConfigs)}).catch(function(){});
+  }
+  function _bccCardId(card) {
+    if (!card) return '';
+    var id = card.getAttribute('data-card-id');
+    if (id) return id;
+    var h3 = card.querySelector('h3');
+    id = (h3 ? h3.textContent : 'card').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    card.setAttribute('data-card-id', id);
+    return id;
+  }
+  function _bccTitle(card) { var h3=card.querySelector('h3'); return h3 ? h3.textContent.trim() : _bccCardId(card); }
+  function _bccRows(card) {
+    var selectors = ['.metric','.kv-row','.qrow','.alerts li','.cert','.hbar-row','.panelbox > div','.card-b > div'];
+    var seen = new Set(), rows = [];
+    selectors.forEach(function(sel){
+      card.querySelectorAll(sel).forEach(function(el){
+        if (seen.has(el) || el.closest('.builtin-card-config-overlay')) return;
+        if (el.classList.contains('card-h') || el.classList.contains('card-b')) return;
+        var text = el.textContent.trim().replace(/\s+/g,' ');
+        if (!text || text.length < 2) return;
+        seen.add(el);
+        var id = el.getAttribute('data-bcc-row-id');
+        if (!id) { id = 'row-' + rows.length + '-' + text.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,32); el.setAttribute('data-bcc-row-id', id); }
+        rows.push({id:id, label:text.slice(0,90), el:el});
+      });
+    });
+    return rows;
+  }
+  function _bccDefaultCfg(card) {
+    var rows = _bccRows(card);
+    return {title:_bccTitle(card), size:'', warn:'75', crit:'90', rows:rows.map(function(r,i){return {id:r.id,label:r.label,visible:true,order:i};})};
+  }
+  function _bccApplyCard(card) {
+    if (!card || card.getAttribute('data-custom-card') === 'true') return;
+    var id = _bccCardId(card), cfg = _builtinCardConfigs[id];
+    if (!cfg) return;
+    var h3 = card.querySelector('h3');
+    if (h3 && cfg.title) { h3.textContent = cfg.title; card.setAttribute('data-title', cfg.title); }
+    ['card-wide','card-full','card-half'].forEach(function(s){card.classList.remove(s);});
+    if (cfg.size) card.classList.add(cfg.size);
+    var rows = _bccRows(card), rowMap = {};
+    rows.forEach(function(r){ rowMap[r.id] = r; r.el.classList.remove('builtin-hidden-field'); });
+    (cfg.rows || []).forEach(function(rc){ if (rowMap[rc.id] && rc.visible === false) rowMap[rc.id].el.classList.add('builtin-hidden-field'); });
+    var ordered = (cfg.rows || []).slice().sort(function(a,b){return (a.order||0)-(b.order||0);});
+    ordered.forEach(function(rc){
+      var r = rowMap[rc.id]; if (!r || !r.el.parentNode) return;
+      r.el.parentNode.appendChild(r.el);
+    });
+    var nums = card.textContent.match(/\d+(?:\.\d+)?\s*%/g) || card.textContent.match(/\d+(?:\.\d+)?/g) || [];
+    if (nums.length) {
+      var n = parseFloat(nums[0]); var warn = parseFloat(cfg.warn || '75'); var crit = parseFloat(cfg.crit || '90');
+      ['s-ok','s-warn','s-crit','s-degraded','s-error'].forEach(function(c){card.classList.remove(c);});
+      var st = n >= crit ? 'crit' : n >= warn ? 'warn' : 'ok';
+      card.classList.add('s-' + st); card.setAttribute('data-state', st);
+    }
+  }
+  function _bccInjectGear(card) {
+    if (!card || card.getAttribute('data-custom-card') === 'true') return;
+    _bccCardId(card);
+    if (card.querySelector('.card-gear-btn')) return;
+    var gb = document.createElement('button');
+    gb.className = 'card-gear-btn'; gb.title = 'Card settings'; gb.innerHTML = '&#9881;';
+    gb.addEventListener('click', function(e){ e.stopPropagation(); openBuiltinCardConfig(card); });
+    card.appendChild(gb);
+  }
+  function _bccInitCards() {
+    _bccLoad();
+    document.querySelectorAll('.card').forEach(function(card){ _bccInjectGear(card); _bccApplyCard(card); });
+  }
+  function _bccRowsHtml(rows, cfgRows) {
+    var byId = {}; (cfgRows || []).forEach(function(r){ byId[r.id]=r; });
+    return rows.map(function(r,i){
+      var c = byId[r.id] || {visible:true, order:i};
+      return '<div class="bcc-row" data-row-id="'+r.id+'">'
+        +'<input type="checkbox" class="bcc-visible" '+(c.visible===false?'':'checked')+'>'
+        +'<div class="bcc-row-name" title="'+r.label.replace(/"/g,'&quot;')+'">'+r.label+'</div>'
+        +'<button type="button" class="bcc-up" title="Move up">&#8593;</button>'
+        +'<button type="button" class="bcc-down" title="Move down">&#8595;</button></div>';
+    }).join('') || '<div class="cb-hint">No individual fields detected. Title, thresholds, and size still apply.</div>';
+  }
+  window.openBuiltinCardConfig = function(card) {
+    _builtinEditCard = card;
+    var id=_bccCardId(card), defaults=_bccDefaultCfg(card), cfg=Object.assign({}, defaults, _builtinCardConfigs[id] || {});
+    var rows=_bccRows(card);
+    var form=document.getElementById('bcc-form'), ov=document.getElementById('builtin-config-overlay'); if(!form||!ov) return;
+    form.innerHTML = '<div class="bcc-section-hdr">Card Identity</div><div class="bcc-grid">'
+      +'<div class="bcc-field"><label>Card Title</label><input id="bcc-title" type="text" value="'+(cfg.title||defaults.title).replace(/"/g,'&quot;')+'"></div>'
+      +'<div class="bcc-field"><label>Card Size</label><select id="bcc-size">'
+      +'<option value="" '+(!cfg.size?'selected':'')+'>Default</option><option value="card-wide" '+(cfg.size==='card-wide'?'selected':'')+'>Wide</option><option value="card-half" '+(cfg.size==='card-half'?'selected':'')+'>Half Width</option><option value="card-full" '+(cfg.size==='card-full'?'selected':'')+'>Full Width</option></select></div>'
+      +'<div class="bcc-field"><label>Warning Threshold</label><input id="bcc-warn" type="number" value="'+(cfg.warn||'75')+'"></div>'
+      +'<div class="bcc-field"><label>Critical Threshold</label><input id="bcc-crit" type="number" value="'+(cfg.crit||'90')+'"></div></div>'
+      +'<div class="bcc-section-hdr">Visible Fields / Row Order</div><div class="cb-hint">Toggle rows, then use arrows to reorder what the card displays.</div>'
+      +'<div id="bcc-rows" class="bcc-rows">'+_bccRowsHtml(rows, cfg.rows)+'</div>';
+    form.querySelectorAll('.bcc-up,.bcc-down').forEach(function(btn){btn.onclick=function(){var row=btn.closest('.bcc-row'); if(!row)return; if(btn.classList.contains('bcc-up')&&row.previousElementSibling) row.parentNode.insertBefore(row,row.previousElementSibling); if(btn.classList.contains('bcc-down')&&row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling,row);};});
+    var msg=document.getElementById('bcc-save-msg'); if(msg) msg.textContent='';
+    ov.classList.add('open'); document.body.style.overflow='hidden';
+  };
+  window.closeBuiltinCardConfig = function(){ var ov=document.getElementById('builtin-config-overlay'); if(ov) ov.classList.remove('open'); document.body.style.overflow=''; _builtinEditCard=null; };
+  window.resetBuiltinCardConfig = function(){ if(!_builtinEditCard)return; var id=_bccCardId(_builtinEditCard); delete _builtinCardConfigs[id]; _bccSave(); location.reload(); };
+  window.saveBuiltinCardConfig = function(){
+    if(!_builtinEditCard) return; var id=_bccCardId(_builtinEditCard);
+    var rows = Array.from(document.querySelectorAll('#bcc-rows .bcc-row')).map(function(row,i){ return {id:row.dataset.rowId, label:(row.querySelector('.bcc-row-name')||{}).textContent||'', visible:!!(row.querySelector('.bcc-visible')||{}).checked, order:i}; });
+    _builtinCardConfigs[id] = {title:(document.getElementById('bcc-title')||{}).value||_bccTitle(_builtinEditCard), size:(document.getElementById('bcc-size')||{}).value||'', warn:(document.getElementById('bcc-warn')||{}).value||'75', crit:(document.getElementById('bcc-crit')||{}).value||'90', rows:rows};
+    _bccApplyCard(_builtinEditCard); _bccSave(); persistLayout();
+    var msg=document.getElementById('bcc-save-msg'); if(msg){msg.className='cb-msg ok';msg.textContent='\u2713 Card settings saved';}
+    setTimeout(closeBuiltinCardConfig,650);
+  };
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ var ov=document.getElementById('builtin-config-overlay'); if(ov&&ov.classList.contains('open')){closeBuiltinCardConfig();return;} } });
+  _bccInitCards();
+
 """
 
 PAGE = """<!DOCTYPE html>
@@ -4491,7 +4679,7 @@ PAGE = """<!DOCTYPE html>
     }});
   }}
 
-  function persistLayout() {{
+  window.persistLayout = function persistLayout() {{
     var layout = {{}};
     document.querySelectorAll('.section-label').forEach(function(lbl) {{
       var section = lbl.textContent.trim();
