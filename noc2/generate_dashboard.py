@@ -1226,9 +1226,9 @@ def collect_sabnzbd():
             "day_gb": day_gb}
 
 
-def collect_overseerr():
-    base = E.get("OVERSEERR_URL", "").strip().rstrip("/")
-    key = E.get("OVERSEERR_API_KEY", "").strip()
+def collect_seerr():
+    base = _env_first("SEERR_URL", "OVERSEERR_URL").rstrip("/")
+    key = _env_first("SEERR_API_KEY", "OVERSEERR_API_KEY")
     if not base or not key:
         return {"state": "degraded", "note": "SEERR not configured"}
     h = {"X-Api-Key": key, "User-Agent": UA_BROWSER, "Accept": "application/json"}
@@ -1782,7 +1782,7 @@ SOURCES = [
     ("radarr", collect_radarr),
     ("lidarr", collect_lidarr),
     ("sabnzbd", collect_sabnzbd),
-    ("overseerr", collect_overseerr),
+    ("seerr", collect_seerr),
     ("prowlarr", collect_prowlarr),
 ]
 
@@ -2032,7 +2032,7 @@ def render(data, gen_epoch, errors, trends=None):
     SO = data.get("sonarr", {})
     RA = data.get("radarr", {})
     SB = data.get("sabnzbd", {})
-    OV = data.get("overseerr", {})
+    OV = data.get("seerr", {})
     PR = data.get("prowlarr", {})
     LI = data.get("lidarr", {})
     LC = data.get("limacharlie", {})
@@ -2438,7 +2438,7 @@ def render(data, gen_epoch, errors, trends=None):
             + card("TAILSCALE", TS.get("state", "error"), ts_body, ts_sub)
             + card("WGDASHBOARD", WG.get("state", "error"), wg_body, wg_sub))
 
-    # ---- Media row: Plex, Tautulli, Sonarr, Radarr, SABnzbd, Overseerr, Prowlarr ----
+    # ---- Media row: Plex, Tautulli, Sonarr, Radarr, SABnzbd, Seerr, Prowlarr ----
     # Plex
     plex_body = (metric("Streams", PX.get("streams", 0),
                         "warn" if PX.get("streams", 0) else "ok")
@@ -2515,8 +2515,7 @@ def render(data, gen_epoch, errors, trends=None):
                  + card("RADARR", RA.get("state", "error"), rad_body, rad_sub)
                  + card("SABNZBD", SB.get("state", "error"), sab_body, sab_sub)
                  + card("SEERR", OV.get("state", "error"), ov_body, ov_sub)
-                 + card("PROWLARR", PR.get("state", "error"), pr_body, pr_sub)
-                 + card("LIDARR", LI.get("state", "error"), lid_body, lid_sub))
+                 + card("PROWLARR", PR.get("state", "error"), pr_body, pr_sub))
 
     # ---- Row 3: storage gauges ----
     gauges = "".join(donut(s["name"], s["pct"]) for s in P.get("storage", []))
@@ -2790,7 +2789,7 @@ def render(data, gen_epoch, errors, trends=None):
         "npm": "Nginx Proxy Mgr", "tailscale": "Tailscale", "wgdashboard": "WGDashboard",
         "limacharlie": "LimaCharlie (LC)", "plex": "Plex", "tautulli": "Tautulli",
         "sonarr": "Sonarr", "radarr": "Radarr", "sabnzbd": "SABnzbd",
-        "overseerr": "Seerr", "prowlarr": "Prowlarr", "lidarr": "Lidarr",
+        "seerr": "Seerr", "prowlarr": "Prowlarr", "lidarr": "Lidarr",
     }
     COMING_SOON = {
         # Homelab
@@ -2943,7 +2942,7 @@ _ACP_CARD_TYPES = [
     {"key":"radarr",         "label":"Radarr",              "cat":"Media",          "integ":"radarr"},
     {"key":"lidarr",         "label":"Lidarr",              "cat":"Media",          "integ":"lidarr"},
     {"key":"sabnzbd",        "label":"SABnzbd",             "cat":"Media",          "integ":"sabnzbd"},
-    {"key":"overseerr",      "label":"Seerr",               "cat":"Media",          "integ":"overseerr"},
+    {"key":"seerr",          "label":"Seerr",               "cat":"Media",          "integ":"seerr"},
     {"key":"prowlarr",       "label":"Prowlarr",            "cat":"Media",          "integ":"prowlarr"},
     {"key":"homeassistant",  "label":"Home Assistant",      "cat":"Monitoring",     "integ":"homeassistant"},
     {"key":"kuma-history",   "label":"Uptime History",      "cat":"Monitoring",     "integ":"kuma"},
@@ -4034,9 +4033,26 @@ PAGE = """<!DOCTYPE html>
   .brand h1 {{ font-size:20px; margin:0; color:var(--green); letter-spacing:2px;
     text-shadow:0 0 8px rgba(0,255,65,.4); }}
   .brand .tag {{ color:var(--muted); font-size:11px; letter-spacing:3px; }}
+  .brand-editable {{ cursor:text; border-bottom:1px dashed transparent; }}
+  .brand-editable:hover {{ border-bottom-color:var(--green-dim); }}
+  .brand-inline-input {{ background:var(--panel); border:1px solid var(--green-dim); color:var(--txt);
+    font:inherit; letter-spacing:inherit; padding:2px 6px; border-radius:4px; outline:none; min-width:180px; }}
   .top-right {{ display:flex; align-items:center; gap:18px; }}
   .ts {{ color:var(--muted); font-size:12px; }}
   .ts b {{ color:var(--txt); }}
+  .reports-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.78); z-index:2600; }}
+  .reports-panel {{ position:fixed; right:-460px; top:0; bottom:0; width:min(460px,100vw); background:var(--panel);
+    border-left:1px solid var(--line); z-index:2601; transition:right .18s ease; padding:18px; overflow:auto; box-shadow:-18px 0 40px rgba(0,0,0,.35); }}
+  .reports-panel.open {{ right:0; }}
+  .reports-panel-hdr {{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }}
+  .reports-title {{ color:var(--green); font-size:13px; letter-spacing:3px; text-transform:uppercase; font-weight:700; }}
+  .report-tabs {{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:10px 0 14px; }}
+  .report-tab,.report-action {{ background:var(--panel2); border:1px solid var(--line); color:var(--txt); font:inherit; font-size:10px; padding:7px; border-radius:4px; cursor:pointer; }}
+  .report-tab.active,.report-tab:hover,.report-action:hover {{ border-color:var(--green-dim); color:var(--green); }}
+  .report-actions {{ display:flex; gap:8px; margin-bottom:14px; }}
+  .report-summary {{ border:1px solid var(--line); background:var(--panel2); border-radius:6px; padding:12px; color:var(--txt); font-size:12px; line-height:1.6; }}
+  .report-summary h4 {{ margin:0 0 8px; color:var(--green); letter-spacing:2px; text-transform:uppercase; }}
+  .report-summary ul {{ margin:8px 0 0 18px; padding:0; }}
   .health {{ display:flex; align-items:center; gap:9px; padding:7px 15px;
     border:1px solid var(--line); border-radius:4px; font-weight:bold; letter-spacing:1px;
     font-size:12px; }}
@@ -4423,7 +4439,7 @@ PAGE = """<!DOCTYPE html>
 <body>
   <div class="topbar">
     <div class="brand">
-      {dashboard_logo}<div class="brand-text"><h1>{dashboard_title}</h1><span class="tag">{dashboard_subtitle}</span></div>
+      {dashboard_logo}<div class="brand-text"><h1 id="brand-title" class="brand-editable" title="Click to edit dashboard title" data-config-key="dashboard_title">{dashboard_title}</h1><span id="brand-subtitle" class="tag brand-editable" title="Click to edit dashboard subtitle" data-config-key="dashboard_subtitle">{dashboard_subtitle}</span></div>
     </div>
     <div class="top-right">
       <div class="ts">UPDATED <b>{ts}</b></div>
@@ -4432,6 +4448,7 @@ PAGE = """<!DOCTYPE html>
       <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
       {cc_btn}
+      <button id="reports-btn" class="theme-btn" onclick="toggleReports()" title="Reports">&#9776;</button>
       <button id="settings-btn" class="theme-btn" onclick="toggleSettings()" title="Integrations &amp; Settings">&#9881;</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
     </div>
@@ -4463,6 +4480,24 @@ PAGE = """<!DOCTYPE html>
       <div id="card-modal-title" class="card-modal-title"></div>
       <div id="card-modal-body" class="card-modal-body"></div>
     </div>
+  </div>
+  <div id="reports-overlay" class="reports-overlay" onclick="toggleReports(false)"></div>
+  <div id="reports-panel" class="reports-panel">
+    <div class="reports-panel-hdr">
+      <div class="reports-title">Reports</div>
+      <button class="theme-btn" onclick="toggleReports(false)">&times;</button>
+    </div>
+    <div class="report-tabs">
+      <button class="report-tab active" data-range="hourly" onclick="renderReport('hourly')">Hourly</button>
+      <button class="report-tab" data-range="daily" onclick="renderReport('daily')">Daily</button>
+      <button class="report-tab" data-range="weekly" onclick="renderReport('weekly')">Weekly</button>
+      <button class="report-tab" data-range="monthly" onclick="renderReport('monthly')">Monthly</button>
+    </div>
+    <div class="report-actions">
+      <button class="report-action" onclick="downloadReportCSV()">Download CSV</button>
+      <button class="report-action" onclick="downloadReportPDF()">Download PDF</button>
+    </div>
+    <div id="report-summary" class="report-summary"></div>
   </div>
   <div id="alert-overlay" class="alert-overlay" onclick="toggleAlertPanel()"></div>
   <div id="alert-panel" class="alert-panel">
@@ -4532,25 +4567,17 @@ PAGE = """<!DOCTYPE html>
 (function() {{
   var THEMES = ['dark','light','midnight','solarized','dracula','nord','gruvbox','tokyo'];
   var LABELS = {{dark:'DARK',light:'LIGHT',midnight:'MIDNIGHT',solarized:'SOLAR',dracula:'DRACULA',nord:'NORD',gruvbox:'GRUVBOX',tokyo:'TOKYO'}};
-  var DAY_START   = 7;
-  var NIGHT_START = 19;
-  var DAY_THEME   = 'light';
-  var NIGHT_THEME = 'dark';
+  var DEFAULT_THEME = 'dark';
 
   function applyTheme(t) {{
+    if (THEMES.indexOf(t) === -1) t = DEFAULT_THEME;
     document.documentElement.setAttribute('data-theme', t);
     var btn = document.getElementById('theme-btn');
     if (btn) btn.textContent = '\u25d0 ' + (LABELS[t] || t.toUpperCase());
   }}
 
-  function autoTheme() {{
-    if (localStorage.getItem('theme-pin')) return;
-    var h = new Date().getHours();
-    applyTheme(h >= DAY_START && h < NIGHT_START ? DAY_THEME : NIGHT_THEME);
-  }}
-
   window.toggleTheme = function() {{
-    var cur = document.documentElement.getAttribute('data-theme') || NIGHT_THEME;
+    var cur = document.documentElement.getAttribute('data-theme') || DEFAULT_THEME;
     var idx = THEMES.indexOf(cur);
     var next = THEMES[(idx + 1) % THEMES.length];
     applyTheme(next);
@@ -4558,8 +4585,7 @@ PAGE = """<!DOCTYPE html>
   }};
 
   var pin = localStorage.getItem('theme-pin');
-  if (pin && THEMES.indexOf(pin) !== -1) {{ applyTheme(pin); }} else {{ autoTheme(); }}
-  setInterval(autoTheme, 60000);
+  applyTheme(pin && THEMES.indexOf(pin) !== -1 ? pin : DEFAULT_THEME);
 
   window.focusCard = function(el) {{
     var title = el.getAttribute('data-title');
@@ -4595,6 +4621,70 @@ PAGE = """<!DOCTYPE html>
     if (el) el.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   }}
   updateFavicon();
+
+  function _escapeHtml(s) {{ return String(s||'').replace(/[&<>"']/g, function(c){{return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c];}}); }}
+  function collectReportData(range) {{
+    var cards = Array.from(document.querySelectorAll('.card')).map(function(card){{
+      var title = (card.querySelector('h3')||{{}}).textContent || card.getAttribute('data-title') || 'Card';
+      var state = card.getAttribute('data-state') || (card.className.match(/s-([a-z]+)/)||[])[1] || 'unknown';
+      var sub = (card.querySelector('.sub')||{{}}).textContent || '';
+      return {{title:title.trim(), state:state, note:sub.trim()}};
+    }});
+    var counts = cards.reduce(function(a,c){{a[c.state]=(a[c.state]||0)+1;return a;}},{{}});
+    var alerts=[]; try {{ alerts=JSON.parse(localStorage.getItem(ALERT_KEY)||'[]'); }} catch(e) {{}}
+    return {{range:range||'hourly', generated:new Date().toISOString(), total:cards.length, counts:counts, cards:cards, alerts:alerts}};
+  }}
+  function renderReport(range) {{
+    window._currentReportRange = range || window._currentReportRange || 'hourly';
+    document.querySelectorAll('.report-tab').forEach(function(b){{ b.classList.toggle('active', b.dataset.range === window._currentReportRange); }});
+    var d = collectReportData(window._currentReportRange);
+    var bad = d.cards.filter(function(c){{ return ['crit','error','warn','degraded'].indexOf(c.state) !== -1; }}).slice(0,12);
+    var html = '<h4>'+_escapeHtml(window._currentReportRange)+' Summary</h4>'
+      + '<div>Generated: '+_escapeHtml(new Date(d.generated).toLocaleString())+'</div>'
+      + '<div>Total cards: '+d.total+'</div>'
+      + '<div>OK: '+(d.counts.ok||0)+' · Warn: '+(d.counts.warn||0)+' · Critical/Error: '+((d.counts.crit||0)+(d.counts.error||0))+' · Degraded: '+(d.counts.degraded||0)+'</div>'
+      + '<div>Recorded alerts: '+d.alerts.length+'</div>';
+    if (bad.length) html += '<ul>'+bad.map(function(c){{return '<li><b>'+_escapeHtml(c.state.toUpperCase())+'</b> '+_escapeHtml(c.title)+(c.note?' — '+_escapeHtml(c.note):'')+'</li>';}}).join('')+'</ul>';
+    else html += '<div style="margin-top:8px;color:var(--green)">No non-green cards in the current dashboard snapshot.</div>';
+    var el=document.getElementById('report-summary'); if(el) el.innerHTML=html;
+  }}
+  window.renderReport = renderReport;
+  window.toggleReports = function(force) {{
+    var panel=document.getElementById('reports-panel'), ov=document.getElementById('reports-overlay'); if(!panel||!ov) return;
+    var open = force === undefined ? !panel.classList.contains('open') : !!force;
+    panel.classList.toggle('open', open); ov.style.display = open ? 'block' : 'none';
+    if(open) renderReport(window._currentReportRange || 'hourly');
+  }};
+  window.downloadReportCSV = function() {{
+    var d=collectReportData(window._currentReportRange || 'hourly');
+    var rows=[['range','generated','title','state','note']].concat(d.cards.map(function(c){{return [d.range,d.generated,c.title,c.state,c.note];}}));
+    var csv=rows.map(function(r){{return r.map(function(v){{return '"'+String(v||'').replace(/"/g,'""')+'"';}}).join(',');}}).join('\\n');
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{{type:'text/csv'}})); a.download='noc-report-'+d.range+'.csv'; a.click(); setTimeout(function(){{URL.revokeObjectURL(a.href);}},1000);
+  }};
+  window.downloadReportPDF = function() {{ window.print(); }};
+
+  function saveInlineBranding(key, value) {{
+    var vals = Object.assign({{}}, DASHBOARD_CONFIG || {{}});
+    vals[key] = value;
+    fetch('/save-dashboard-config',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(vals)}})
+      .then(function(r){{return r.json();}})
+      .then(function(d){{ DASHBOARD_CONFIG=d.config||vals; }})
+      .catch(function(e){{ console.warn('Inline branding save failed', e); }});
+  }}
+  function initInlineBranding() {{
+    document.querySelectorAll('.brand-editable').forEach(function(el){{
+      el.addEventListener('click', function(){{
+        if (el.querySelector('input')) return;
+        var key=el.dataset.configKey, old=el.textContent.trim();
+        var inp=document.createElement('input'); inp.className='brand-inline-input'; inp.value=old;
+        el.textContent=''; el.appendChild(inp); inp.focus(); inp.select();
+        function commit(save){{ var val=(inp.value||'').trim()||old; el.textContent=val; if(save && val!==old) saveInlineBranding(key,val); }}
+        inp.addEventListener('keydown', function(e){{ if(e.key==='Enter') commit(true); if(e.key==='Escape') commit(false); }});
+        inp.addEventListener('blur', function(){{ commit(true); }});
+      }});
+    }});
+  }}
+  initInlineBranding();
 
   var ALERT_KEY = 'noc-alert-history';
   var MAX_ALERTS = 100;
@@ -5000,7 +5090,7 @@ PAGE = """<!DOCTYPE html>
       keys:['zerotier','twingate','netbird','headscale','pangolin'] }},
     {{ id:'storage',    label:'Storage', keys:['qnap','truenas','unraid','synology'] }},
     {{ id:'media',      label:'Media',
-      keys:['plex','tautulli','sonarr','radarr','lidarr','sabnzbd','overseerr','prowlarr','jellyfin','emby'] }},
+      keys:['plex','tautulli','sonarr','radarr','lidarr','sabnzbd','seerr','prowlarr','jellyfin','emby'] }},
     {{ id:'monitoring', label:'Monitoring', keys:['homeassistant','netdata','glances','speedtest_tracker','node_exporter'] }},
     {{ id:'homelab',    label:'Homelab Apps',
       keys:['nextcloud','gitea','traefik','caddy','authentik','authelia','pihole'] }},
