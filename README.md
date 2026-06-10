@@ -24,9 +24,9 @@ Deploy it, add credentials, and get a fully live operations dashboard regenerate
 
 ---
 
-![NOC Dashboard — Integrations Settings](screenshots/integrations.png)
+![NOC Dashboard — Integrations Settings](screenshots/integrations-form.png)
 
-*Integrations & Settings — 130+ integrations, Coming Soon badges for unimplemented ones, Custom integration builder*
+*Integrations & Settings — 130+ integrations, READY badges for credential-ready services, Custom integration builder*
 
 ---
 
