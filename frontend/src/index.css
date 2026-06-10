@@ -434,3 +434,77 @@
     color:var(--txt); padding:6px 8px; font-size:12px; border-radius:3px;
     font-family:inherit; outline:none; cursor:pointer;
   }
+
+
+  /* ── User dropdown ── */
+  .user-menu { position:relative; }
+  .user-menu-btn { color:var(--txt); border-color:var(--line); }
+  .user-dropdown { position:absolute; right:0; top:calc(100% + 8px); min-width:190px;
+    background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line);
+    border-radius:6px; box-shadow:0 12px 32px rgba(0,0,0,.65); z-index:12000; padding:8px; }
+  .user-dropdown-id { display:flex; flex-direction:column; gap:3px; padding:8px 10px; }
+  .user-dropdown-id b { color:var(--green); font-size:12px; letter-spacing:.06em; }
+  .user-dropdown-id span { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; }
+  .user-dropdown-divider { height:1px; background:var(--line); margin:6px 0; }
+  .user-dropdown button { width:100%; text-align:left; background:none; border:none; color:var(--txt);
+    cursor:pointer; padding:8px 10px; border-radius:3px; font-size:12px; }
+  .user-dropdown button:hover { background:rgba(255,59,59,.10); color:var(--crit); }
+
+  /* ── NOC Intelligence / Health Score ── */
+  .noc-health-card { cursor:pointer; min-height:208px; }
+  .noc-health-card:hover { border-color:var(--green); box-shadow:0 0 16px rgba(0,255,65,.12); }
+  .intel-health-card-body, .intel-overview { display:flex; align-items:center; gap:16px; width:100%; }
+  .intel-overview.compact { gap:10px; align-items:flex-start; }
+  .intel-donut { position:relative; flex:none; }
+  .intel-donut-center { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-size:24px; font-weight:800; letter-spacing:-.04em; }
+  .intel-donut-center.h-ok { color:var(--green); text-shadow:0 0 10px rgba(0,255,65,.28); }
+  .intel-donut-center.h-warn { color:var(--warn); text-shadow:0 0 10px rgba(255,204,0,.25); }
+  .intel-donut-center.h-crit { color:var(--crit); text-shadow:0 0 10px rgba(255,59,59,.30); }
+  .intel-breakdown { flex:1; min-width:0; }
+  .intel-break-row { display:flex; justify-content:space-between; gap:10px; padding:4px 0; border-bottom:1px dashed rgba(111,138,111,.16); font-size:11px; }
+  .intel-break-row span { color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-transform:uppercase; letter-spacing:.04em; }
+  .intel-break-row b { color:var(--txt); white-space:nowrap; }
+  .intel-overlay { position:fixed; inset:0; background:rgba(0,0,0,.48); backdrop-filter:blur(2px); z-index:8500; }
+  .intel-panel { position:fixed; top:0; right:-520px; width:min(500px, 94vw); height:100vh;
+    background:linear-gradient(180deg,var(--panel),var(--bg)); border-left:1px solid var(--line);
+    z-index:8501; transition:right .26s ease; box-shadow:-10px 0 34px rgba(0,0,0,.65); display:flex; flex-direction:column; }
+  .intel-panel.open { right:0; }
+  .intel-panel-hdr { display:flex; align-items:center; justify-content:space-between; padding:15px 18px;
+    border-bottom:1px solid var(--line); color:var(--green); font-weight:800; letter-spacing:.12em; font-size:12px; }
+  .intel-panel-hdr button { background:none; border:1px solid var(--line); color:var(--muted); cursor:pointer; border-radius:3px; font-size:18px; line-height:1; padding:2px 8px; }
+  .intel-panel-hdr button:hover { color:var(--green); border-color:var(--green); }
+  .intel-panel-scroll { overflow:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .intel-card { border:1px solid var(--line); border-radius:6px; background:rgba(0,0,0,.18); overflow:hidden; }
+  .intel-card-title { width:100%; display:flex; justify-content:space-between; align-items:center; background:rgba(0,255,65,.035);
+    border:none; border-bottom:1px solid var(--line); color:var(--green-dim); cursor:pointer; padding:10px 12px; font-size:11px; letter-spacing:.12em; font-weight:700; }
+  .intel-card-title b { color:var(--muted); font-size:16px; line-height:1; }
+  .intel-card-body { padding:12px; }
+  .intel-dual-score { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+  .intel-dual-score span, .intel-big-score { border:1px solid var(--line); border-radius:4px; padding:9px; text-align:center; color:var(--muted); font-size:11px; }
+  .intel-dual-score b, .intel-big-score { font-size:22px; font-weight:800; display:block; }
+  .intel-list-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:8px; align-items:center; padding:6px 0; border-bottom:1px dashed rgba(111,138,111,.16); font-size:11px; }
+  .intel-list-row span { color:var(--txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .intel-list-row em { color:var(--muted); font-style:normal; font-size:10px; }
+  .intel-bar { height:8px; background:#0c140c; border:1px solid var(--line); border-radius:5px; overflow:hidden; }
+  .intel-bar span { display:block; height:100%; background:var(--green); }
+  .intel-bar span.q-warn { background:var(--warn); }
+  .intel-bar span.q-crit { background:var(--crit); }
+  .intel-storage-row { margin:10px 0; }
+  .intel-storage-row div:first-child { display:flex; justify-content:space-between; gap:8px; font-size:11px; margin-bottom:4px; }
+  .intel-storage-row span { color:var(--txt); }
+  .intel-storage-row b { color:var(--muted); }
+  .intel-cert-flag { color:var(--crit); border:1px solid rgba(255,59,59,.35); background:rgba(255,59,59,.08); padding:8px 10px; border-radius:4px; font-size:11px; margin-bottom:8px; }
+  .q-ok { color:var(--green) !important; } .q-warn { color:var(--warn) !important; } .q-crit { color:var(--crit) !important; }
+  .intel-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.82); backdrop-filter:blur(4px); z-index:9100; display:flex; align-items:center; justify-content:center; }
+  .intel-modal { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:24px; width:min(860px, 94vw); max-height:86vh; overflow:auto; position:relative; box-shadow:0 10px 40px rgba(0,0,0,.7); }
+  .intel-tabs, .intel-range { display:flex; gap:8px; margin:0 0 14px; }
+  .intel-tabs button, .intel-range button { background:none; border:1px solid var(--line); color:var(--muted); cursor:pointer; border-radius:3px; padding:5px 10px; font-size:10px; letter-spacing:.1em; }
+  .intel-tabs button.active, .intel-range button.active { color:var(--green); border-color:var(--green); background:rgba(0,255,65,.07); }
+  .intel-incidents { display:flex; flex-direction:column; gap:8px; }
+  .intel-incident { border-left:3px solid var(--line); background:rgba(0,0,0,.18); padding:8px 10px; font-size:11px; }
+  .intel-incident.q-ok { border-left-color:var(--green); } .intel-incident.q-warn { border-left-color:var(--warn); } .intel-incident.q-crit { border-left-color:var(--crit); }
+  .intel-incident span { color:var(--muted); display:block; font-size:10px; }
+  .intel-incident b { color:var(--txt); margin-right:8px; } .intel-incident em { color:var(--muted); font-style:normal; }
+  .intel-incident p { margin:4px 0 0; color:var(--txt); }
+  @media(max-width:900px){ .intel-health-card-body,.intel-overview{flex-direction:column; align-items:flex-start;} .top-right{gap:8px; flex-wrap:wrap;} }

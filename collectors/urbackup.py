@@ -47,13 +47,18 @@ def collect(E, card_cfg=None):
     now = time.time()
     for c in sorted(clients, key=lambda x: x.get("name", "")):
         name = c.get("name", "?")
-        lf = c.get("lastbackup", 0) or 0
+        lf = c.get("lastbackup", 0) or c.get("last_filebackup", 0) or 0
+        li = c.get("lastbackup_image", 0) or c.get("last_imagebackup", 0) or c.get("last_image_backup", 0) or 0
         issues = c.get("last_filebackup_issues", 0) or 0
         on = bool(c.get("online"))
         lf_h = (now - lf) / 3600.0 if lf else 1e9
+        li_h = (now - li) / 3600.0 if li else 1e9
         ago = ("never" if not lf else
                f"{lf_h*60:.0f}m" if lf_h < 1 else
                f"{lf_h:.1f}h" if lf_h < 48 else f"{lf_h/24:.1f}d")
+        img_ago = ("never" if not li else
+                   f"{li_h*60:.0f}m" if li_h < 1 else
+                   f"{li_h:.1f}h" if li_h < 48 else f"{li_h/24:.1f}d")
         cstate = "ok"
         if lf == 0:
             d["problems"].append(f"{name}: no file backup on record"); cstate = "crit"
@@ -65,7 +70,13 @@ def collect(E, card_cfg=None):
         if not on:
             d["problems"].append(f"{name}: OFFLINE")
             cstate = "warn" if cstate == "ok" else cstate
-        d["clients"].append({"name": name, "ago": ago, "online": on, "issues": issues, "state": cstate})
+        d["clients"].append({
+            "name": name, "ago": ago, "online": on, "issues": issues, "state": cstate,
+            "last_file_backup": ago, "last_image_backup": img_ago,
+            "file_recent": bool(lf and lf_h <= 26 and not issues),
+            "image_recent": bool(li and li_h <= 24 * 8),
+            "image_days": (round(li_h / 24, 1) if li else None),
+        })
     if any(c["state"] == "crit" for c in d["clients"]):
         d["state"] = "crit"
     elif d["problems"]:

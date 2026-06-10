@@ -42,7 +42,7 @@ def collect(E, card_cfg=None):
             try:
                 ep = time.mktime(time.strptime(exp[:19], "%Y-%m-%dT%H:%M:%S"))
                 days = int((ep - now) / 86400)
-                d["cert_list"].append({"name": nm, "days": days})
+                d["cert_list"].append({"name": nm, "days": days, "valid": days >= 0})
                 if days <= warn_days:
                     d["certs_expiring"] += 1
                     d["problems"].append(f"cert expiring: {c.get('nice_name') or nm}")

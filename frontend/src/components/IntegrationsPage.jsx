@@ -288,35 +288,41 @@ export default function IntegrationsPage({ onClose }) {
   const [search, setSearch] = useState('')
   const statusTimerRef = useRef(null)
 
+  const loadStatus = useCallback(async () => {
+    try {
+      const stat = await fetchIntegrationStatus()
+      setStatus(stat)
+    } catch (e) {
+      console.error('Integration status load error:', e)
+    }
+  }, [])
+
   const loadAll = useCallback(async () => {
     try {
-      const [ints, stat] = await Promise.all([
-        fetchIntegrations(),
-        fetchIntegrationStatus().catch(() => ({})),
-      ])
+      const ints = await fetchIntegrations()
       setIntegrations(ints)
-      setStatus(stat)
-      // Pre-select first configured or first overall
-      if (!selected) {
+      // Pre-select first configured or first overall without waiting for health checks.
+      setSelected(prev => {
+        if (prev) return prev
         const configured = Object.entries(ints).find(([, v]) => v.configured)
         const first = configured || Object.entries(ints)[0]
-        if (first) setSelected(first[0])
-      }
+        return first ? first[0] : prev
+      })
+      setLoading(false)
+      loadStatus()
     } catch (e) {
       console.error('IntegrationsPage load error:', e)
-    } finally {
       setLoading(false)
     }
-  }, [selected])
+  }, [loadStatus])
 
   useEffect(() => {
     loadAll()
-    // Auto-refresh status every 60 seconds
-    statusTimerRef.current = setInterval(() => {
-      fetchIntegrationStatus().then(setStatus).catch(() => {})
-    }, 60000)
+    // Auto-refresh status every 60 seconds. Sidebar structure is already rendered;
+    // only the status dots update as these responses come back.
+    statusTimerRef.current = setInterval(loadStatus, 60000)
     return () => clearInterval(statusTimerRef.current)
-  }, [])
+  }, [loadAll, loadStatus])
 
   function handleSaved(itype) {
     // Reload integrations to pick up new configured state

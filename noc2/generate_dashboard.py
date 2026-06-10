@@ -8,7 +8,7 @@ Run every 15 min via cron; served by a tiny http.server systemd unit on :8080.
 Reuses the exact API patterns proven in morning_briefing.py and the report_*.py
 cron scripts. One failed source never kills the page - it renders a degraded card.
 """
-import base64, html, json, os, re, ssl, sys, time
+import base64, html, json, os, re, sqlite3, ssl, sys, time
 import urllib.request, urllib.parse, http.cookiejar
 from collections import Counter
 
@@ -26,6 +26,7 @@ DEFAULT_DASHBOARD_TITLE = "NOC Dashboard"
 DEFAULT_DASHBOARD_SUBTITLE = "Infrastructure Monitoring"
 STATE_DIR = os.environ.get("NOC_STATE_DIR", os.path.join(OUT_DIR, "state"))
 CONFIG_FILE = os.environ.get("NOC_CONFIG_FILE", os.path.join(STATE_DIR, "config.json"))
+HEALTH_DB_FILE = os.environ.get("NOC_HEALTH_DB", os.path.join(STATE_DIR, "health_history.sqlite3"))
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
 CTX.verify_mode = ssl.CERT_NONE
@@ -184,6 +185,7 @@ def collect_proxmox():
         d["uptime_d"] = int(n.get("uptime", 0)) // 86400
     vms = jget(f"{base}/nodes/{node}/qemu", auth)["data"]
     if vms:
+        vms = [v for v in vms if str(v.get("template", 0)) not in ("1", "true", "True")]
         run = [v for v in vms if v.get("status") == "running"]
         d["vms_running"] = len(run)
         d["vms_total"] = len(vms)
@@ -932,13 +934,18 @@ def collect_urbackup():
     now = time.time()
     for c in sorted(clients, key=lambda x: x.get("name", "")):
         name = c.get("name", "?")
-        lf = c.get("lastbackup", 0) or 0
+        lf = c.get("lastbackup", 0) or c.get("last_filebackup", 0) or 0
+        li = c.get("lastbackup_image", 0) or c.get("last_imagebackup", 0) or c.get("last_image_backup", 0) or 0
         issues = c.get("last_filebackup_issues", 0) or 0
         on = bool(c.get("online"))
         lf_h = (now - lf) / 3600.0 if lf else 1e9
+        li_h = (now - li) / 3600.0 if li else 1e9
         ago = ("never" if not lf else
                f"{lf_h*60:.0f}m" if lf_h < 1 else
                f"{lf_h:.1f}h" if lf_h < 48 else f"{lf_h/24:.1f}d")
+        img_ago = ("never" if not li else
+                   f"{li_h*60:.0f}m" if li_h < 1 else
+                   f"{li_h:.1f}h" if li_h < 48 else f"{li_h/24:.1f}d")
         cstate = "ok"
         if lf == 0:
             d["problems"].append(f"{name}: no file backup on record"); cstate = "crit"
@@ -951,7 +958,11 @@ def collect_urbackup():
             d["problems"].append(f"{name}: client OFFLINE")
             cstate = "warn" if cstate == "ok" else cstate
         d["clients"].append({"name": name, "ago": ago, "online": on,
-                             "issues": issues, "state": cstate})
+                             "issues": issues, "state": cstate,
+                             "last_file_backup": ago, "last_image_backup": img_ago,
+                             "file_recent": bool(lf and lf_h <= 26 and not issues),
+                             "image_recent": bool(li and li_h <= 24 * 8),
+                             "image_days": (round(li_h / 24, 1) if li else None)})
     if any(c["state"] == "crit" for c in d["clients"]):
         d["state"] = "crit"
     elif d["problems"]:
@@ -1810,6 +1821,205 @@ def gather():
     return data
 
 
+# ============================ HEALTH SCORE STORAGE ============================
+
+HEALTH_LABELS = {
+    "proxmox": "Proxmox", "hyperv": "Hyper-V", "smart": "SMART / Disk Health",
+    "docker": "Docker / Portainer", "pbs": "PBS Backups", "kuma": "Uptime Kuma",
+    "urbackup": "URBackup", "homeassistant": "Home Assistant", "qnap": "QNAP Storage",
+    "crowdsec": "CrowdSec", "wazuh": "Wazuh SIEM", "malware_sources": "Malware Detect",
+    "unifi": "UniFi UDM-SE", "wan": "WAN / Internet", "adguard": "AdGuard DNS1",
+    "adguard2": "AdGuard DNS2", "cloudflare": "Cloudflare", "npm": "Nginx Proxy Manager",
+    "tailscale": "Tailscale", "wgdashboard": "WGDashboard", "limacharlie": "LimaCharlie",
+    "plex": "Plex", "tautulli": "Tautulli", "sonarr": "Sonarr", "radarr": "Radarr",
+    "sabnzbd": "SABnzbd", "seerr": "Overseerr", "prowlarr": "Prowlarr",
+}
+
+HEALTH_CATEGORIES = {
+    "proxmox": "Infrastructure", "hyperv": "Infrastructure", "smart": "Infrastructure",
+    "docker": "Infrastructure", "pbs": "Infrastructure", "kuma": "Infrastructure",
+    "urbackup": "Infrastructure", "homeassistant": "Infrastructure",
+    "crowdsec": "Security", "wazuh": "Security", "malware_sources": "Security",
+    "adguard": "Security", "adguard2": "Security", "limacharlie": "Security",
+    "unifi": "Network", "wan": "Network", "cloudflare": "Network", "npm": "Network",
+    "tailscale": "Network", "wgdashboard": "Network",
+    "plex": "Media", "tautulli": "Media", "sonarr": "Media", "radarr": "Media",
+    "sabnzbd": "Media", "seerr": "Media", "prowlarr": "Media",
+    "qnap": "Storage",
+}
+
+
+def _health_status(state):
+    return "pass" if state == "ok" else "fail"
+
+
+def _health_value(key, d):
+    try:
+        if key == "docker":
+            return f'{d.get("running", 0)}/{d.get("total", 0)} containers'
+        if key == "kuma":
+            return f'{d.get("up", 0)}/{d.get("total", 0)} monitors up'
+        if key == "pbs":
+            return f'{d.get("ok", 0)} ok / {d.get("fail", 0)} fail tasks'
+        if key == "urbackup":
+            return f'{d.get("online", 0)}/{d.get("total", 0)} clients online'
+        if key == "smart":
+            return f'{d.get("passed", 0)}/{d.get("checked", 0)} disks passed'
+        if key == "proxmox":
+            return f'{d.get("vms_running", 0)}/{d.get("vms_total", 0)} VMs running'
+        if key == "hyperv":
+            return f'{d.get("running", 0)}/{d.get("vm_count", 0)} VMs running'
+        if key == "homeassistant":
+            return f'{d.get("entities", 0)} entities / {d.get("unavailable", 0)} unavailable'
+        if key == "wazuh":
+            return f'{d.get("active", 0)}/{d.get("total", 0)} agents online'
+        if key == "crowdsec":
+            return f'{d.get("bans", 0)} active bans'
+        if key in ("adguard", "adguard2"):
+            return f'{d.get("queries", 0):,} queries / {d.get("block_pct", 0):.1f}% blocked'
+        if key == "wan":
+            lat = d.get("latency")
+            return f'{str(d.get("status", d.get("wan", "?"))).upper()} / {lat}ms' if lat is not None else str(d.get("status", "?"))
+        if key == "unifi":
+            return f'{str(d.get("wan", "?")).upper()} / {d.get("clients", 0)} clients'
+        if key == "cloudflare":
+            return f'{d.get("requests", 0):,} requests / {d.get("threats", 0):,} threats'
+        if key == "npm":
+            return f'{d.get("enabled", 0)}/{d.get("hosts", 0)} proxy hosts enabled'
+        if key == "tailscale":
+            return f'{d.get("online", 0)}/{d.get("total", 0)} devices online'
+        if key == "wgdashboard":
+            return f'{d.get("connected", 0)}/{d.get("peers", d.get("total", 0))} peers connected'
+        if key == "limacharlie":
+            return f'{d.get("online", 0)}/{d.get("total", 0)} sensors online'
+        if key == "qnap":
+            units = d.get("units", [])
+            bad = sum(1 for u in units if u.get("state") not in ("ok", None))
+            return f'{len(units) - bad}/{len(units)} NAS healthy'
+        if key in ("sonarr", "radarr"):
+            return f'{d.get("queue", 0)} queued / {d.get("missing", 0)} missing'
+        if key == "prowlarr":
+            return f'{d.get("healthy", 0)}/{d.get("enabled", d.get("total", 0))} indexers healthy'
+        if key == "sabnzbd":
+            return f'{d.get("status", "?")} / {d.get("queue", 0)} queued'
+        if key in ("plex", "tautulli", "seerr"):
+            return d.get("note") or d.get("error") or str(d.get("state", "?"))
+    except Exception:
+        pass
+    return d.get("note") or d.get("error") or str(d.get("state", "unknown"))
+
+
+def build_health_summary(data, now_epoch):
+    """Aggregate NOC Health Score from the requested monitored checks."""
+    checks = []
+    def add(key, service, category, passed, total, detail=""):
+        total_i = int(total or 0)
+        passed_i = max(0, min(int(passed or 0), total_i)) if total_i else 0
+        failed_i = max(0, total_i - passed_i)
+        status = "pass" if failed_i == 0 and total_i > 0 else "fail"
+        checks.append({"key": key, "service": service, "category": category,
+                       "status": status, "state": "ok" if status == "pass" else "crit",
+                       "current_value": f"{passed_i}/{total_i}", "passed": passed_i,
+                       "total": total_i, "failed": failed_i, "detail": detail,
+                       "last_updated": int(now_epoch)})
+    P = data.get("proxmox", {})
+    add("proxmox", "Proxmox VMs", "Infrastructure", P.get("vms_running", 0), P.get("vms_total", 0), ", ".join(P.get("down_vms", [])[:6]))
+    D = data.get("docker", {})
+    docker_total = int(D.get("total", 0) or 0); docker_bad = len(D.get("bad", []) or [])
+    add("docker", "Docker Containers", "Infrastructure", max(0, docker_total - docker_bad), docker_total, "; ".join(D.get("bad", [])[:6]))
+    K = data.get("kuma", {})
+    add("kuma", "Uptime Kuma Monitors", "Monitoring", K.get("up", 0), K.get("total", 0), ", ".join(K.get("down", [])[:6]))
+    B = data.get("pbs", {})
+    pbs_ok = int(B.get("ok", 0) or 0); pbs_fail = int(B.get("fail", 0) or 0); pbs_run = int(B.get("run", 0) or 0)
+    add("pbs", "PBS Tasks", "Backup", pbs_ok + pbs_run, pbs_ok + pbs_fail + pbs_run, f"{pbs_fail} failed task(s)" if pbs_fail else "")
+    U = data.get("urbackup", {})
+    clients = U.get("clients", []) or []
+    ub_total = int(U.get("total", 0) or len(clients) or 0)
+    ub_good = sum(1 for c in clients if c.get("state") == "ok") if clients else int(U.get("online", 0) or 0)
+    add("urbackup", "UrBackup Clients", "Backup", ub_good, ub_total, "; ".join(U.get("problems", [])[:6]))
+    W = data.get("wazuh", {})
+    add("wazuh", "Wazuh Agents", "Security", W.get("active", 0), W.get("total", 0), ", ".join(W.get("down", [])[:6]))
+    checks.sort(key=lambda x: x["service"])
+    total = sum(c["total"] for c in checks)
+    passed = sum(c["passed"] for c in checks)
+    failed = total - passed
+    score = round((passed / total) * 100) if total else 0
+    counts = {c["service"]: {"pass": c["passed"], "fail": c["failed"], "total": c["total"]} for c in checks}
+    return {"timestamp": int(now_epoch), "score": score, "total": total,
+            "passed": passed, "failed": failed, "category_counts": counts,
+            "checks": checks}
+
+
+def _health_db():
+    os.makedirs(os.path.dirname(HEALTH_DB_FILE), exist_ok=True)
+    conn = sqlite3.connect(HEALTH_DB_FILE)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS health_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            score REAL NOT NULL,
+            total INTEGER NOT NULL,
+            passed INTEGER NOT NULL,
+            failed INTEGER NOT NULL,
+            category_counts TEXT NOT NULL,
+            checks_json TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_health_snapshots_ts ON health_snapshots(ts)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS health_incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            service_key TEXT NOT NULL,
+            service TEXT NOT NULL,
+            category TEXT NOT NULL,
+            from_status TEXT,
+            to_status TEXT NOT NULL,
+            message TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_health_incidents_ts ON health_incidents(ts)")
+    return conn
+
+
+def record_health_snapshot(summary):
+    conn = _health_db()
+    try:
+        prev = {}
+        row = conn.execute("SELECT checks_json FROM health_snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+        if row:
+            for chk in json.loads(row[0] or "[]"):
+                prev[chk.get("key")] = chk
+        for chk in summary["checks"]:
+            old = prev.get(chk["key"])
+            if old and old.get("status") != chk.get("status"):
+                local = time.strftime("%H:%M", time.localtime(summary["timestamp"]))
+                if chk["status"] == "pass":
+                    msg = f'{chk["service"]} recovered at {local}'
+                else:
+                    msg = f'{chk["service"]} went unhealthy at {local}'
+                conn.execute("""
+                    INSERT INTO health_incidents
+                    (ts, service_key, service, category, from_status, to_status, message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (summary["timestamp"], chk["key"], chk["service"], chk["category"],
+                      old.get("status"), chk.get("status"), msg))
+        conn.execute("""
+            INSERT INTO health_snapshots
+            (ts, score, total, passed, failed, category_counts, checks_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (summary["timestamp"], summary["score"], summary["total"], summary["passed"],
+              summary["failed"], json.dumps(summary["category_counts"], separators=(",", ":")),
+              json.dumps(summary["checks"], separators=(",", ":"))))
+        cutoff = int(time.time()) - 31 * 86400
+        conn.execute("DELETE FROM health_snapshots WHERE ts < ?", (cutoff,))
+        conn.execute("DELETE FROM health_incidents WHERE ts < ?", (cutoff,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ============================ TREND / HISTORY STORAGE ============================
 STATE_DIR = os.path.expanduser("~/.hermes/state")
 TRENDS_FILE = os.path.join(STATE_DIR, "dashboard_trends.json")
@@ -1935,6 +2145,124 @@ def card(title, badge_state, body_html, sub=""):
     </div>"""
 
 
+def health_state_for_score(score):
+    return "ok" if int(score or 0) >= 95 else ("warn" if int(score or 0) >= 90 else "crit")
+
+
+def health_score_card(summary):
+    score = int(summary.get("score", 0))
+    state = health_state_for_score(score)
+    r = 42
+    circ = 2 * 3.14159265 * r
+    dash = circ * min(max(score, 0), 100) / 100
+    rows = "".join(
+        f'<div class="hs-row"><span>{esc(c["service"])}</span><b class="q-{("ok" if c.get("failed",0)==0 else "crit")}">{c.get("passed",0)}/{c.get("total",0)}</b></div>'
+        for c in summary.get("checks", [])
+    )
+    body = f"""
+      <div class="hs-donut-wrap"><svg viewBox="0 0 110 110" class="hs-donut hs-{state}">
+        <circle cx="55" cy="55" r="{r}" class="hs-track"/>
+        <circle cx="55" cy="55" r="{r}" class="hs-val" stroke-dasharray="{dash:.1f} {circ:.1f}" transform="rotate(-90 55 55)"/>
+        <text x="55" y="61" class="hs-pct">{score}%</text>
+      </svg></div><div class="hs-breakdown">{rows}</div>"""
+    return f"""<div class="card s-{state} health-score-card" data-title="NOC HEALTH SCORE" data-state="{state}" data-health-card="true" onclick="openHealthModal(event)" style="cursor:pointer">
+      <div class="card-h"><span class="dot"></span><h3>NOC HEALTH SCORE</h3></div>
+      <div class="card-b health-card-body">{body}</div>
+    </div>"""
+
+
+def _health_history(range_seconds):
+    cutoff = int(time.time()) - int(range_seconds)
+    try:
+        conn = _health_db()
+        rows = conn.execute("SELECT ts, score FROM health_snapshots WHERE ts >= ? ORDER BY ts ASC", (cutoff,)).fetchall()
+        conn.close()
+        return [(int(r[0]), float(r[1])) for r in rows]
+    except Exception:
+        return []
+
+
+def _health_incidents(limit=20):
+    try:
+        conn = _health_db()
+        rows = conn.execute("SELECT ts, service, from_status, to_status, message FROM health_incidents ORDER BY ts DESC LIMIT ?", (int(limit),)).fetchall()
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _svg_line(points, width=520, height=160):
+    if len(points) < 2:
+        return '<div class="empty">No history yet.</div>'
+    step = width / max(1, len(points) - 1)
+    coords = []
+    for i, (_, v) in enumerate(points):
+        x = i * step
+        y = height - 8 - ((v / 100) * (height - 16))
+        coords.append(f"{x:.1f},{y:.1f}")
+    return f'<svg class="hs-line" viewBox="0 0 {width} {height}" preserveAspectRatio="none"><polyline points="{" ".join(coords)}"/></svg>'
+
+
+def health_modal_html(summary):
+    overview = "".join(f'<div class="hs-row"><span>{esc(c["service"])}</span><b>{c.get("passed",0)}/{c.get("total",0)}</b></div>' for c in summary.get("checks", []))
+    trends = {"24h": _svg_line(_health_history(86400)), "7d": _svg_line(_health_history(7 * 86400)), "30d": _svg_line(_health_history(30 * 86400))}
+    inc_rows = "".join(f'<div class="hs-incident"><span>{time.strftime("%Y-%m-%d %H:%M", time.localtime(int(r[0])))}</span><b>{esc(r[1])}</b><em>{esc(r[2])} → {esc(r[3])}</em><p>{esc(r[4])}</p></div>' for r in _health_incidents(20)) or '<div class="empty">No incidents recorded yet.</div>'
+    return f"""<div id="health-modal" class="intel-modal" onclick="if(event.target.id==='health-modal')closeHealthModal()"><div class="intel-modal-box">
+      <button class="card-modal-close" onclick="closeHealthModal()">&times;</button><div class="card-modal-title">NOC HEALTH SCORE</div>
+      <div class="intel-tabs"><button class="active" onclick="intelTab(event,'hs-overview')">OVERVIEW</button><button onclick="intelTab(event,'hs-trend')">TREND</button><button onclick="intelTab(event,'hs-incidents')">INCIDENTS</button></div>
+      <div id="hs-overview" class="intel-tab active"><div class="hs-modal-score q-{health_state_for_score(summary.get("score",0))}">{int(summary.get("score",0))}%</div>{overview}</div>
+      <div id="hs-trend" class="intel-tab"><div class="intel-tabs range"><button class="active" onclick="intelRange(event,'r24')">24H</button><button onclick="intelRange(event,'r7')">7D</button><button onclick="intelRange(event,'r30')">30D</button></div><div id="r24" class="intel-range-pane active">{trends['24h']}</div><div id="r7" class="intel-range-pane">{trends['7d']}</div><div id="r30" class="intel-range-pane">{trends['30d']}</div></div>
+      <div id="hs-incidents" class="intel-tab">{inc_rows}</div>
+    </div></div>"""
+
+
+def _pct(good, total):
+    return round((int(good or 0) / int(total or 0)) * 100) if int(total or 0) else 0
+
+
+def backup_coverage(data):
+    U = data.get("urbackup", {})
+    clients = U.get("clients", []) or []
+    total = len(clients) or int(U.get("total", 0) or 0)
+    file_good = sum(1 for c in clients if c.get("file_recent", c.get("state") == "ok"))
+    img_good = sum(1 for c in clients if c.get("image_recent"))
+    rows = "".join(f'<div class="intel-list-row"><span>{esc(c.get("name","?"))}</span><em>file {esc(c.get("last_file_backup", c.get("ago", "?")))} · image {esc(c.get("image_days", "never"))}d</em><b class="q-{("ok" if c.get("file_recent") and c.get("image_recent") else "warn")}">●</b></div>' for c in clients)
+    return _pct(file_good, total), _pct(img_good, total), rows or '<div class="empty">No UrBackup clients.</div>'
+
+
+def intelligence_panel_html(data, summary):
+    score = int(summary.get("score", 0)); hs = health_state_for_score(score)
+    breakdown = "".join(f'<div class="hs-row"><span>{esc(c["service"])}</span><b>{c.get("passed",0)}/{c.get("total",0)}</b></div>' for c in summary.get("checks", []))
+    file_pct, img_pct, backup_rows = backup_coverage(data)
+    W, C, LC = data.get("wazuh", {}), data.get("crowdsec", {}), data.get("limacharlie", {})
+    waz_high = int(W.get("high_24h", 0) or 0); bans = int(C.get("bans", 0) or 0); lc_det = int(LC.get("detections_24h", 0) or 0)
+    sec_score = max(0, 100 - waz_high * 25 - min(25, bans // 25) - min(25, lc_det * 5)); sec_state = "crit" if waz_high else health_state_for_score(sec_score)
+    vols = []
+    for u in data.get("qnap", {}).get("units", []) or []:
+        for v in u.get("volumes", []) or []:
+            vols.append((f'{u.get("label","QNAP")} {v.get("name","volume")}', float(v.get("pct", 0) or 0)))
+    for ds in data.get("pbs", {}).get("datastores", []) or []:
+        vols.append((f'PBS {ds.get("name","datastore")}', float(ds.get("pct", 0) or 0)))
+    agg = round(sum(v[1] for v in vols)/len(vols), 1) if vols else 0
+    vol_rows = ''.join(f'<div class="intel-storage-row"><div><span>{esc(n)}</span><b>{pct:.0f}%</b></div><div class="intel-bar"><span class="q-{("crit" if pct>85 else "warn" if pct>=70 else "ok")}" style="width:{min(100,max(0,pct)):.0f}%"></span></div></div>' for n,pct in vols) or '<div class="empty">No storage data.</div>'
+    certs = []
+    for c in data.get("npm", {}).get("cert_list", []) or []:
+        certs.append((c.get("name","?"), c.get("days"), c.get("valid", True), "npm"))
+    for c in data.get("kuma", {}).get("certs", []) or []:
+        if not any(x[0] == c.get("name") for x in certs): certs.append((c.get("name","?"), c.get("days"), c.get("valid", True), "kuma"))
+    flags = [n for n,d,v,src in certs if 'portainer' in str(n).lower() and (v is False or (d is not None and d < 0))]
+    flag_html = f'<div class="intel-cert-flag">Portainer invalid: {esc(", ".join(flags))}</div>' if flags else ''
+    cert_rows = ''.join(f'<div class="intel-list-row"><span>{esc(n)}</span><em>{src}</em><b class="q-{("crit" if (v is False or (d is not None and d<15)) else "warn" if (d is not None and d<=30) else "ok")}">{"INVALID" if v is False else str(d) + "d" if d is not None else "?"}</b></div>' for n,d,v,src in sorted(certs, key=lambda x: (x[2] is not False, 9999 if x[1] is None else x[1]))) or '<div class="empty">No certificate data.</div>'
+    return f"""<div id="intel-overlay" class="intel-overlay" onclick="toggleIntel(false)"></div><aside id="intel-panel" class="intel-panel"><div class="intel-panel-hdr"><span>📊 NOC INTELLIGENCE</span><button onclick="toggleIntel(false)">&times;</button></div><div class="intel-panel-scroll">
+      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Health Score</span><b>−</b></button><div class="intel-card-body"><div class="intel-big-score q-{hs}">{score}%</div>{breakdown}</div></div>
+      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Backup Coverage Score</span><b>−</b></button><div class="intel-card-body"><div class="intel-dual-score"><span>File <b class="q-{health_state_for_score(file_pct)}">{file_pct}%</b></span><span>Image <b class="q-{health_state_for_score(img_pct)}">{img_pct}%</b></span></div>{backup_rows}</div></div>
+      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Security Posture Score</span><b>−</b></button><div class="intel-card-body"><div class="intel-big-score q-{sec_state}">{sec_score}%</div><div class="hs-row"><span>Wazuh high/crit 24h</span><b>{waz_high}</b></div><div class="hs-row"><span>CrowdSec active bans</span><b>{bans}</b></div><div class="hs-row"><span>LimaCharlie detections 24h</span><b>{lc_det}</b></div></div></div>
+      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Storage Health</span><b>−</b></button><div class="intel-card-body"><div class="hs-row"><span>Total aggregate</span><b>{agg}% used</b></div>{vol_rows}</div></div>
+      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Certificate Expiry</span><b>−</b></button><div class="intel-card-body">{flag_html}{cert_rows}</div></div>
+    </div></aside>{health_modal_html(summary)}"""
+
+
 def metric(label, value, state=""):
     sc = f" m-{state}" if state else ""
     return f'<div class="metric{sc}"><div class="m-v">{value}</div><div class="m-l">{esc(label)}</div></div>'
@@ -2020,8 +2348,9 @@ def unifi_device_rows(devices):
     return rows or '<div class="empty">No devices reported.</div>'
 
 
-def render(data, gen_epoch, errors, trends=None):
+def render(data, gen_epoch, errors, trends=None, health_summary=None):
     trends = trends or {"daily": {}, "kuma_history": {}}
+    health_summary = health_summary or build_health_summary(data, gen_epoch)
     P = data.get("proxmox", {})
     D = data.get("docker", {})
     B = data.get("pbs", {})
@@ -2233,7 +2562,8 @@ def render(data, gen_epoch, errors, trends=None):
         hv_sub = (f'host {cpus} vCPU · {mem} GB' if hv_total > 0
                   else esc(HV.get("note", "all VMs running")))
 
-    row1 = (card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
+    row1 = (health_score_card(health_summary)
+            + card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
             + card("PROXMOX", P.get("state", "error"), prox_body, prox_sub)
             + card("HYPER-V", HV.get("state", "error"), hv_body, hv_sub)
             + card("HOME ASSISTANT", HA.get("state", "error"), ha_body, ha_sub)
@@ -2925,14 +3255,18 @@ def render(data, gen_epoch, errors, trends=None):
         dashboard_subtitle=esc(dashboard_cfg["dashboard_subtitle"]),
         dashboard_logo=dashboard_logo_html(dashboard_cfg),
         dashboard_config_json=json.dumps(dashboard_cfg),
+        health_current_json=json.dumps(health_summary),
         ticker_bar=ticker_bar,
         row1=row1, row2=row2, media_row=media_row, row3=row3,
         qnap_cards=qnap_cards, kuma_history=hist_block,
         cert_tiles=cert_tiles, alert_block=alert_block,
         integrations_json=integrations_json,
         cc_css=_CC_CSS + _ACP_CSS,
+        intel_css=INTEL_CSS,
         cc_btn=_ACP_BTN_HTML + "\n" + _CC_BTN_HTML,
         cc_overlay=_ACP_HTML + "\n" + _CC_OVERLAY_HTML,
+        intel_panel=intelligence_panel_html(data, health_summary),
+        intel_js=INTEL_JS,
         cc_js=_ACP_JS_TMPL.replace("__ACP_JSON__", _ACP_JSON) + "\n" + _CC_JS_TMPL.replace("__CC_SEED__", _cc_seed_json()).replace("__BCC_SEED__", _bcc_seed_json()),
     )
 
@@ -3919,6 +4253,20 @@ _CC_JS_TMPL = r"""
 
 """
 
+
+INTEL_CSS = """
+  .health-card-body{display:flex;gap:12px;align-items:center;width:100%;}.hs-donut-wrap{width:110px;flex:none}.hs-donut{width:110px;height:110px}.hs-track{fill:none;stroke:#162016;stroke-width:10}.hs-val{fill:none;stroke-width:10;stroke-linecap:round}.hs-ok .hs-val{stroke:var(--green)}.hs-warn .hs-val{stroke:var(--warn)}.hs-crit .hs-val{stroke:var(--crit)}.hs-pct{font-size:23px;font-weight:800;text-anchor:middle;fill:var(--txt)}.hs-breakdown{flex:1;min-width:0}.hs-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px dashed rgba(111,138,111,.18);font-size:11px}.hs-row span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}.hs-row b{color:var(--txt);white-space:nowrap}.q-ok{color:var(--green)!important}.q-warn{color:var(--warn)!important}.q-crit{color:var(--crit)!important}.intel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:8500}.intel-overlay.open{display:block}.intel-panel{position:fixed;top:0;right:-520px;width:min(500px,94vw);height:100vh;background:linear-gradient(180deg,var(--panel),var(--bg));border-left:1px solid var(--line);z-index:8501;transition:right .26s ease;box-shadow:-10px 0 34px rgba(0,0,0,.65);display:flex;flex-direction:column}.intel-panel.open{right:0}.intel-panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line);color:var(--green);font-weight:800;letter-spacing:.12em;font-size:12px}.intel-panel-hdr button{background:none;border:1px solid var(--line);color:var(--muted);cursor:pointer;border-radius:3px;font-size:18px;line-height:1;padding:2px 8px}.intel-panel-scroll{overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}.intel-card{border:1px solid var(--line);border-radius:6px;background:rgba(0,0,0,.18);overflow:hidden}.intel-card.closed .intel-card-body{display:none}.intel-card.closed .intel-card-title b{font-size:0}.intel-card.closed .intel-card-title b:after{content:'+';font-size:16px}.intel-card-title{width:100%;display:flex;justify-content:space-between;align-items:center;background:rgba(0,255,65,.035);border:none;border-bottom:1px solid var(--line);color:var(--green-dim);cursor:pointer;padding:10px 12px;font-size:11px;letter-spacing:.12em;font-weight:700}.intel-card-body{padding:12px}.intel-big-score{font-size:30px;font-weight:800;text-align:center;border:1px solid var(--line);border-radius:4px;padding:10px;margin-bottom:8px}.intel-dual-score{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.intel-dual-score span{border:1px solid var(--line);border-radius:4px;padding:8px;text-align:center;color:var(--muted);font-size:11px}.intel-dual-score b{display:block;font-size:22px}.intel-list-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed rgba(111,138,111,.16);font-size:11px}.intel-list-row span{color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.intel-list-row em{color:var(--muted);font-style:normal;font-size:10px}.intel-storage-row{margin:10px 0}.intel-storage-row div:first-child{display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-bottom:4px}.intel-bar{height:8px;background:#0c140c;border:1px solid var(--line);border-radius:5px;overflow:hidden}.intel-bar span{display:block;height:100%;background:var(--green)}.intel-bar span.q-warn{background:var(--warn)}.intel-bar span.q-crit{background:var(--crit)}.intel-cert-flag{color:var(--crit);border:1px solid rgba(255,59,59,.35);background:rgba(255,59,59,.08);padding:8px 10px;border-radius:4px;font-size:11px;margin-bottom:8px}.intel-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(4px);z-index:9100;align-items:center;justify-content:center}.intel-modal.open{display:flex}.intel-modal-box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:24px;width:min(860px,94vw);max-height:86vh;overflow:auto;position:relative}.intel-tabs{display:flex;gap:8px;margin:0 0 14px}.intel-tabs button{background:none;border:1px solid var(--line);color:var(--muted);cursor:pointer;border-radius:3px;padding:5px 10px;font-size:10px;letter-spacing:.1em}.intel-tabs button.active{color:var(--green);border-color:var(--green);background:rgba(0,255,65,.07)}.intel-tab,.intel-range-pane{display:none}.intel-tab.active,.intel-range-pane.active{display:block}.hs-modal-score{font-size:42px;font-weight:800;text-align:center;margin-bottom:10px}.hs-line{height:180px;width:100%;border:1px solid var(--line);background:rgba(0,0,0,.18)}.hs-line polyline{fill:none;stroke:var(--green);stroke-width:2}.hs-incident{border-left:3px solid var(--line);background:rgba(0,0,0,.18);padding:8px 10px;font-size:11px;margin-bottom:8px}.hs-incident span{color:var(--muted);display:block;font-size:10px}.hs-incident b{color:var(--txt);margin-right:8px}.hs-incident em{color:var(--muted);font-style:normal}.hs-incident p{margin:4px 0 0;color:var(--txt)}@media(max-width:900px){.health-card-body{flex-direction:column;align-items:flex-start}.top-right{gap:8px;flex-wrap:wrap}}
+"""
+
+INTEL_JS = """
+  window.toggleIntel=function(open){var ov=document.getElementById('intel-overlay'),p=document.getElementById('intel-panel'); if(!ov||!p)return; var show=(open===undefined)?!p.classList.contains('open'):!!open; ov.classList.toggle('open',show); p.classList.toggle('open',show);};
+  window.openHealthModal=function(e){if(e)e.stopPropagation(); var m=document.getElementById('health-modal'); if(m)m.classList.add('open');};
+  window.closeHealthModal=function(){var m=document.getElementById('health-modal'); if(m)m.classList.remove('open');};
+  window.intelTab=function(e,id){var box=e.target.closest('.intel-modal-box'); Array.prototype.forEach.call(box.querySelectorAll('.intel-tabs:first-of-type button'),function(b){b.classList.remove('active')}); e.target.classList.add('active'); Array.prototype.forEach.call(box.querySelectorAll('.intel-tab'),function(p){p.classList.remove('active')}); var p=document.getElementById(id); if(p)p.classList.add('active');};
+  window.intelRange=function(e,id){var parent=e.target.closest('#hs-trend'); Array.prototype.forEach.call(parent.querySelectorAll('.range button'),function(b){b.classList.remove('active')}); e.target.classList.add('active'); Array.prototype.forEach.call(parent.querySelectorAll('.intel-range-pane'),function(p){p.classList.remove('active')}); var p=document.getElementById(id); if(p)p.classList.add('active');};
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'){toggleIntel(false);closeHealthModal();}});
+"""
+
 PAGE = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -4471,6 +4819,7 @@ PAGE = """<!DOCTYPE html>
   .custom-panel {{ padding:4px 0 12px; }}
   .custom-panel-note {{ font-size:11px; color:var(--muted); margin-bottom:16px;\n    padding:8px 10px; background:var(--panel2); border-radius:4px; border-left:3px solid var(--green-dim); }}
 {cc_css}
+{intel_css}
 
   /* ── First-launch welcome overlay ── */
   .welcome-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.92);
@@ -4504,6 +4853,7 @@ PAGE = """<!DOCTYPE html>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
       <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
+      <button id="intel-btn" class="theme-btn" onclick="toggleIntel(true)" title="NOC Intelligence">📊 INTEL</button>
       {cc_btn}
       <button id="settings-btn" class="theme-btn" onclick="toggleSettings()" title="Integrations &amp; Settings">&#9881;</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
@@ -4566,6 +4916,7 @@ PAGE = """<!DOCTYPE html>
     <div class="alert-panel-empty" id="alert-empty">No alert history recorded yet.</div>
   </div>
   {cc_overlay}
+  {intel_panel}
   <!-- Settings / Integrations overlay -->
   <div id="settings-overlay" class="settings-overlay" onclick="settingsOverlayClick(event)">
     <div class="settings-shell">
@@ -5192,6 +5543,7 @@ PAGE = """<!DOCTYPE html>
   _applySectionState();
   var INTEGRATIONS = {integrations_json};
   var DASHBOARD_CONFIG = {dashboard_config_json};
+  var NOC_HEALTH_CURRENT = {health_current_json};
   var _fieldDefs = null;
   var _currentCfg = null;
   var _selectedType = null;
@@ -5293,7 +5645,11 @@ PAGE = """<!DOCTYPE html>
     var list = document.getElementById('settings-sidebar-list');
     if (!list) return;
     var html = '';
-    var isAdmin = CURRENT_USER && CURRENT_USER.role === 'admin';
+    // Render the full menu while auth is still loading. Server-side auth still
+    // enforces permissions; this prevents the sidebar from appearing empty while
+    // unrelated API calls finish. Once auth returns, viewers are rebuilt down to
+    // account-only.
+    var isAdmin = !CURRENT_USER || CURRENT_USER.role === 'admin';
     var cats = isAdmin ? CATEGORIES : [{{id:'account', label:'Account', keys:['account_change_password','account_sessions','account_2fa','account_api_tokens']}}];
     cats.forEach(function(cat) {{
       var items = cat.keys.filter(function(k) {{
@@ -5657,6 +6013,7 @@ PAGE = """<!DOCTYPE html>
     var ov=document.getElementById('settings-overlay');
     var isOpen=ov.classList.toggle('open');
     if (isOpen) {{
+      buildSidebar();
       loadAuthStatus(function(){{ buildSidebar(); }}); document.body.style.overflow='hidden';
       _selectedType=null;
       var right=document.getElementById('settings-right');
@@ -5798,6 +6155,7 @@ PAGE = """<!DOCTYPE html>
     }}
   }})();
 }})();
+{intel_js}
 {cc_js}
 </script>
 </body></html>"""
@@ -5809,11 +6167,17 @@ def main():
     data = gather()
     errors = {k: v.get("error") for k, v in data.items() if v.get("state") == "error"}
     try:
+        health_summary = build_health_summary(data, gen_epoch)
+        record_health_snapshot(health_summary)
+    except Exception as e:
+        health_summary = build_health_summary(data, gen_epoch)
+        print(f"warn: health snapshot failed: {type(e).__name__}: {str(e)[:80]}")
+    try:
         trends = update_trends(data, gen_epoch)
     except Exception as e:
         trends = load_trends()
         print(f"warn: trend update failed: {type(e).__name__}: {str(e)[:80]}")
-    page = render(data, gen_epoch, errors, trends)
+    page = render(data, gen_epoch, errors, trends, health_summary)
     tmp = OUT_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(page)

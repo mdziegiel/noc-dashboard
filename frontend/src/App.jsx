@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchLayout, fetchThemes, fetchConfig, saveLayout, fetchFirstLaunch } from './api.js'
+import { fetchLayout, fetchConfig, saveLayout, fetchFirstLaunch, fetchAuthStatus, logout } from './api.js'
 import CardWrapper from './components/CardWrapper.jsx'
 import AddCardPanel from './components/AddCardPanel.jsx'
 import SettingsPanel from './components/SettingsPanel.jsx'
 import IntegrationsPage from './components/IntegrationsPage.jsx'
+import { HealthScoreCard, HealthDetailModal, IntelligencePanel, useIntelligence } from './components/IntelligencePanel.jsx'
 
 // Default sections — mirrors NOC 1 / generate_dashboard.py. Used as fallback
 // when layout.json has no sections array (old layouts get migrated by server, but
@@ -306,10 +307,16 @@ export default function App() {
   const [editMode, setEditMode] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [showIntegrations, setShowIntegrations] = useState(false)
+  const [showIntel, setShowIntel] = useState(false)
+  const [showHealthDetail, setShowHealthDetail] = useState(false)
   const [firstLaunch, setFirstLaunch] = useState(false)
   const [cardData, setCardData] = useState({})
   const [settingsCard, setSettingsCard] = useState(null)
   const [overallHealth, setOverallHealth] = useState('ok')
+  const [authUser, setAuthUser] = useState({ username: 'admin', role: 'Administrator' })
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userMenuRef = useRef(null)
+  const intelligence = useIntelligence()
   // addCardTargetSection: when clicking "+ ADD" on a specific section
   const [addCardTargetSection, setAddCardTargetSection] = useState(null)
   const saveTimerRef = useRef(null)
@@ -329,6 +336,27 @@ export default function App() {
       })
       .catch(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    fetchAuthStatus()
+      .then(st => {
+        if (st?.username) setAuthUser({ username: st.username, role: st.role || 'Administrator' })
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) setUserMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [])
+
+  async function handleLogout() {
+    try { await logout() } catch {}
+    window.location.reload()
+  }
 
   function applyThemeAttr(name) {
     const themeMap = { 'dark-noc': '', 'light-clean': 'light', 'midnight-blue': 'midnight', 'solarized-dark': 'solarized', 'dracula': 'dracula', 'nord': 'nord', 'gruvbox': 'gruvbox', 'tokyo': 'tokyo' }
@@ -644,6 +672,11 @@ export default function App() {
             {/* Normal card grid */}
             {!section.panelbox && !section.historyPanel && !section.certsPanel && (
               <div className={`row noc-row${editMode ? ' edit-active' : ''}`}>
+                {section.id === 'system_status' && (
+                  <div className="noc-card-slot noc-health-slot" data-card-id="__noc_health_score__">
+                    <HealthScoreCard intelligence={intelligence} onOpen={() => setShowHealthDetail(true)} />
+                  </div>
+                )}
                 {sectionCards.map(card => (
                   <div key={card.id} className="noc-card-slot" data-card-id={card.id}>
                     <CardWrapper
@@ -688,6 +721,7 @@ export default function App() {
           >
             ⚙
           </button>
+          <button className="theme-btn" onClick={() => setShowIntel(true)} title="NOC Intelligence">📊 INTEL</button>
           <button className={`theme-btn${editMode ? ' active' : ''}`} onClick={() => setEditMode(m => !m)} title="Edit card layout">
             {editMode ? '✓ DONE' : '✎ EDIT'}
           </button>
@@ -702,6 +736,18 @@ export default function App() {
             </>
           )}
           <button className="theme-btn" onClick={cycleTheme} title="Cycle theme">◐ {themeLabel}</button>
+          <div className="user-menu" ref={userMenuRef}>
+            <button className="theme-btn user-menu-btn" onClick={() => setUserMenuOpen(o => !o)} title="Account">
+              {authUser.username || 'admin'} ▾
+            </button>
+            {userMenuOpen && (
+              <div className="user-dropdown">
+                <div className="user-dropdown-id"><b>{authUser.username || 'admin'}</b><span>{authUser.role || 'Administrator'}</span></div>
+                <div className="user-dropdown-divider" />
+                <button onClick={handleLogout}>Logout</button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -769,6 +815,12 @@ export default function App() {
 
       {showIntegrations && (
         <IntegrationsPage onClose={() => setShowIntegrations(false)} />
+      )}
+
+      <IntelligencePanel open={showIntel} onClose={() => setShowIntel(false)} intelligence={intelligence} />
+
+      {showHealthDetail && (
+        <HealthDetailModal intelligence={intelligence} onClose={() => setShowHealthDetail(false)} />
       )}
 
       {firstLaunch && !showIntegrations && (

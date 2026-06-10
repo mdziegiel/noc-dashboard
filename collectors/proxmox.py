@@ -27,6 +27,7 @@ def collect(E, card_cfg=None):
         d["uptime_d"] = int(n.get("uptime", 0)) // 86400
     vms = jget(f"{base}/nodes/{node}/qemu", auth)["data"]
     if vms:
+        vms = [v for v in vms if str(v.get("template", 0)) not in ("1", "true", "True")]
         run = [v for v in vms if v.get("status") == "running"]
         d["vms_running"] = len(run)
         d["vms_total"] = len(vms)

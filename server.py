@@ -20,9 +20,13 @@ Usage:
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
+import sqlite3
 import sys
 import time
 import traceback
@@ -35,6 +39,7 @@ except ImportError:
     sys.exit(1)
 
 try:
+    import bcrypt
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
@@ -52,6 +57,10 @@ FRONTEND_DIST = ROOT / "frontend" / "dist"
 LAYOUT_FILE = STATE_DIR / "layout.json"
 CONFIG_FILE = ROOT / (os.environ.get("CONFIG_FILE") or "dashboard.yaml")
 ENV_FILE = ROOT / ".env"
+CONFIG_JSON = STATE_DIR / "config.json"
+DB_FILE = STATE_DIR / "noc_dashboard.sqlite3"
+SESSION_COOKIE = "noc_session"
+SESSION_TTL_SECONDS = 90 * 24 * 3600
 
 # ── Env loader ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +83,76 @@ def load_env(path):
 E = load_env(ENV_FILE)
 # Note: E is patched at startup (after CONFIG_JSON is defined) and on each integration save.
 # See _apply_config_json_to_E() called after CONFIG_JSON is defined below.
+
+
+# ── Authentication ─────────────────────────────────────────────────────────────
+
+def _now() -> int:
+    return int(time.time())
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _get_admin(cfg_json: dict) -> dict | None:
+    admin = cfg_json.get("admin")
+    if isinstance(admin, dict) and admin.get("username") and admin.get("password_hash"):
+        return admin
+    return None
+
+
+def _create_session(cfg_json: dict) -> str:
+    token = secrets.token_urlsafe(48)
+    sessions = cfg_json.setdefault("sessions", {})
+    sessions[_hash_token(token)] = {"created": _now(), "expires": _now() + SESSION_TTL_SECONDS}
+    # Prune expired sessions. State files should not become a landfill.
+    for key, sess in list(sessions.items()):
+        if int(sess.get("expires", 0)) < _now():
+            sessions.pop(key, None)
+    save_config_json(cfg_json)
+    return token
+
+
+def _verify_session_token(cfg_json: dict, token: str | None) -> bool:
+    if not token or not _get_admin(cfg_json):
+        return False
+    sessions = cfg_json.get("sessions", {})
+    token_hash = _hash_token(token)
+    sess = sessions.get(token_hash)
+    if not sess:
+        return False
+    if int(sess.get("expires", 0)) < _now():
+        sessions.pop(token_hash, None)
+        save_config_json(cfg_json)
+        return False
+    return True
+
+
+def _clear_session_token(cfg_json: dict, token: str | None):
+    if token:
+        cfg_json.get("sessions", {}).pop(_hash_token(token), None)
+        save_config_json(cfg_json)
+
+
+def _password_ok(password: str) -> bool:
+    return isinstance(password, str) and len(password) >= 8
+
+
+def _auth_response(payload: dict, token: str | None = None, remember: bool = True):
+    resp = JSONResponse(payload)
+    if token:
+        cookie_args = {
+            "key": SESSION_COOKIE,
+            "value": token,
+            "httponly": True,
+            "samesite": "lax",
+            "path": "/",
+        }
+        if remember:
+            cookie_args["max_age"] = SESSION_TTL_SECONDS
+        resp.set_cookie(**cookie_args)
+    return resp
 
 # ── Theme loader ───────────────────────────────────────────────────────────────
 
@@ -600,6 +679,242 @@ def _extract_ticker_items(cache: dict) -> tuple:
     return items, worst
 
 
+
+# ── NOC Intelligence / Health Score persistence ───────────────────────────────
+
+_HEALTH_SNAPSHOT_MIN_INTERVAL = 25
+_last_health_snapshot_ts = 0
+_last_incident_state: dict[str, str] = {}
+
+
+def _db():
+    STATE_DIR.mkdir(exist_ok=True)
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS health_score_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            pct REAL NOT NULL,
+            breakdown_json TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_health_score_snapshots_ts ON health_score_snapshots(ts)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS health_state_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            item TEXT NOT NULL,
+            old_state TEXT,
+            new_state TEXT NOT NULL,
+            detail TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_health_state_changes_ts ON health_state_changes(ts)")
+    return conn
+
+
+def _state_ok(state):
+    return str(state or "").lower() in ("ok", "up", "running", "active", "online", "healthy", "success")
+
+
+def _pct(good, total):
+    try:
+        good = int(good or 0); total = int(total or 0)
+    except Exception:
+        return 0
+    return 100 if total <= 0 else round(max(0, min(100, 100 * good / total)))
+
+
+def _cat(source, label, good, total, detail=None):
+    return {"source": source, "label": label, "good": int(good or 0), "total": int(total or 0), "pct": _pct(good, total), "detail": detail or []}
+
+
+def _current_data(card_type):
+    return (_card_cache.get(card_type) or {}).get("data") or {}
+
+
+def _health_breakdown_from_cache():
+    cats = []
+    prox = _current_data("proxmox")
+    if prox:
+        total = int(prox.get("vms_total") or 0)
+        good = int(prox.get("vms_running") or 0)
+        cats.append(_cat("proxmox", "Proxmox VMs", good, total, prox.get("down_vms") or []))
+
+    dock = _current_data("docker")
+    if dock:
+        total = int(dock.get("total") or 0)
+        bad = len(dock.get("bad") or dock.get("bad_containers") or dock.get("unhealthy") or [])
+        good = max(0, total - bad)
+        cats.append(_cat("docker", "Docker Containers", good, total, dock.get("bad") or []))
+
+    kuma = _current_data("uptime_kuma")
+    if kuma:
+        total = int(kuma.get("total") or 0)
+        good = int(kuma.get("up") or kuma.get("up_count") or 0)
+        detail = list(kuma.get("down") or []) + [str(x) for x in (kuma.get("other") or [])]
+        cats.append(_cat("uptime_kuma", "Uptime Kuma", good, total, detail))
+
+    pbs = _current_data("pbs")
+    if pbs:
+        ok = int(pbs.get("ok") or 0); fail = int(pbs.get("fail") or pbs.get("failed_tasks") or 0); run = int(pbs.get("run") or 0)
+        total = ok + fail + run
+        cats.append(_cat("pbs", "PBS Tasks", ok + run, total, [] if not fail else [f"{fail} failed task(s)"]))
+
+    urb = _current_data("urbackup")
+    if urb:
+        clients = urb.get("clients") or []
+        total = int(urb.get("total") or len(clients) or 0)
+        good = sum(1 for c in clients if (c.get("state") or "ok") == "ok") if clients else int(urb.get("online") or 0)
+        cats.append(_cat("urbackup", "UrBackup Clients", good, total, urb.get("problems") or []))
+
+    waz = _current_data("wazuh")
+    if waz:
+        total = int(waz.get("total") or 0)
+        good = int(waz.get("active") or 0)
+        cats.append(_cat("wazuh", "Wazuh Agents", good, total, waz.get("down") or []))
+
+    total_checks = sum(c["total"] for c in cats)
+    good_checks = sum(c["good"] for c in cats)
+    pct = _pct(good_checks, total_checks)
+    state = "ok" if pct >= 95 else "warn" if pct >= 90 else "crit"
+    return {"pct": pct, "state": state, "good": good_checks, "total": total_checks, "categories": cats, "ts": int(time.time())}
+
+
+def _incident_items_for_health(health):
+    items = []
+    for c in health.get("categories", []):
+        state = "ok" if c["good"] >= c["total"] else "crit" if c["pct"] < 90 else "warn"
+        items.append((c["source"], "__category__", state, f"{c['label']}: {c['good']}/{c['total']}"))
+        for detail in c.get("detail") or []:
+            items.append((c["source"], str(detail), "crit" if state == "crit" else "warn", str(detail)))
+    return items
+
+
+def _maybe_record_health_snapshot(force=False):
+    global _last_health_snapshot_ts, _last_incident_state
+    now = int(time.time())
+    health = _health_breakdown_from_cache()
+    if health.get("total", 0) <= 0:
+        return health
+    with _db() as conn:
+        if force or now - _last_health_snapshot_ts >= _HEALTH_SNAPSHOT_MIN_INTERVAL:
+            conn.execute(
+                "INSERT INTO health_score_snapshots(ts, pct, breakdown_json) VALUES (?, ?, ?)",
+                (now, float(health["pct"]), json.dumps(health["categories"])),
+            )
+            conn.execute("DELETE FROM health_score_snapshots WHERE ts < ?", (now - 31 * 86400,))
+            _last_health_snapshot_ts = now
+        for source, item, state, detail in _incident_items_for_health(health):
+            key = f"{source}:{item}"
+            old = _last_incident_state.get(key)
+            if old is None:
+                _last_incident_state[key] = state
+            elif old != state:
+                conn.execute(
+                    "INSERT INTO health_state_changes(ts, source, item, old_state, new_state, detail) VALUES (?, ?, ?, ?, ?, ?)",
+                    (now, source, item, old, state, detail),
+                )
+                _last_incident_state[key] = state
+    return health
+
+
+def _health_history(range_name="24h"):
+    seconds = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}.get(range_name, 86400)
+    since = int(time.time()) - seconds
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT ts, pct FROM health_score_snapshots WHERE ts >= ? ORDER BY ts ASC",
+            (since,),
+        ).fetchall()
+    return [{"ts": int(r["ts"]), "pct": round(float(r["pct"]), 1)} for r in rows]
+
+
+def _health_incidents(limit=20):
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT ts, source, item, old_state, new_state, detail FROM health_state_changes ORDER BY ts DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _backup_coverage_from_cache():
+    data = _current_data("urbackup")
+    clients = data.get("clients") or []
+    now = time.time()
+    file_good = image_good = 0
+    out_clients = []
+    for c in clients:
+        file_recent = bool(c.get("file_recent", (c.get("state") or "ok") == "ok"))
+        image_days = c.get("image_days")
+        image_recent = bool(c.get("image_recent", image_days is not None and image_days <= 8))
+        file_good += 1 if file_recent else 0
+        image_good += 1 if image_recent else 0
+        status = "ok" if file_recent and image_recent else "warn" if file_recent or image_recent else "crit"
+        out_clients.append({
+            "name": c.get("name", "?"), "last_file_backup": c.get("last_file_backup") or c.get("ago") or "?",
+            "days_since_image_backup": image_days, "status": status,
+        })
+    total = len(clients) or int(data.get("total") or 0)
+    return {"file_pct": _pct(file_good, total), "image_pct": _pct(image_good, total), "file_good": file_good, "image_good": image_good, "total": total, "clients": out_clients}
+
+
+def _security_posture_from_cache():
+    waz = _current_data("wazuh"); cs = _current_data("crowdsec"); lc = _current_data("limacharlie")
+    waz_high = int(waz.get("high_24h") or waz.get("high_alerts") or 0)
+    bans = int(cs.get("bans") or cs.get("active_bans") or 0)
+    lc_det = int(lc.get("detections_24h") or 0)
+    score = max(0, 100 - (waz_high * 25) - min(25, bans // 25) - min(25, lc_det * 5))
+    state = "crit" if waz_high > 0 else "ok" if score >= 95 else "warn" if score >= 90 else "crit"
+    return {"pct": score, "state": state, "breakdown": {"wazuh_high_crit_24h": waz_high, "crowdsec_active_bans": bans, "limacharlie_detections_24h": lc_det}}
+
+
+def _storage_health_from_cache():
+    volumes = []
+    qnap = _current_data("qnap")
+    for unit in qnap.get("units") or []:
+        label = unit.get("label") or unit.get("host") or "QNAP"
+        for v in unit.get("volumes") or []:
+            pct = float(v.get("pct") or 0)
+            volumes.append({"name": f"{label} {v.get('name','volume')}", "pct": pct, "used": v.get("used_t"), "total": v.get("total_t"), "source": "qnap"})
+    pbs = _current_data("pbs")
+    for ds in pbs.get("datastores") or []:
+        volumes.append({"name": f"PBS {ds.get('name','datastore')}", "pct": float(ds.get("pct") or 0), "source": "pbs"})
+    total_pct = round(sum(v["pct"] for v in volumes) / len(volumes), 1) if volumes else 0
+    return {"aggregate_pct": total_pct, "volumes": volumes}
+
+
+def _cert_expiry_from_cache():
+    certs = []
+    npm = _current_data("nginx_proxy")
+    for c in npm.get("cert_list") or []:
+        certs.append({"name": c.get("name", "?"), "days": c.get("days"), "valid": c.get("valid", True), "source": "npm"})
+    # Keep Kuma cert validity as supplemental visibility; it catches externally invalid certs.
+    for c in (_current_data("uptime_kuma").get("certs") or []):
+        name = c.get("name", "?")
+        if not any(x["name"] == name for x in certs):
+            certs.append({"name": name, "days": c.get("days"), "valid": c.get("valid", True), "source": "uptime_kuma"})
+    certs.sort(key=lambda c: (c.get("valid", True), 9999 if c.get("days") is None else c.get("days")))
+    flagged = [c for c in certs if ("portainer" in c.get("name", "").lower()) and (not c.get("valid", True) or (c.get("days") is not None and c.get("days") < 0))]
+    return {"certs": certs, "flagged": flagged}
+
+
+def _intelligence_payload():
+    health = _maybe_record_health_snapshot()
+    return {
+        "health": health,
+        "history": {"24h": _health_history("24h"), "7d": _health_history("7d"), "30d": _health_history("30d")},
+        "incidents": _health_incidents(20),
+        "backup": _backup_coverage_from_cache(),
+        "security": _security_posture_from_cache(),
+        "storage": _storage_health_from_cache(),
+        "certificates": _cert_expiry_from_cache(),
+        "ts": int(time.time()),
+    }
+
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="NOC Dashboard API", docs_url="/api/docs")
@@ -624,6 +939,120 @@ def get_collectors():
             _collector_map = {}
     return _collector_map
 
+
+
+PUBLIC_API_PATHS = {
+    "/api/auth/status",
+    "/api/auth/setup",
+    "/api/auth/login",
+}
+
+
+@app.middleware("http")
+async def require_auth_for_api(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in PUBLIC_API_PATHS:
+        cfg_json = load_config_json()
+        if not _verify_session_token(cfg_json, request.cookies.get(SESSION_COOKIE)):
+            return JSONResponse({"detail": "authentication required"}, status_code=401)
+    return await call_next(request)
+
+
+@app.get("/api/auth/status")
+def api_auth_status(request: Request):
+    cfg_json = load_config_json()
+    admin = _get_admin(cfg_json)
+    authenticated = _verify_session_token(cfg_json, request.cookies.get(SESSION_COOKIE))
+    return {
+        "authenticated": authenticated,
+        "needs_setup": admin is None,
+        "username": admin.get("username") if admin and authenticated else None,
+        "role": admin.get("role", "Administrator") if admin and authenticated else None,
+    }
+
+
+@app.post("/api/auth/setup")
+async def api_auth_setup(request: Request):
+    cfg_json = load_config_json()
+    if _get_admin(cfg_json):
+        raise HTTPException(status_code=409, detail="admin user already exists")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    username = str(body.get("username", "")).strip()
+    password = str(body.get("password", ""))
+    confirm = str(body.get("confirm_password", ""))
+    remember = body.get("remember", True) is not False
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required")
+    if not _password_ok(password):
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if not hmac.compare_digest(password, confirm):
+        raise HTTPException(status_code=400, detail="passwords do not match")
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    cfg_json["admin"] = {"username": username, "password_hash": password_hash}
+    cfg_json["sessions"] = {}
+    token = _create_session(cfg_json)
+    return _auth_response({"ok": True, "username": username}, token, remember)
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request):
+    cfg_json = load_config_json()
+    admin = _get_admin(cfg_json)
+    if not admin:
+        raise HTTPException(status_code=409, detail="admin setup required")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    username = str(body.get("username", "")).strip()
+    password = str(body.get("password", ""))
+    remember = body.get("remember", True) is not False
+    valid_user = hmac.compare_digest(username, str(admin.get("username", "")))
+    valid_pass = bcrypt.checkpw(password.encode("utf-8"), str(admin.get("password_hash", "")).encode("utf-8"))
+    if not (valid_user and valid_pass):
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    token = _create_session(cfg_json)
+    return _auth_response({"ok": True, "username": admin.get("username")}, token, remember)
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout(request: Request):
+    cfg_json = load_config_json()
+    _clear_session_token(cfg_json, request.cookies.get(SESSION_COOKIE))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.post("/api/auth/change-password")
+async def api_auth_change_password(request: Request):
+    cfg_json = load_config_json()
+    admin = _get_admin(cfg_json)
+    if not admin:
+        raise HTTPException(status_code=409, detail="admin setup required")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    current = str(body.get("current_password", ""))
+    new_password = str(body.get("new_password", ""))
+    confirm = str(body.get("confirm_password", ""))
+    if not bcrypt.checkpw(current.encode("utf-8"), str(admin.get("password_hash", "")).encode("utf-8")):
+        raise HTTPException(status_code=401, detail="current password is incorrect")
+    if not _password_ok(new_password):
+        raise HTTPException(status_code=400, detail="new password must be at least 8 characters")
+    if not hmac.compare_digest(new_password, confirm):
+        raise HTTPException(status_code=400, detail="new passwords do not match")
+    admin["password_hash"] = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    # Changing passwords invalidates every other session. Basic hygiene. Apparently necessary.
+    current_hash = _hash_token(request.cookies.get(SESSION_COOKIE, ""))
+    current_session = cfg_json.get("sessions", {}).get(current_hash)
+    cfg_json["sessions"] = {current_hash: current_session} if current_session else {}
+    save_config_json(cfg_json)
+    return {"ok": True}
 
 # ── API routes ─────────────────────────────────────────────────────────────────
 
@@ -731,6 +1160,12 @@ def api_data(card_type: str, request: Request):
     except Exception:
         pass
 
+    # Health Score snapshots/incidents live in SQLite. Record at most once per poll cycle.
+    try:
+        _maybe_record_health_snapshot()
+    except Exception:
+        pass
+
     return data
 
 
@@ -820,6 +1255,12 @@ def api_status_overview():
     elif counts["warn"] > 0:
         worst = "warn"
     return {**counts, "worst": worst, "total": sum(counts.values()), "ts": int(time.time())}
+
+
+@app.get("/api/intelligence")
+def api_intelligence():
+    """NOC Intelligence sidebar payload: health score, trends, incidents, backups, security, storage, and certs."""
+    return _intelligence_payload()
 
 
 @app.get("/api/events")
@@ -1107,8 +1548,6 @@ def _record_alert_events(card_type: str, data: dict):
 # state/config.json stores all integration credentials.
 # Structure: {"integrations": {"proxmox": {"url": ..., "token_id": ..., ...}, ...}}
 # .env is the fallback; config.json values win.
-
-CONFIG_JSON = STATE_DIR / "config.json"
 
 # Maps integration type -> env var names for each field
 # Fields are in order: url, then auth fields
