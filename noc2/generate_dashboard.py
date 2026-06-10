@@ -1780,7 +1780,7 @@ SOURCES = [
     ("tautulli", collect_tautulli),
     ("sonarr", collect_sonarr),
     ("radarr", collect_radarr),
-    ("lidarr", collect_lidarr),
+    # Lidarr stays available in Add Card, but is not collected/rendered in the default dashboard.
     ("sabnzbd", collect_sabnzbd),
     ("seerr", collect_seerr),
     ("prowlarr", collect_prowlarr),
