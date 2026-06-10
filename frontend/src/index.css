@@ -34,6 +34,12 @@
   [data-theme='light'] .cert { background:#ffffff; border-color:#dde1ea; }
   [data-theme='light'] footer { color:#9ca3af; }
   [data-theme='light'] .alerts li { background:#fef2f2; color:#7f1d1d; }
+  /* ── Dark NOC scrollbars ── */
+  * { scrollbar-width: thin; scrollbar-color: var(--green) rgba(0,0,0,.18); }
+  *::-webkit-scrollbar { width:6px; height:6px; }
+  *::-webkit-scrollbar-track { background:rgba(0,0,0,.18); }
+  *::-webkit-scrollbar-thumb { background:var(--green); border-radius:999px; border:1px solid rgba(0,0,0,.35); }
+  *::-webkit-scrollbar-thumb:hover { background:var(--green-dim); }
   /* ── Midnight-blue theme ── */
   [data-theme='midnight'] {
     --bg:#0d1b2a; --panel:#142236; --panel2:#0f1d2e; --line:#1e3a5f;
@@ -399,10 +405,10 @@
   @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
   @keyframes slideIn { from { transform:translateX(100%); opacity:0; } to { transform:translateX(0); opacity:1; } }
   /* ── Scrollbar ── */
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:rgba(0,0,0,.18); }
+  ::-webkit-scrollbar-thumb { background:var(--green); border-radius:999px; border:1px solid rgba(0,0,0,.35); }
+  ::-webkit-scrollbar-thumb:hover { background:var(--green-dim); }
   /* ── Buttons (used by Integrations/Settings panels) ── */
   button { font-family:inherit; }
   .btn-ghost {
@@ -439,6 +445,8 @@
   /* ── User dropdown ── */
   .user-menu, .gear-menu { position:relative; }
   .user-menu-btn { color:var(--txt); border-color:var(--line); }
+  .user-chip-static { cursor:default; display:inline-flex; align-items:center; }
+  .user-chip-static:hover { border-color:var(--line); color:var(--txt); }
   .nav-icon-btn { min-width:34px; padding:5px 8px; text-align:center; }
   .user-dropdown { position:absolute; right:0; top:calc(100% + 8px); min-width:190px;
     background:linear-gradient(180deg,var(--panel),var(--panel2)); border:1px solid var(--line);

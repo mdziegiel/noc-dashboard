@@ -314,7 +314,6 @@ export default function App() {
   const [settingsCard, setSettingsCard] = useState(null)
   const [overallHealth, setOverallHealth] = useState('ok')
   const [authUser, setAuthUser] = useState({ username: 'admin', role: 'Administrator' })
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [showAlerts, setShowAlerts] = useState(false)
   const userMenuRef = useRef(null)
   const gearMenuRef = useRef(null)
@@ -352,7 +351,6 @@ export default function App() {
     function onDocClick(e) {
       const target = e.target
       if (target && target.nodeType === Node.ELEMENT_NODE) {
-        if (userMenuRef.current && !userMenuRef.current.contains(target)) setUserMenuOpen(false)
         if (gearMenuRef.current && !gearMenuRef.current.contains(target)) setGearMenuOpen(false)
       }
     }
@@ -737,14 +735,9 @@ export default function App() {
             </>
           )}
           <div className="user-menu" ref={userMenuRef}>
-            <button className="theme-btn user-menu-btn" onClick={() => setUserMenuOpen(o => !o)} title="Account">
-              {authUser.username || 'admin'} ▾
-            </button>
-            {userMenuOpen && (
-              <div className="user-dropdown">
-                <button onClick={handleLogout}>Logout</button>
-              </div>
-            )}
+            <span className="theme-btn user-menu-btn user-chip-static" title={authUser.role || 'Administrator'}>
+              {authUser.username || 'admin'}
+            </span>
           </div>
           <div className="gear-menu" ref={gearMenuRef}>
             <button
@@ -757,6 +750,8 @@ export default function App() {
             </button>
             {gearMenuOpen && (
               <div className="user-dropdown gear-dropdown">
+                <button onClick={() => { setGearMenuOpen(false); handleLogout() }}>Logout</button>
+                <div className="user-dropdown-divider" />
                 <button onClick={() => { setEditMode(m => !m); setGearMenuOpen(false) }}>{editMode ? 'Done Editing' : 'Edit Dashboard'}</button>
                 <button onClick={() => { setShowIntegrations(true); setGearMenuOpen(false) }}>Settings</button>
               </div>

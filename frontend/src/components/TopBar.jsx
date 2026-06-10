@@ -169,6 +169,8 @@ export default function TopBar({ config, themes, currentTheme, onThemeChange, on
             </button>
             {gearOpen && (
               <div className="user-dropdown gear-dropdown">
+                <button onClick={() => { setGearOpen(false); fetch('/api/logout', { method: 'POST' }).finally(() => { window.location.href = '/login' }) }}>Logout</button>
+                <div className="user-dropdown-divider" />
                 <button onClick={() => { onEditModeToggle?.(); setGearOpen(false) }}>{editMode ? 'Done Editing' : 'Edit Dashboard'}</button>
                 <button onClick={() => { onSettingsClick?.(); setGearOpen(false) }}>Settings</button>
               </div>

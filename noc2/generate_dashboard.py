@@ -4319,6 +4319,12 @@ PAGE = """<!DOCTYPE html>
   [data-theme='light'] .cert {{ background:#ffffff; border-color:#dde1ea; }}
   [data-theme='light'] footer {{ color:#9ca3af; }}
   [data-theme='light'] .alerts li {{ background:#fef2f2; color:#7f1d1d; }}
+  /* ── Dark NOC scrollbars ── */
+  * {{ scrollbar-width:thin; scrollbar-color:var(--green) rgba(0,0,0,.18); }}
+  *::-webkit-scrollbar {{ width:6px; height:6px; }}
+  *::-webkit-scrollbar-track {{ background:rgba(0,0,0,.18); }}
+  *::-webkit-scrollbar-thumb {{ background:var(--green); border-radius:999px; border:1px solid rgba(0,0,0,.35); }}
+  *::-webkit-scrollbar-thumb:hover {{ background:var(--green-dim); }}
   /* ── Midnight-blue theme ── */
   [data-theme='midnight'] {{
     --bg:#0d1b2a; --panel:#142236; --panel2:#0f1d2e; --line:#1e3a5f;
@@ -4759,8 +4765,8 @@ PAGE = """<!DOCTYPE html>
     font-size:10px; letter-spacing:1px; font-family:inherit; padding:3px 8px;
     border-radius:4px; cursor:pointer; display:inline-flex; align-items:center; gap:5px;
     text-transform:uppercase; }}
-  .auth-user-chip:hover, .auth-user-menu.open .auth-user-chip {{ border-color:var(--green-dim); background:rgba(0,255,65,.06); }}
-  .auth-user-chevron {{ color:var(--green-dim); font-size:9px; line-height:1; }}
+  .auth-user-chip:hover {{ border-color:var(--line); background:var(--panel2); }}
+  .auth-user-chevron {{ display:none; }}
   .auth-user-dropdown {{ display:none; position:absolute; right:0; top:calc(100% + 6px); min-width:190px;
     background:var(--panel); border:1px solid var(--line); border-radius:5px;
     box-shadow:0 8px 28px rgba(0,0,0,.85); z-index:10050; padding:7px 0;
@@ -4878,6 +4884,8 @@ PAGE = """<!DOCTYPE html>
       <div id="gear-menu" class="gear-menu">
         <button id="settings-gear-btn" class="theme-btn" onclick="toggleGearMenu(event)" title="Dashboard menu" aria-label="Dashboard menu">&#9881;&#9662;</button>
         <div class="gear-dropdown" role="menu">
+          <button type="button" onclick="toggleGearMenu(false);logoutUser()" role="menuitem">Logout</button>
+          <div class="auth-user-divider"></div>
           <button id="edit-btn" type="button" onclick="toggleGearMenu(false);toggleEditMode()" role="menuitem">Edit Dashboard</button>
           <button id="settings-btn" type="button" onclick="toggleGearMenu(false);toggleSettings()" role="menuitem">Settings</button>
         </div>
@@ -6074,18 +6082,9 @@ PAGE = """<!DOCTYPE html>
       menu = document.createElement('div');
       menu.id = 'auth-user-menu';
       menu.className = 'auth-user-menu';
-      menu.innerHTML = '<button id="auth-user-chip" class="auth-user-chip" type="button" title="Account menu"><span class="auth-user-label"></span><span class="auth-user-chevron">&#9662;</span></button>'
-        + '<div class="auth-user-dropdown" role="menu">'
-        + '<button class="auth-user-logout" type="button" role="menuitem">Logout</button>'
-        + '</div>';
+      menu.innerHTML = '<span id="auth-user-chip" class="auth-user-chip" title="Signed in"><span class="auth-user-label"></span></span>';
       var tr = document.querySelector('.top-right');
       if (tr) tr.insertBefore(menu, document.getElementById('gear-menu'));
-      var btn = menu.querySelector('#auth-user-chip');
-      if (btn) btn.addEventListener('click', function(e) {{ e.stopPropagation(); menu.classList.toggle('open'); }});
-      var logoutBtn = menu.querySelector('.auth-user-logout');
-      if (logoutBtn) logoutBtn.addEventListener('click', function(e) {{ e.stopPropagation(); menu.classList.remove('open'); logoutUser(); }});
-      document.addEventListener('click', function(e) {{ if (!menu.contains(e.target)) menu.classList.remove('open'); }});
-      document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') menu.classList.remove('open'); }});
     }}
     if (menu && CURRENT_USER) {{
       var username = CURRENT_USER.username || 'user';

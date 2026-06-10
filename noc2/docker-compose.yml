@@ -11,7 +11,7 @@ services:
     ports:
       - "${NOC2_PORT:-9900}:8081"
     volumes:
-      - noc2-state:/app/output/state
+      - /data/noc-dashboard/noc2-state:/app/output/state
     environment:
       - PORT=8081
       - REFRESH_MINUTES=15
