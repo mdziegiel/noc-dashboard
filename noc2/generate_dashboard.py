@@ -4397,14 +4397,14 @@ PAGE = """<!DOCTYPE html>
   .test-result.testing {{ color:var(--muted); }}
   .badge-soon {{ font-size:8px; font-weight:700; letter-spacing:1px;
     text-transform:uppercase; padding:1px 5px; border-radius:2px;
-    background:rgba(100,100,100,.18); color:var(--muted); border:1px solid var(--line);
+    background:rgba(0,255,65,.10); color:var(--green); border:1px solid var(--green-dim);
     flex-shrink:0; }}
   .badge-custom {{ font-size:8px; font-weight:700; letter-spacing:1px;
     text-transform:uppercase; padding:1px 5px; border-radius:2px;
     background:rgba(0,255,65,.10); color:var(--green); border:1px solid var(--green-dim);
     flex-shrink:0; }}
-  .sidebar-item.coming-soon {{ opacity:.6; }}
-  .sidebar-item.coming-soon:hover {{ opacity:.85; }}
+  .sidebar-item.coming-soon {{ opacity:.9; }}
+  .sidebar-item.coming-soon:hover {{ opacity:1; }}
   .coming-soon-panel {{ padding:0; text-align:left; }}
   .coming-soon-icon {{ font-size:18px; display:inline-block; margin-right:8px; opacity:.45; }}
   .coming-soon-title {{ font-size:14px; font-weight:700; letter-spacing:2px; color:var(--txt);
@@ -5200,7 +5200,7 @@ PAGE = """<!DOCTYPE html>
         html += '<div class="sidebar-item'+(isSoon?' coming-soon':'')+'" data-key="'+key+'">'\
           +'<span>'+integ.label+'</span>';
         if (isSoon) {{
-          html += '<span class="badge-soon">Soon</span>';
+          html += '<span class="badge-soon">READY</span>';
         }} else {{
           html += '<span class="sidebar-dot '+sc+'"></span>';
         }}
@@ -5263,20 +5263,20 @@ PAGE = """<!DOCTYPE html>
     if (!integ) return;
     var sc = _stateColor(integ.state);
     var isComingSoon = integ.state === 'coming_soon';
-    var statusLabel = isComingSoon?'Coming Soon — credentials can be staged now'
+    var statusLabel = isComingSoon?'READY — credentials can be stored now'
       :integ.state==='ok'?'&#10003; Connected'\
       :integ.state==='warn'?'&#9888; Warning'\
       :integ.state==='degraded'?'&#8212; Not Configured':'&#10005; Error';
-    var statusColor = isComingSoon?'var(--muted)'
+    var statusColor = isComingSoon?'var(--green)'
       :integ.state==='ok'?'var(--green)':integ.state==='warn'?'var(--warn)'\
       :integ.state==='degraded'?'var(--degr)':'var(--crit)';
     right.innerHTML = '<div class="integ-form-title">'+(isComingSoon?'&#9899; ':'')+integ.label+'</div>'\
-      +(isComingSoon?'<div class="badge-soon" style="display:inline-block;margin-bottom:10px">Coming Soon</div>':'')\
+      +(isComingSoon?'<div class="badge-soon" style="display:inline-block;margin-bottom:10px">READY</div>':'')\
       +'<div class="integ-form-status" style="color:'+statusColor+';border-color:'+statusColor+'">'\
       +'<span class="sidebar-dot '+sc+'"></span>&nbsp;'+statusLabel\
       +(integ.note?' &mdash; <span style="font-weight:normal;text-transform:none;color:var(--muted)">'+integ.note+'</span>':'')\
       +'</div>'\
-      +(isComingSoon?'<div class="coming-soon-msg">Collector support is not wired yet. Store the standard credentials now so the integration is ready when the collector lands.</div>':'')\
+      +(isComingSoon?'<div class="coming-soon-msg">Collector not connected. Store credentials now \u2014 integration will activate when a collector is added.</div>':'')\
       +'<div id="form-grid" class="form-grid"><div style="color:var(--muted);font-size:11px">Loading&hellip;</div></div>'\
       +'<div class="form-actions">'\
       +'<button class="btn-test" id="btn-test" onclick="testConnection()">&#9654; Test Connection</button>'\
