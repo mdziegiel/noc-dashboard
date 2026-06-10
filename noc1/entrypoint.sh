@@ -5,7 +5,7 @@ PORT=${PORT:-8081}
 INTERVAL=${REFRESH_MINUTES:-15}
 HERMES_ENV=/root/.hermes/.env
 
-echo "NOC Dashboard 1 starting..."
+echo "NOC Dashboard 2 starting..."
 echo "  Port: $PORT  Regen: every ${INTERVAL}m"
 
 # Create ~/.hermes/.env from Docker/Portainer env vars
@@ -28,14 +28,18 @@ mkdir -p /app/output
 cat > /app/server.py << 'PYEOF'
 #!/usr/bin/env python3
 """
-NOC 1 HTTP server — serves /app/output as static files.
+NOC 2 HTTP server — serves /app/output as static files.
 POST /save-layout   — persist card drag order
 POST /regenerate    — trigger immediate regen
 POST /save-config   — write credential k/v pairs to .env, trigger regen
 POST /save-dashboard-config — write branding settings to state/config.json, trigger regen
 POST /test-connection — run a collector with provided creds, return state
 """
-import http.server, json, os, subprocess, threading, sys, importlib.util
+import http.server, json, os, subprocess, threading, sys, importlib.util, ssl
+
+CTX = ssl.create_default_context()
+CTX.check_hostname = False
+CTX.verify_mode = ssl.CERT_NONE
 
 OUTPUT_DIR  = "/app/output"
 STATE_DIR   = os.environ.get("NOC_STATE_DIR", os.path.join(OUTPUT_DIR, "state"))
@@ -43,10 +47,13 @@ LAYOUT_FILE = os.path.join(OUTPUT_DIR, "layout.json")
 CONFIG_FILE = os.environ.get("NOC_CONFIG_FILE", os.path.join(STATE_DIR, "config.json"))
 ENV_FILE    = "/root/.hermes/.env"
 GENERATOR   = "/app/generate_dashboard.py"
+CUSTOM_CARDS_FILE = os.path.join(OUTPUT_DIR, "custom_cards.json")
+BUILTIN_CARD_CONFIGS_FILE = os.path.join(OUTPUT_DIR, "builtin_card_configs.json")
 DEFAULT_DASHBOARD_CONFIG = {
     "dashboard_title": "NOC Dashboard",
     "dashboard_subtitle": "Infrastructure Monitoring",
     "logo_url": "",
+    "timezone": "UTC",
 }
 
 # ── env helpers ────────────────────────────────────────────────────────────────
@@ -83,6 +90,7 @@ def read_dashboard_config():
         pass
     cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
     cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
+    cfg["timezone"] = cfg.get("timezone") or "UTC"
     return cfg
 
 def write_dashboard_config(payload):
@@ -93,6 +101,7 @@ def write_dashboard_config(payload):
             cfg[key] = val.strip()
     cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
     cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
+    cfg["timezone"] = cfg.get("timezone") or "UTC"
     os.makedirs(STATE_DIR, exist_ok=True)
     tmp = CONFIG_FILE + ".tmp"
     with open(tmp, "w") as f:
@@ -140,8 +149,9 @@ COLLECTOR_MAP = {
     "tautulli":     ("collect_tautulli",  ["TAUTULLI_URL", "TAUTULLI_API_KEY"]),
     "sonarr":       ("collect_sonarr",    ["SONARR_URL", "SONARR_API_KEY"]),
     "radarr":       ("collect_radarr",    ["RADARR_URL", "RADARR_API_KEY"]),
+    "lidarr":       ("collect_lidarr",    ["LIDARR_URL", "LIDARR_API_KEY"]),
     "sabnzbd":      ("collect_sabnzbd",   ["SABNZBD_URL", "SABNZBD_API_KEY"]),
-    "overseerr":    ("collect_overseerr", ["OVERSEERR_URL", "OVERSEERR_API_KEY"]),
+    "seerr":        ("collect_seerr",    ["SEERR_URL", "SEERR_API_KEY"]),
     "prowlarr":     ("collect_prowlarr",  ["PROWLARR_URL", "PROWLARR_API_KEY"]),
     "wgdashboard":  ("collect_wgdashboard", ["WG_URL", "WG_USERNAME", "WG_PASSWORD"]),
     "hyperv":       ("collect_hyperv",    ["HYPERV_HOST", "HYPERV_USERNAME", "HYPERV_PASSWORD"]),
@@ -196,10 +206,14 @@ FIELD_DEFS = {
     "SONARR_API_KEY":      {"label": "API Key",                 "type": "password"},
     "RADARR_URL":          {"label": "URL (http://ip:port)",    "type": "text"},
     "RADARR_API_KEY":      {"label": "API Key",                 "type": "password"},
+    "LIDARR_URL":          {"label": "URL (http://ip:port)",    "type": "text"},
+    "LIDARR_API_KEY":      {"label": "API Key",                 "type": "password"},
     "SABNZBD_URL":         {"label": "URL (http://ip:port)",    "type": "text"},
     "SABNZBD_API_KEY":     {"label": "API Key",                 "type": "password"},
-    "OVERSEERR_URL":       {"label": "URL (http://ip:port)",    "type": "text"},
-    "OVERSEERR_API_KEY":   {"label": "API Key",                 "type": "password"},
+    "SEERR_URL":           {"label": "URL (http://ip:port)",    "type": "text"},
+    "SEERR_API_KEY":       {"label": "API Key",                 "type": "password"},
+    "OVERSEERR_URL":       {"label": "Legacy URL alias",         "type": "text"},
+    "OVERSEERR_API_KEY":   {"label": "Legacy API Key alias",     "type": "password"},
     "PROWLARR_URL":        {"label": "URL (http://ip:port)",    "type": "text"},
     "PROWLARR_API_KEY":    {"label": "API Key",                 "type": "password"},
     "WG_URL":              {"label": "URL (http://ip:port)",    "type": "text"},
@@ -267,6 +281,36 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
                     for k in keys
                 ]
             self.send_json(200, result)
+            return
+        if self.path == "/api/custom-cards":
+            # Return saved custom card configs
+            try:
+                with open(CUSTOM_CARDS_FILE) as f:
+                    data = f.read()
+            except FileNotFoundError:
+                data = "[]"
+            except Exception:
+                data = "[]"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data.encode())
+            return
+        if self.path == "/api/builtin-card-configs":
+            # Return saved built-in card display configs
+            try:
+                with open(BUILTIN_CARD_CONFIGS_FILE) as f:
+                    data = f.read()
+            except FileNotFoundError:
+                data = "{}"
+            except Exception:
+                data = "{}"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data.encode())
             return
         if self.path == "/api/current-config":
             # Return current env values (masked for passwords)
@@ -368,6 +412,105 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
 
             except Exception as e2:
                 self.send_json(500, {"error": str(e2)})
+
+        elif self.path == "/save-custom-cards":
+            # Receive list of custom card configs, persist to disk
+            try:
+                payload = self.read_body()
+                if not isinstance(payload, list):
+                    self.send_json(400, {"error": "expected array"})
+                    return
+                import json as _json
+                with open(CUSTOM_CARDS_FILE, "w") as f:
+                    _json.dump(payload, f, indent=2)
+                self.send_json(200, {"ok": True, "count": len(payload)})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif self.path == "/save-builtin-card-configs":
+            # Receive object of built-in card display configs, persist to disk
+            try:
+                payload = self.read_body()
+                if not isinstance(payload, dict):
+                    self.send_json(400, {"error": "expected object"})
+                    return
+                import json as _json
+                with open(BUILTIN_CARD_CONFIGS_FILE, "w") as f:
+                    _json.dump(payload, f, indent=2)
+                self.send_json(200, {"ok": True, "count": len(payload)})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif self.path == "/api/fetch-custom":
+            # Proxy fetch for custom cards — runs server-side so no CORS issues
+            import urllib.request as _ureq
+            import base64 as _b64mod
+            try:
+                payload = self.read_body()
+                url        = payload.get("url", "")
+                auth_type  = payload.get("auth_type", "none")
+                auth_value = payload.get("auth_value", "")
+                auth_key_header = payload.get("auth_key_header", "X-API-Key")
+                auth_user  = payload.get("auth_user", "")
+                auth_pass  = payload.get("auth_pass", "")
+                oauth_token_url     = payload.get("oauth_token_url", "")
+                oauth_client_id     = payload.get("oauth_client_id", "")
+                oauth_client_secret = payload.get("oauth_client_secret", "")
+                oauth_scope         = payload.get("oauth_scope", "")
+
+                if not url:
+                    self.send_json(400, {"ok": False, "error": "no url"})
+                    return
+
+                headers = {}
+                if auth_type == "bearer" and auth_value:
+                    headers["Authorization"] = "Bearer " + auth_value
+                elif auth_type == "apikey" and auth_value:
+                    headers[auth_key_header or "X-API-Key"] = auth_value
+                elif auth_type == "basic":
+                    creds = _b64mod.b64encode((auth_user + ":" + auth_pass).encode()).decode()
+                    headers["Authorization"] = "Basic " + creds
+                elif auth_type == "oauth" and oauth_token_url:
+                    # Client credentials grant
+                    try:
+                        import urllib.parse as _uparse
+                        token_data = _uparse.urlencode({
+                            "grant_type": "client_credentials",
+                            "client_id": oauth_client_id,
+                            "client_secret": oauth_client_secret,
+                            "scope": oauth_scope,
+                        }).encode()
+                        token_req = _ureq.Request(
+                            oauth_token_url,
+                            data=token_data,
+                            headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        )
+                        with _ureq.urlopen(token_req, timeout=10, context=CTX) as tr:
+                            token_resp = json.loads(tr.read().decode("utf-8", "replace"))
+                        access_token = token_resp.get("access_token", "")
+                        if access_token:
+                            headers["Authorization"] = "Bearer " + access_token
+                    except Exception as oe:
+                        self.send_json(200, {"ok": False, "error": "OAuth token error: " + str(oe)[:120]})
+                        return
+
+                req = _ureq.Request(url, headers=headers)
+                try:
+                    with _ureq.urlopen(req, timeout=15, context=CTX) as resp:
+                        raw = resp.read().decode("utf-8", "replace")
+                except Exception as fe:
+                    self.send_json(200, {"ok": False, "error": str(fe)[:200]})
+                    return
+
+                parsed = None
+                try:
+                    parsed = json.loads(raw)
+                except Exception:
+                    pass
+
+                self.send_json(200, {"ok": True, "raw": raw[:500], "json": parsed})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
 
         else:
             self.send_response(404)
