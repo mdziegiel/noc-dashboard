@@ -105,21 +105,17 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose, section
   }
 
   return (
-    <div style={{
-      position: 'fixed',
-      inset: 0,
-      zIndex: 300,
-      display: 'flex',
-      justifyContent: 'flex-end',
-    }}>
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'rgba(0,0,0,0.45)',
-        }}
-        onClick={onClose}
-      />
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 300,
+        display: 'flex',
+        justifyContent: 'flex-end',
+        background: 'rgba(0,0,0,0.45)',
+      }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
       <div style={{
         position: 'relative',
         zIndex: 1,

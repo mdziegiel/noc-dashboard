@@ -43,20 +43,6 @@ function Breakdown({ categories = [] }) {
   )
 }
 
-export function HealthScoreCard({ intelligence, onOpen }) {
-  const h = intelligence?.health || { pct: 0, categories: [] }
-  const state = healthState(h.pct || 0)
-  return (
-    <div className={`card s-${state} noc-health-card`} onClick={onOpen} title="Open NOC Health details">
-      <div className="card-h"><span className="dot" /><h3>NOC HEALTH SCORE</h3></div>
-      <div className="intel-health-card-body">
-        <Donut pct={h.pct || 0} size={126} />
-        <Breakdown categories={h.categories || []} />
-      </div>
-    </div>
-  )
-}
-
 function TrendChart({ data = [] }) {
   const points = data.map(p => ({ ...p, label: new Date(p.ts * 1000).toLocaleString([], { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) }))
   if (!points.length) return <div className="empty">No health history yet. The database is not a clairvoyant.</div>
@@ -123,7 +109,7 @@ function Bar({ pct }) {
   return <div className="intel-bar"><span className={cls} style={{ width: `${Math.max(0, Math.min(100, pct || 0))}%` }} /></div>
 }
 
-export function IntelligencePanel({ open, onClose, intelligence }) {
+export function IntelligencePanel({ open, onClose, intelligence, onOpenHealth }) {
   const h = intelligence?.health || { pct: 0, categories: [] }
   const backup = intelligence?.backup || {}
   const security = intelligence?.security || {}
@@ -135,12 +121,12 @@ export function IntelligencePanel({ open, onClose, intelligence }) {
       <aside className={`intel-panel${open ? ' open' : ''}`}>
         <div className="intel-panel-hdr"><span>📊 NOC INTELLIGENCE</span><button onClick={onClose}>×</button></div>
         <div className="intel-panel-scroll">
-          <CollapsibleCard title="Health Score"><div className="intel-overview compact"><Donut pct={h.pct || 0} size={118} /><Breakdown categories={h.categories || []} /></div></CollapsibleCard>
-          <CollapsibleCard title="Backup Coverage Score">
+          <CollapsibleCard title="Health Score"><div className="intel-overview compact" onClick={onOpenHealth} role="button" title="Open NOC Health details"><Donut pct={h.pct || 0} size={118} /><Breakdown categories={h.categories || []} /></div></CollapsibleCard>
+          <CollapsibleCard title="Backup Coverage">
             <div className="intel-dual-score"><span>File <b className={`q-${healthState(backup.file_pct || 0)}`}>{backup.file_pct ?? 0}%</b></span><span>Image <b className={`q-${healthState(backup.image_pct || 0)}`}>{backup.image_pct ?? 0}%</b></span></div>
             {(backup.clients || []).map(c => <div key={c.name} className="intel-list-row"><span>{c.name}</span><em>{c.last_file_backup} · image {c.days_since_image_backup ?? 'never'}d</em><b className={`q-${c.status}`}>●</b></div>)}
           </CollapsibleCard>
-          <CollapsibleCard title="Security Posture Score">
+          <CollapsibleCard title="Security Posture">
             <div className={`intel-big-score q-${security.state || 'ok'}`}>{security.pct ?? 100}%</div>
             {Object.entries(security.breakdown || {}).map(([k,v]) => <div key={k} className="intel-break-row"><span>{k.replaceAll('_',' ')}</span><b>{v}</b></div>)}
           </CollapsibleCard>

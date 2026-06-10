@@ -74,7 +74,13 @@ export default function CardWrapper({ card, onUpdate, onRemove, onOpenSettings, 
     return () => clearInterval(timerRef.current)
   }, [card.type, refresh])
 
-  const state = normalizeState(data?.state || (error ? 'error' : 'degraded'))
+  let state = normalizeState(data?.state || (error ? 'error' : 'degraded'))
+  if (card.type === 'proxmox' && data && data.state !== 'error') {
+    const downVms = Array.isArray(data.down_vms) ? data.down_vms : []
+    const running = Number(data.vms_running ?? -1)
+    const total = Number(data.vms_total ?? -2)
+    if (downVms.length === 0 && total >= 0 && running === total) state = 'ok'
+  }
   const title = card.title || card.type.toUpperCase().replace(/_/g,' ')
 
   // Open card modal on click (matches focusCard behavior from 9969)

@@ -194,6 +194,8 @@ def collect_proxmox():
             for v in vms if v.get("status") != "running")
         if d["down_vms"]:
             d["state"] = "warn"
+        elif d["vms_total"] >= 0 and d["vms_running"] == d["vms_total"]:
+            d["state"] = "ok"
     else:
         d["state"] = "degraded"
         d["note"] = "token has no ACL grant (0 VMs visible)"
@@ -2149,7 +2151,8 @@ def health_state_for_score(score):
     return "ok" if int(score or 0) >= 95 else ("warn" if int(score or 0) >= 90 else "crit")
 
 
-def health_score_card(summary):
+def health_score_body(summary):
+    """Donut chart + per-category health breakdown shared by the INTEL panel."""
     score = int(summary.get("score", 0))
     state = health_state_for_score(score)
     r = 42
@@ -2159,12 +2162,19 @@ def health_score_card(summary):
         f'<div class="hs-row"><span>{esc(c["service"])}</span><b class="q-{("ok" if c.get("failed",0)==0 else "crit")}">{c.get("passed",0)}/{c.get("total",0)}</b></div>'
         for c in summary.get("checks", [])
     )
-    body = f"""
+    return f"""
       <div class="hs-donut-wrap"><svg viewBox="0 0 110 110" class="hs-donut hs-{state}">
         <circle cx="55" cy="55" r="{r}" class="hs-track"/>
         <circle cx="55" cy="55" r="{r}" class="hs-val" stroke-dasharray="{dash:.1f} {circ:.1f}" transform="rotate(-90 55 55)"/>
         <text x="55" y="61" class="hs-pct">{score}%</text>
       </svg></div><div class="hs-breakdown">{rows}</div>"""
+
+
+def health_score_card(summary):
+    """Deprecated standalone grid card; kept for compatibility, not rendered."""
+    score = int(summary.get("score", 0))
+    state = health_state_for_score(score)
+    body = health_score_body(summary)
     return f"""<div class="card s-{state} health-score-card" data-title="NOC HEALTH SCORE" data-state="{state}" data-health-card="true" onclick="openHealthModal(event)" style="cursor:pointer">
       <div class="card-h"><span class="dot"></span><h3>NOC HEALTH SCORE</h3></div>
       <div class="card-b health-card-body">{body}</div>
@@ -2232,8 +2242,8 @@ def backup_coverage(data):
 
 
 def intelligence_panel_html(data, summary):
-    score = int(summary.get("score", 0)); hs = health_state_for_score(score)
-    breakdown = "".join(f'<div class="hs-row"><span>{esc(c["service"])}</span><b>{c.get("passed",0)}/{c.get("total",0)}</b></div>' for c in summary.get("checks", []))
+    score = int(summary.get("score", 0))
+    health_body = health_score_body(summary)
     file_pct, img_pct, backup_rows = backup_coverage(data)
     W, C, LC = data.get("wazuh", {}), data.get("crowdsec", {}), data.get("limacharlie", {})
     waz_high = int(W.get("high_24h", 0) or 0); bans = int(C.get("bans", 0) or 0); lc_det = int(LC.get("detections_24h", 0) or 0)
@@ -2254,10 +2264,10 @@ def intelligence_panel_html(data, summary):
     flags = [n for n,d,v,src in certs if 'portainer' in str(n).lower() and (v is False or (d is not None and d < 0))]
     flag_html = f'<div class="intel-cert-flag">Portainer invalid: {esc(", ".join(flags))}</div>' if flags else ''
     cert_rows = ''.join(f'<div class="intel-list-row"><span>{esc(n)}</span><em>{src}</em><b class="q-{("crit" if (v is False or (d is not None and d<15)) else "warn" if (d is not None and d<=30) else "ok")}">{"INVALID" if v is False else str(d) + "d" if d is not None else "?"}</b></div>' for n,d,v,src in sorted(certs, key=lambda x: (x[2] is not False, 9999 if x[1] is None else x[1]))) or '<div class="empty">No certificate data.</div>'
-    return f"""<div id="intel-overlay" class="intel-overlay" onclick="toggleIntel(false)"></div><aside id="intel-panel" class="intel-panel"><div class="intel-panel-hdr"><span>📊 NOC INTELLIGENCE</span><button onclick="toggleIntel(false)">&times;</button></div><div class="intel-panel-scroll">
-      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Health Score</span><b>−</b></button><div class="intel-card-body"><div class="intel-big-score q-{hs}">{score}%</div>{breakdown}</div></div>
-      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Backup Coverage Score</span><b>−</b></button><div class="intel-card-body"><div class="intel-dual-score"><span>File <b class="q-{health_state_for_score(file_pct)}">{file_pct}%</b></span><span>Image <b class="q-{health_state_for_score(img_pct)}">{img_pct}%</b></span></div>{backup_rows}</div></div>
-      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Security Posture Score</span><b>−</b></button><div class="intel-card-body"><div class="intel-big-score q-{sec_state}">{sec_score}%</div><div class="hs-row"><span>Wazuh high/crit 24h</span><b>{waz_high}</b></div><div class="hs-row"><span>CrowdSec active bans</span><b>{bans}</b></div><div class="hs-row"><span>LimaCharlie detections 24h</span><b>{lc_det}</b></div></div></div>
+    return f"""<div id="intel-overlay" class="intel-overlay" onclick="intelOverlayClick(event)"></div><aside id="intel-panel" class="intel-panel"><div class="intel-panel-hdr"><span>📊 NOC INTELLIGENCE</span><button onclick="toggleIntel(false)">&times;</button></div><div class="intel-panel-scroll">
+      <div class="intel-card intel-health-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Health Score</span><b>−</b></button><div class="intel-card-body health-card-body" onclick="openHealthModal(event)">{health_body}</div></div>
+      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Backup Coverage</span><b>−</b></button><div class="intel-card-body"><div class="intel-dual-score"><span>File <b class="q-{health_state_for_score(file_pct)}">{file_pct}%</b></span><span>Image <b class="q-{health_state_for_score(img_pct)}">{img_pct}%</b></span></div>{backup_rows}</div></div>
+      <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Security Posture</span><b>−</b></button><div class="intel-card-body"><div class="intel-big-score q-{sec_state}">{sec_score}%</div><div class="hs-row"><span>Wazuh high/crit 24h</span><b>{waz_high}</b></div><div class="hs-row"><span>CrowdSec active bans</span><b>{bans}</b></div><div class="hs-row"><span>LimaCharlie detections 24h</span><b>{lc_det}</b></div></div></div>
       <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Storage Health</span><b>−</b></button><div class="intel-card-body"><div class="hs-row"><span>Total aggregate</span><b>{agg}% used</b></div>{vol_rows}</div></div>
       <div class="intel-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Certificate Expiry</span><b>−</b></button><div class="intel-card-body">{flag_html}{cert_rows}</div></div>
     </div></aside>{health_modal_html(summary)}"""
@@ -2424,11 +2434,17 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
     ts = f"{_dow} {_date_str} {_time_str} {_tz_label}"
 
     # ---- Row 1: status ----
-    prox_body = (metric("VMs", f'{P.get("vms_running",0)}/{P.get("vms_total",0)}',
-                        "crit" if P.get("down_vms") else "ok")
+    prox_running = int(P.get("vms_running", 0) or 0)
+    prox_total = int(P.get("vms_total", 0) or 0)
+    prox_down = P.get("down_vms") or []
+    prox_state = P.get("state", "error")
+    if prox_state != "error" and not prox_down and prox_running == prox_total:
+        prox_state = "ok"
+    prox_body = (metric("VMs", f'{prox_running}/{prox_total}',
+                        "crit" if prox_down else "ok")
                  + metric("CPU", f'{P.get("cpu",0):.0f}%')
                  + metric("RAM", f'{P.get("mem_used",0):.0f}/{P.get("mem_total",0):.0f}G'))
-    prox_sub = P.get("note") or (("DOWN: " + ", ".join(P["down_vms"])) if P.get("down_vms")
+    prox_sub = P.get("note") or (("DOWN: " + ", ".join(prox_down)) if prox_down
                                  else f'node {P.get("node","?")} up {P.get("uptime_d",0)}d')
     if P.get("state") == "error":
         prox_sub = P.get("error", "error")
@@ -2562,9 +2578,8 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         hv_sub = (f'host {cpus} vCPU · {mem} GB' if hv_total > 0
                   else esc(HV.get("note", "all VMs running")))
 
-    row1 = (health_score_card(health_summary)
-            + card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
-            + card("PROXMOX", P.get("state", "error"), prox_body, prox_sub)
+    row1 = (card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
+            + card("PROXMOX", prox_state, prox_body, prox_sub)
             + card("HYPER-V", HV.get("state", "error"), hv_body, hv_sub)
             + card("HOME ASSISTANT", HA.get("state", "error"), ha_body, ha_sub)
             + card("UPTIME KUMA", K.get("state", "error"), kuma_body, kuma_sub)
@@ -4255,11 +4270,12 @@ _CC_JS_TMPL = r"""
 
 
 INTEL_CSS = """
-  .health-card-body{display:flex;gap:12px;align-items:center;width:100%;}.hs-donut-wrap{width:110px;flex:none}.hs-donut{width:110px;height:110px}.hs-track{fill:none;stroke:#162016;stroke-width:10}.hs-val{fill:none;stroke-width:10;stroke-linecap:round}.hs-ok .hs-val{stroke:var(--green)}.hs-warn .hs-val{stroke:var(--warn)}.hs-crit .hs-val{stroke:var(--crit)}.hs-pct{font-size:23px;font-weight:800;text-anchor:middle;fill:var(--txt)}.hs-breakdown{flex:1;min-width:0}.hs-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px dashed rgba(111,138,111,.18);font-size:11px}.hs-row span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}.hs-row b{color:var(--txt);white-space:nowrap}.q-ok{color:var(--green)!important}.q-warn{color:var(--warn)!important}.q-crit{color:var(--crit)!important}.intel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:8500}.intel-overlay.open{display:block}.intel-panel{position:fixed;top:0;right:-520px;width:min(500px,94vw);height:100vh;background:linear-gradient(180deg,var(--panel),var(--bg));border-left:1px solid var(--line);z-index:8501;transition:right .26s ease;box-shadow:-10px 0 34px rgba(0,0,0,.65);display:flex;flex-direction:column}.intel-panel.open{right:0}.intel-panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line);color:var(--green);font-weight:800;letter-spacing:.12em;font-size:12px}.intel-panel-hdr button{background:none;border:1px solid var(--line);color:var(--muted);cursor:pointer;border-radius:3px;font-size:18px;line-height:1;padding:2px 8px}.intel-panel-scroll{overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}.intel-card{border:1px solid var(--line);border-radius:6px;background:rgba(0,0,0,.18);overflow:hidden}.intel-card.closed .intel-card-body{display:none}.intel-card.closed .intel-card-title b{font-size:0}.intel-card.closed .intel-card-title b:after{content:'+';font-size:16px}.intel-card-title{width:100%;display:flex;justify-content:space-between;align-items:center;background:rgba(0,255,65,.035);border:none;border-bottom:1px solid var(--line);color:var(--green-dim);cursor:pointer;padding:10px 12px;font-size:11px;letter-spacing:.12em;font-weight:700}.intel-card-body{padding:12px}.intel-big-score{font-size:30px;font-weight:800;text-align:center;border:1px solid var(--line);border-radius:4px;padding:10px;margin-bottom:8px}.intel-dual-score{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.intel-dual-score span{border:1px solid var(--line);border-radius:4px;padding:8px;text-align:center;color:var(--muted);font-size:11px}.intel-dual-score b{display:block;font-size:22px}.intel-list-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed rgba(111,138,111,.16);font-size:11px}.intel-list-row span{color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.intel-list-row em{color:var(--muted);font-style:normal;font-size:10px}.intel-storage-row{margin:10px 0}.intel-storage-row div:first-child{display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-bottom:4px}.intel-bar{height:8px;background:#0c140c;border:1px solid var(--line);border-radius:5px;overflow:hidden}.intel-bar span{display:block;height:100%;background:var(--green)}.intel-bar span.q-warn{background:var(--warn)}.intel-bar span.q-crit{background:var(--crit)}.intel-cert-flag{color:var(--crit);border:1px solid rgba(255,59,59,.35);background:rgba(255,59,59,.08);padding:8px 10px;border-radius:4px;font-size:11px;margin-bottom:8px}.intel-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(4px);z-index:9100;align-items:center;justify-content:center}.intel-modal.open{display:flex}.intel-modal-box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:24px;width:min(860px,94vw);max-height:86vh;overflow:auto;position:relative}.intel-tabs{display:flex;gap:8px;margin:0 0 14px}.intel-tabs button{background:none;border:1px solid var(--line);color:var(--muted);cursor:pointer;border-radius:3px;padding:5px 10px;font-size:10px;letter-spacing:.1em}.intel-tabs button.active{color:var(--green);border-color:var(--green);background:rgba(0,255,65,.07)}.intel-tab,.intel-range-pane{display:none}.intel-tab.active,.intel-range-pane.active{display:block}.hs-modal-score{font-size:42px;font-weight:800;text-align:center;margin-bottom:10px}.hs-line{height:180px;width:100%;border:1px solid var(--line);background:rgba(0,0,0,.18)}.hs-line polyline{fill:none;stroke:var(--green);stroke-width:2}.hs-incident{border-left:3px solid var(--line);background:rgba(0,0,0,.18);padding:8px 10px;font-size:11px;margin-bottom:8px}.hs-incident span{color:var(--muted);display:block;font-size:10px}.hs-incident b{color:var(--txt);margin-right:8px}.hs-incident em{color:var(--muted);font-style:normal}.hs-incident p{margin:4px 0 0;color:var(--txt)}@media(max-width:900px){.health-card-body{flex-direction:column;align-items:flex-start}.top-right{gap:8px;flex-wrap:wrap}}
+  .health-card-body{display:flex;gap:12px;align-items:center;width:100%;}.hs-donut-wrap{width:110px;flex:none}.hs-donut{width:110px;height:110px}.hs-track{fill:none;stroke:#162016;stroke-width:10}.hs-val{fill:none;stroke-width:10;stroke-linecap:round}.hs-ok .hs-val{stroke:var(--green)}.hs-warn .hs-val{stroke:var(--warn)}.hs-crit .hs-val{stroke:var(--crit)}.hs-pct{font-size:23px;font-weight:800;text-anchor:middle;fill:var(--txt)}.hs-breakdown{flex:1;min-width:0}.hs-row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px dashed rgba(111,138,111,.18);font-size:11px}.hs-row span{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}.hs-row b{color:var(--txt);white-space:nowrap}.q-ok{color:var(--green)!important}.q-warn{color:var(--warn)!important}.q-crit{color:var(--crit)!important}.intel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:8500}.intel-overlay.open{display:block}.intel-panel{position:fixed;top:0;right:-520px;width:min(500px,94vw);height:100vh;background:linear-gradient(180deg,var(--panel),var(--bg));border-left:1px solid var(--line);z-index:8501;transition:right .26s ease;box-shadow:-10px 0 34px rgba(0,0,0,.65);display:flex;flex-direction:column;overflow-y:auto}.intel-panel.open{right:0}.intel-panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line);color:var(--green);font-weight:800;letter-spacing:.12em;font-size:12px}.intel-panel-hdr button{background:none;border:1px solid var(--line);color:var(--muted);cursor:pointer;border-radius:3px;font-size:18px;line-height:1;padding:2px 8px}.intel-panel-scroll{overflow-y:auto;overflow-x:hidden;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0;flex:1}.intel-card{border:1px solid var(--line);border-radius:6px;background:rgba(0,0,0,.18);overflow:hidden}.intel-card.closed .intel-card-body{display:none}.intel-card.closed .intel-card-title b{font-size:0}.intel-card.closed .intel-card-title b:after{content:'+';font-size:16px}.intel-card-title{width:100%;display:flex;justify-content:space-between;align-items:center;background:rgba(0,255,65,.035);border:none;border-bottom:1px solid var(--line);color:var(--green-dim);cursor:pointer;padding:10px 12px;font-size:11px;letter-spacing:.12em;font-weight:700}.intel-card-body{padding:12px;max-height:32vh;overflow-y:auto;overflow-x:hidden}.intel-big-score{font-size:30px;font-weight:800;text-align:center;border:1px solid var(--line);border-radius:4px;padding:10px;margin-bottom:8px}.intel-dual-score{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.intel-dual-score span{border:1px solid var(--line);border-radius:4px;padding:8px;text-align:center;color:var(--muted);font-size:11px}.intel-dual-score b{display:block;font-size:22px}.intel-list-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed rgba(111,138,111,.16);font-size:11px}.intel-list-row span{color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.intel-list-row em{color:var(--muted);font-style:normal;font-size:10px}.intel-storage-row{margin:10px 0}.intel-storage-row div:first-child{display:flex;justify-content:space-between;gap:8px;font-size:11px;margin-bottom:4px}.intel-bar{height:8px;background:#0c140c;border:1px solid var(--line);border-radius:5px;overflow:hidden}.intel-bar span{display:block;height:100%;background:var(--green)}.intel-bar span.q-warn{background:var(--warn)}.intel-bar span.q-crit{background:var(--crit)}.intel-cert-flag{color:var(--crit);border:1px solid rgba(255,59,59,.35);background:rgba(255,59,59,.08);padding:8px 10px;border-radius:4px;font-size:11px;margin-bottom:8px}.intel-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(4px);z-index:9100;align-items:center;justify-content:center}.intel-modal.open{display:flex}.intel-modal-box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:24px;width:min(860px,94vw);max-height:86vh;overflow:auto;position:relative}.intel-tabs{display:flex;gap:8px;margin:0 0 14px}.intel-tabs button{background:none;border:1px solid var(--line);color:var(--muted);cursor:pointer;border-radius:3px;padding:5px 10px;font-size:10px;letter-spacing:.1em}.intel-tabs button.active{color:var(--green);border-color:var(--green);background:rgba(0,255,65,.07)}.intel-tab,.intel-range-pane{display:none}.intel-tab.active,.intel-range-pane.active{display:block}.hs-modal-score{font-size:42px;font-weight:800;text-align:center;margin-bottom:10px}.hs-line{height:180px;width:100%;border:1px solid var(--line);background:rgba(0,0,0,.18)}.hs-line polyline{fill:none;stroke:var(--green);stroke-width:2}.hs-incident{border-left:3px solid var(--line);background:rgba(0,0,0,.18);padding:8px 10px;font-size:11px;margin-bottom:8px}.hs-incident span{color:var(--muted);display:block;font-size:10px}.hs-incident b{color:var(--txt);margin-right:8px}.hs-incident em{color:var(--muted);font-style:normal}.hs-incident p{margin:4px 0 0;color:var(--txt)}@media(max-width:900px){.health-card-body{flex-direction:column;align-items:flex-start}.top-right{gap:8px;flex-wrap:wrap}}
 """
 
 INTEL_JS = """
   window.toggleIntel=function(open){var ov=document.getElementById('intel-overlay'),p=document.getElementById('intel-panel'); if(!ov||!p)return; var show=(open===undefined)?!p.classList.contains('open'):!!open; ov.classList.toggle('open',show); p.classList.toggle('open',show);};
+  window.intelOverlayClick=function(e){var ov=document.getElementById('intel-overlay'); if(e&&e.target===ov)toggleIntel(false);};
   window.openHealthModal=function(e){if(e)e.stopPropagation(); var m=document.getElementById('health-modal'); if(m)m.classList.add('open');};
   window.closeHealthModal=function(){var m=document.getElementById('health-modal'); if(m)m.classList.remove('open');};
   window.intelTab=function(e,id){var box=e.target.closest('.intel-modal-box'); Array.prototype.forEach.call(box.querySelectorAll('.intel-tabs:first-of-type button'),function(b){b.classList.remove('active')}); e.target.classList.add('active'); Array.prototype.forEach.call(box.querySelectorAll('.intel-tab'),function(p){p.classList.remove('active')}); var p=document.getElementById(id); if(p)p.classList.add('active');};
@@ -4738,7 +4754,7 @@ PAGE = """<!DOCTYPE html>
   .sidebar-dot.warn {{ background:var(--warn); }}
   .sidebar-dot.error, .sidebar-dot.crit {{ background:var(--crit); }}
   .sidebar-check {{ width:14px; height:14px; accent-color:var(--green); cursor:pointer; }}
-  .auth-user-menu {{ position:relative; display:inline-flex; align-items:center; }}
+  .auth-user-menu,.gear-menu {{ position:relative; display:inline-flex; align-items:center; }}
   .auth-user-chip {{ background:var(--panel2); border:1px solid var(--line); color:var(--green);
     font-size:10px; letter-spacing:1px; font-family:inherit; padding:3px 8px;
     border-radius:4px; cursor:pointer; display:inline-flex; align-items:center; gap:5px;
@@ -4756,6 +4772,11 @@ PAGE = """<!DOCTYPE html>
   .auth-user-logout {{ width:100%; background:none; border:none; color:var(--green); font-family:inherit;
     font-size:11px; letter-spacing:1px; text-align:left; padding:7px 12px; cursor:pointer; text-transform:uppercase; }}
   .auth-user-logout:hover {{ background:rgba(0,255,65,.08); color:var(--txt); }}
+  .gear-dropdown {{ display:none; position:absolute; right:0; top:calc(100% + 6px); min-width:165px; background:var(--panel); border:1px solid var(--line); border-radius:5px; box-shadow:0 8px 28px rgba(0,0,0,.85); z-index:10050; padding:7px 0; }}
+  .gear-menu.open .gear-dropdown {{ display:block; }}
+  .gear-dropdown button {{ width:100%; background:none; border:none; color:var(--green); font-family:inherit; font-size:11px; letter-spacing:1px; text-align:left; padding:7px 12px; cursor:pointer; text-transform:uppercase; }}
+  .gear-dropdown button:hover {{ background:rgba(0,255,65,.08); color:var(--txt); }}
+  #intel-btn,#settings-gear-btn {{ min-width:34px; padding-left:8px; padding-right:8px; text-align:center; }}
   .viewer-role #edit-btn,.viewer-role #save-btn,.viewer-role #add-card-btn,.viewer-role #add-custom-card-btn {{ display:none!important; }}
   .user-table {{ width:100%; border-collapse:collapse; font-size:11px; margin:10px 0 16px; }}
   .user-table th,.user-table td {{ border-bottom:1px solid var(--line); padding:7px; text-align:left; }}
@@ -4852,10 +4873,15 @@ PAGE = """<!DOCTYPE html>
       <div class="health h-{overall}"><span class="led"></span>{overall_txt}</div>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
       <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
-      <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
-      <button id="intel-btn" class="theme-btn" onclick="toggleIntel(true)" title="NOC Intelligence">📊 INTEL</button>
+      <button id="intel-btn" class="theme-btn" onclick="toggleIntel(true)" title="NOC Intelligence" aria-label="NOC Intelligence">📊</button>
       {cc_btn}
-      <button id="settings-btn" class="theme-btn" onclick="toggleSettings()" title="Integrations &amp; Settings">&#9881;</button>
+      <div id="gear-menu" class="gear-menu">
+        <button id="settings-gear-btn" class="theme-btn" onclick="toggleGearMenu(event)" title="Dashboard menu" aria-label="Dashboard menu">&#9881;&#9662;</button>
+        <div class="gear-dropdown" role="menu">
+          <button id="edit-btn" type="button" onclick="toggleGearMenu(false);toggleEditMode()" role="menuitem">Edit Dashboard</button>
+          <button id="settings-btn" type="button" onclick="toggleGearMenu(false);toggleSettings()" role="menuitem">Settings</button>
+        </div>
+      </div>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
     </div>
   </div>
@@ -5281,7 +5307,7 @@ PAGE = """<!DOCTYPE html>
     var editBtn = document.getElementById('edit-btn');
     var saveBtn = document.getElementById('save-btn');
     var isEdit = body.classList.toggle('edit-mode');
-    if (editBtn) {{ editBtn.classList.toggle('active', isEdit); editBtn.textContent = isEdit ? '✕ EDITING' : '✎ EDIT'; }}
+    if (editBtn) {{ editBtn.classList.toggle('active', isEdit); editBtn.textContent = isEdit ? 'Done Editing' : 'Edit Dashboard'; }}
     if (saveBtn) saveBtn.style.display = isEdit ? 'inline-block' : 'none';
     if (isEdit) {{
       // Inject remove + resize buttons into every card
@@ -6024,7 +6050,8 @@ PAGE = """<!DOCTYPE html>
   }};
 
   window.settingsOverlayClick = function(e) {{
-    if (e.target===document.getElementById('settings-overlay')) window.toggleSettings();
+    var ov=document.getElementById('settings-overlay');
+    if (e&&e.target===ov) window.toggleSettings();
   }};
 
   document.addEventListener('keydown', function(e) {{
@@ -6036,7 +6063,7 @@ PAGE = """<!DOCTYPE html>
 
   function loadAuthStatus(cb) {{
     fetch('/api/auth-status').then(function(r){{ if(r.status===401){{ location.href='/login'; return null; }} return r.json(); }})
-      .then(function(d){{ if(!d) return; CURRENT_USER=d.user||null; applyRoleUI(); if(CURRENT_USER&&CURRENT_USER.password_expired){{setTimeout(function(){{ alert('Your password has expired. Change it now.'); window.toggleSettings(); selectInteg('account_change_password'); }},500);}} else if(CURRENT_USER&&CURRENT_USER.password_warning_days!==null&&CURRENT_USER.password_warning_days!==undefined){{setTimeout(function(){{ alert('Password expires in '+CURRENT_USER.password_warning_days+' day(s).'); }},500);}} if(cb) cb(d); }})
+      .then(function(d){{ if(!d) return; CURRENT_USER=d.user||null; applyRoleUI(); if(CURRENT_USER&&CURRENT_USER.password_expired){{setTimeout(function(){{ alert('Your password has expired. Change it now.'); var ov=document.getElementById('settings-overlay'); if(!(ov&&ov.classList.contains('open'))) window.toggleSettings(); selectInteg('account_change_password'); }},500);}} else if(CURRENT_USER&&CURRENT_USER.password_warning_days!==null&&CURRENT_USER.password_warning_days!==undefined){{setTimeout(function(){{ alert('Password expires in '+CURRENT_USER.password_warning_days+' day(s).'); }},500);}} if(cb) cb(d); }})
       .catch(function(){{ if(cb) cb(null); }});
   }}
   function applyRoleUI() {{
@@ -6049,12 +6076,10 @@ PAGE = """<!DOCTYPE html>
       menu.className = 'auth-user-menu';
       menu.innerHTML = '<button id="auth-user-chip" class="auth-user-chip" type="button" title="Account menu"><span class="auth-user-label"></span><span class="auth-user-chevron">&#9662;</span></button>'
         + '<div class="auth-user-dropdown" role="menu">'
-        + '<div class="auth-user-info"><div class="auth-user-name"></div><div class="auth-user-role"></div></div>'
-        + '<div class="auth-user-divider"></div>'
         + '<button class="auth-user-logout" type="button" role="menuitem">Logout</button>'
         + '</div>';
       var tr = document.querySelector('.top-right');
-      if (tr) tr.insertBefore(menu, document.getElementById('settings-btn'));
+      if (tr) tr.insertBefore(menu, document.getElementById('gear-menu'));
       var btn = menu.querySelector('#auth-user-chip');
       if (btn) btn.addEventListener('click', function(e) {{ e.stopPropagation(); menu.classList.toggle('open'); }});
       var logoutBtn = menu.querySelector('.auth-user-logout');
@@ -6066,11 +6091,7 @@ PAGE = """<!DOCTYPE html>
       var username = CURRENT_USER.username || 'user';
       var role = CURRENT_USER.role || 'viewer';
       var label = menu.querySelector('.auth-user-label');
-      var name = menu.querySelector('.auth-user-name');
-      var roleEl = menu.querySelector('.auth-user-role');
-      if (label) label.textContent = username + ' · ' + role;
-      if (name) name.textContent = username;
-      if (roleEl) roleEl.textContent = 'Role: ' + role;
+      if (label) label.textContent = username;
     }}
   }}
   var _adminToggleEditMode = window.toggleEditMode;
@@ -6078,6 +6099,9 @@ PAGE = """<!DOCTYPE html>
     if (CURRENT_USER && CURRENT_USER.role !== 'admin') return;
     return _adminToggleEditMode.apply(this, arguments);
   }};
+  window.toggleGearMenu = function(open) {{ var m=document.getElementById('gear-menu'); if(!m)return; var show=(open===undefined||open&&open.type)?!m.classList.contains('open'):!!open; m.classList.toggle('open',show); }};
+  document.addEventListener('click', function(e) {{ var m=document.getElementById('gear-menu'); if(m&&!m.contains(e.target)) m.classList.remove('open'); }});
+  document.addEventListener('keydown', function(e) {{ if(e.key==='Escape'){{ var m=document.getElementById('gear-menu'); if(m)m.classList.remove('open'); }} }});
   window.logoutUser = function() {{ fetch('/api/logout',{{method:'POST'}}).then(function(){{ location.href='/login'; }}); }};
   function _acctMsg(id, ok, msg) {{ var el=document.getElementById(id); if(el){{el.style.display='inline-block';el.className='test-result '+(ok?'ok':'error');el.textContent=msg;}} }}
   window.changeOwnPassword = function() {{

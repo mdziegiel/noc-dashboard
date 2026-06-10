@@ -4,7 +4,7 @@ import CardWrapper from './components/CardWrapper.jsx'
 import AddCardPanel from './components/AddCardPanel.jsx'
 import SettingsPanel from './components/SettingsPanel.jsx'
 import IntegrationsPage from './components/IntegrationsPage.jsx'
-import { HealthScoreCard, HealthDetailModal, IntelligencePanel, useIntelligence } from './components/IntelligencePanel.jsx'
+import { HealthDetailModal, IntelligencePanel, useIntelligence } from './components/IntelligencePanel.jsx'
 
 // Default sections — mirrors NOC 1 / generate_dashboard.py. Used as fallback
 // when layout.json has no sections array (old layouts get migrated by server, but
@@ -315,7 +315,10 @@ export default function App() {
   const [overallHealth, setOverallHealth] = useState('ok')
   const [authUser, setAuthUser] = useState({ username: 'admin', role: 'Administrator' })
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [showAlerts, setShowAlerts] = useState(false)
   const userMenuRef = useRef(null)
+  const gearMenuRef = useRef(null)
+  const [gearMenuOpen, setGearMenuOpen] = useState(false)
   const intelligence = useIntelligence()
   // addCardTargetSection: when clicking "+ ADD" on a specific section
   const [addCardTargetSection, setAddCardTargetSection] = useState(null)
@@ -347,10 +350,14 @@ export default function App() {
 
   useEffect(() => {
     function onDocClick(e) {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) setUserMenuOpen(false)
+      const target = e.target
+      if (target && target.nodeType === Node.ELEMENT_NODE) {
+        if (userMenuRef.current && !userMenuRef.current.contains(target)) setUserMenuOpen(false)
+        if (gearMenuRef.current && !gearMenuRef.current.contains(target)) setGearMenuOpen(false)
+      }
     }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
   }, [])
 
   async function handleLogout() {
@@ -387,7 +394,16 @@ export default function App() {
   }, [cardData])
 
   const handleCardData = useCallback((cardType, data) => {
-    setCardData(prev => ({ ...prev, [cardType]: data }))
+    let nextData = data
+    if (cardType === 'proxmox' && data && data.state !== 'error') {
+      const downVms = Array.isArray(data.down_vms) ? data.down_vms : []
+      const running = Number(data.vms_running ?? -1)
+      const total = Number(data.vms_total ?? -2)
+      if (downVms.length === 0 && total >= 0 && running === total) {
+        nextData = { ...data, state: 'ok' }
+      }
+    }
+    setCardData(prev => ({ ...prev, [cardType]: nextData }))
   }, [])
 
   const debouncedSave = useCallback((newLayout) => {
@@ -672,11 +688,6 @@ export default function App() {
             {/* Normal card grid */}
             {!section.panelbox && !section.historyPanel && !section.certsPanel && (
               <div className={`row noc-row${editMode ? ' edit-active' : ''}`}>
-                {section.id === 'system_status' && (
-                  <div className="noc-card-slot noc-health-slot" data-card-id="__noc_health_score__">
-                    <HealthScoreCard intelligence={intelligence} onOpen={() => setShowHealthDetail(true)} />
-                  </div>
-                )}
                 {sectionCards.map(card => (
                   <div key={card.id} className="noc-card-slot" data-card-id={card.id}>
                     <CardWrapper
@@ -713,18 +724,8 @@ export default function App() {
         <div className="top-right">
           <div className="ts">UPDATED <b>{lastUpdated ? formatDate(lastUpdated) : '—'}</b></div>
           <div className={`health h-${overallHealth}`}><span className="led" />{overallTxt}</div>
-          <button
-            className="theme-btn"
-            onClick={() => setShowIntegrations(true)}
-            title="Settings / Integrations"
-            style={{ padding: '3px 8px' }}
-          >
-            ⚙
-          </button>
-          <button className="theme-btn" onClick={() => setShowIntel(true)} title="NOC Intelligence">📊 INTEL</button>
-          <button className={`theme-btn${editMode ? ' active' : ''}`} onClick={() => setEditMode(m => !m)} title="Edit card layout">
-            {editMode ? '✓ DONE' : '✎ EDIT'}
-          </button>
+          <button className="theme-btn nav-icon-btn" onClick={() => setShowAlerts(true)} title="Alert history" aria-label="Alert history">🔔{alertItems.length > 0 && <span className="bell-badge" style={{ display:'inline-block' }}>{alertItems.length}</span>}</button>
+          <button className="theme-btn nav-icon-btn" onClick={() => setShowIntel(true)} title="NOC Intelligence" aria-label="NOC Intelligence">📊</button>
           {editMode && (
             <>
               <button className="theme-btn" onClick={() => { setAddCardTargetSection(null); setShowAdd(true) }} title="Add card" style={{ background:'var(--green)', color:'#000', border:'none', fontWeight:700 }}>
@@ -735,19 +736,33 @@ export default function App() {
               </button>
             </>
           )}
-          <button className="theme-btn" onClick={cycleTheme} title="Cycle theme">◐ {themeLabel}</button>
           <div className="user-menu" ref={userMenuRef}>
             <button className="theme-btn user-menu-btn" onClick={() => setUserMenuOpen(o => !o)} title="Account">
               {authUser.username || 'admin'} ▾
             </button>
             {userMenuOpen && (
               <div className="user-dropdown">
-                <div className="user-dropdown-id"><b>{authUser.username || 'admin'}</b><span>{authUser.role || 'Administrator'}</span></div>
-                <div className="user-dropdown-divider" />
                 <button onClick={handleLogout}>Logout</button>
               </div>
             )}
           </div>
+          <div className="gear-menu" ref={gearMenuRef}>
+            <button
+              className="theme-btn nav-icon-btn"
+              onClick={() => setGearMenuOpen(o => !o)}
+              title="Dashboard menu"
+              aria-label="Dashboard menu"
+            >
+              ⚙▾
+            </button>
+            {gearMenuOpen && (
+              <div className="user-dropdown gear-dropdown">
+                <button onClick={() => { setEditMode(m => !m); setGearMenuOpen(false) }}>{editMode ? 'Done Editing' : 'Edit Dashboard'}</button>
+                <button onClick={() => { setShowIntegrations(true); setGearMenuOpen(false) }}>Settings</button>
+              </div>
+            )}
+          </div>
+          <button className="theme-btn" onClick={cycleTheme} title="Cycle theme">◐ {themeLabel}</button>
         </div>
       </div>
 
@@ -780,6 +795,22 @@ export default function App() {
       </div>
 
       <footer>MRDTECH INFRASTRUCTURE MONITORING · AUTO-REFRESH 60s · REGEN 15m</footer>
+
+      {showAlerts && (
+        <>
+          <div className="alert-overlay" style={{ display:'block' }} onClick={() => setShowAlerts(false)} />
+          <aside className="alert-panel open">
+            <div className="alert-panel-hdr"><span>ALERT HISTORY</span><button onClick={() => setShowAlerts(false)}>×</button></div>
+            {alertItems.length === 0 ? (
+              <div className="alert-panel-empty">No active alerts. Anton remains disappointed by the lack of drama.</div>
+            ) : (
+              <ul className="alert-feed">
+                {alertItems.map((item, i) => <li key={i}><span className="ah-ts">CURRENT</span><span className="ah-text">{item.text}</span></li>)}
+              </ul>
+            )}
+          </aside>
+        </>
+      )}
 
       {/* Card modal */}
       <div id="card-modal" className="card-modal" onClick={e => { if (e.target.id==='card-modal') document.getElementById('card-modal').style.display='none' }} style={{ display:'none' }}>
@@ -817,7 +848,7 @@ export default function App() {
         <IntegrationsPage onClose={() => setShowIntegrations(false)} />
       )}
 
-      <IntelligencePanel open={showIntel} onClose={() => setShowIntel(false)} intelligence={intelligence} />
+      <IntelligencePanel open={showIntel} onClose={() => setShowIntel(false)} intelligence={intelligence} onOpenHealth={() => setShowHealthDetail(true)} />
 
       {showHealthDetail && (
         <HealthDetailModal intelligence={intelligence} onClose={() => setShowHealthDetail(false)} />

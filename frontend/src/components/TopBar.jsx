@@ -51,9 +51,10 @@ function StatusOverview({ overview }) {
   )
 }
 
-export default function TopBar({ config, themes, currentTheme, onThemeChange, onAddCard, lastUpdated, editMode, onEditModeToggle, alertCount, onBellClick }) {
+export default function TopBar({ config, themes, currentTheme, onThemeChange, onAddCard, lastUpdated, editMode, onEditModeToggle, alertCount, onBellClick, onSettingsClick }) {
   const [showAdd, setShowAdd] = useState(false)
   const [overview, setOverview] = useState(null)
+  const [gearOpen, setGearOpen] = useState(false)
   const themeNames = Object.keys(themes || {})
 
   useEffect(() => {
@@ -150,21 +151,29 @@ export default function TopBar({ config, themes, currentTheme, onThemeChange, on
             </span>
           )}
 
-          {/* Edit mode toggle */}
-          <button
-            className="btn-ghost"
-            onClick={onEditModeToggle}
-            style={{
-              borderColor: editMode ? 'var(--accent, #00ff41)' : undefined,
-              color: editMode ? 'var(--accent, #00ff41)' : undefined,
-              fontSize: 10,
-              padding: '3px 8px',
-              letterSpacing: '0.06em',
-            }}
-            title={editMode ? 'Exit Edit Mode' : 'Enter Edit Mode'}
-          >
-            {editMode ? '✓ EDITING' : '✎ EDIT'}
-          </button>
+          {/* Gear menu: edit + settings */}
+          <div style={{ position: 'relative' }}>
+            <button
+              className="btn-ghost"
+              onClick={() => setGearOpen(o => !o)}
+              style={{
+                borderColor: editMode ? 'var(--accent, #00ff41)' : undefined,
+                color: editMode ? 'var(--accent, #00ff41)' : undefined,
+                fontSize: 10,
+                padding: '3px 8px',
+                letterSpacing: '0.06em',
+              }}
+              title="Dashboard menu"
+            >
+              ⚙▾
+            </button>
+            {gearOpen && (
+              <div className="user-dropdown gear-dropdown">
+                <button onClick={() => { onEditModeToggle?.(); setGearOpen(false) }}>{editMode ? 'Done Editing' : 'Edit Dashboard'}</button>
+                <button onClick={() => { onSettingsClick?.(); setGearOpen(false) }}>Settings</button>
+              </div>
+            )}
+          </div>
 
           {/* Theme cycle */}
           {themeNames.length > 0 && (
