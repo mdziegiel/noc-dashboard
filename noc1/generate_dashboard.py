@@ -5181,7 +5181,7 @@ PAGE = """<!DOCTYPE html>
   var CURRENT_USER = null;
 
   var CATEGORIES = [
-    {{ id:'account',    label:'Account', keys:['account_change_password','account_logout','account_manage_users'] }},
+    {{ id:'account',    label:'Account', keys:['account_change_password','account_sessions','account_2fa','account_api_tokens','account_logout','account_manage_users','account_login_history','account_password_expiry'] }},
     {{ id:'general',    label:'General', keys:['general_dashboard', 'datetime_settings', 'reports', 'toggle_alerts'] }},
     {{ id:'infra',      label:'Infrastructure',
       keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
@@ -5277,11 +5277,11 @@ PAGE = """<!DOCTYPE html>
     if (!list) return;
     var html = '';
     var isAdmin = CURRENT_USER && CURRENT_USER.role === 'admin';
-    var cats = isAdmin ? CATEGORIES : [{{id:'account', label:'Account', keys:['account_change_password','account_logout']}}];
+    var cats = isAdmin ? CATEGORIES : [{{id:'account', label:'Account', keys:['account_change_password','account_sessions','account_2fa','account_api_tokens','account_logout']}}];
     cats.forEach(function(cat) {{
       var items = cat.keys.filter(function(k) {{
-        if (k === 'account_manage_users') return isAdmin;
-        if (k === 'account_change_password' || k === 'account_logout') return true;
+        if (k === 'account_manage_users' || k === 'account_login_history' || k === 'account_password_expiry') return isAdmin;
+        if (k.indexOf('account_') === 0) return true;
         if (k === 'custom' || k === 'general_dashboard' || k === 'datetime_settings' || k === 'reports' || k === 'toggle_alerts') return true;
         var i = _integByKey(k);
         return !!i;
@@ -5293,14 +5293,16 @@ PAGE = """<!DOCTYPE html>
           html += '<div class="sidebar-item" data-key="account_change_password"><span>Change Password</span><span class="sidebar-dot ok"></span></div>';
           return;
         }}
+        if (key === 'account_sessions') {{ html += '<div class="sidebar-item" data-key="account_sessions"><span>Sessions</span><span class="sidebar-dot ok"></span></div>'; return; }}
+        if (key === 'account_2fa') {{ html += '<div class="sidebar-item" data-key="account_2fa"><span>Two-Factor Auth</span><span class="sidebar-dot ok"></span></div>'; return; }}
+        if (key === 'account_api_tokens') {{ html += '<div class="sidebar-item" data-key="account_api_tokens"><span>API Tokens</span><span class="sidebar-dot ok"></span></div>'; return; }}
         if (key === 'account_logout') {{
           html += '<div class="sidebar-item" data-key="account_logout"><span>Logout</span><span class="sidebar-dot ok"></span></div>';
           return;
         }}
-        if (key === 'account_manage_users') {{
-          html += '<div class="sidebar-item" data-key="account_manage_users"><span>Manage Users</span><span class="sidebar-dot ok"></span></div>';
-          return;
-        }}
+        if (key === 'account_manage_users') {{ html += '<div class="sidebar-item" data-key="account_manage_users"><span>Manage Users</span><span class="sidebar-dot ok"></span></div>'; return; }}
+        if (key === 'account_login_history') {{ html += '<div class="sidebar-item" data-key="account_login_history"><span>Login History</span><span class="sidebar-dot ok"></span></div>'; return; }}
+        if (key === 'account_password_expiry') {{ html += '<div class="sidebar-item" data-key="account_password_expiry"><span>Password Expiry</span><span class="sidebar-dot ok"></span></div>'; return; }}
         if (key === 'general_dashboard') {{
           html += '<div class="sidebar-item" data-key="general_dashboard">'            +'<span>Dashboard Branding</span>'            +'<span class="sidebar-dot ok"></span>'            +'</div>';
           return;
@@ -5383,6 +5385,27 @@ PAGE = """<!DOCTYPE html>
         +'<div class="form-field"><label>Confirm</label><input id="new-confirm" type="password"></div>'
         +'</div><div class="form-actions"><button class="btn-save" onclick="createUser()">&#10003; Create User</button><span id="users-msg" class="test-result" style="display:none"></span></div></div>';
       loadUsers(); return;
+    }}
+
+    if (key === 'account_sessions') {{
+      right.innerHTML = '<div class="integ-form-title">Active Sessions</div><div class="custom-panel"><div class="custom-panel-note">Current browser sessions. Revoke anything that smells wrong.</div><div id="sessions-list">Loading&hellip;</div></div>';
+      loadSessions(); return;
+    }}
+    if (key === 'account_2fa') {{
+      right.innerHTML = '<div class="integ-form-title">Two-Factor Auth</div><div class="custom-panel"><div class="custom-panel-note">TOTP support for Google Authenticator, Authy, 1Password, and anything else that can count to six.</div><div id="twofa-box">Loading&hellip;</div><div class="form-actions"><button class="btn-save" onclick="setup2FA()">Enable / Reconfigure 2FA</button><button class="report-action" onclick="disable2FA()">Disable 2FA</button><span id="twofa-msg" class="test-result" style="display:none"></span></div></div>';
+      render2FA(); return;
+    }}
+    if (key === 'account_api_tokens') {{
+      right.innerHTML = '<div class="integ-form-title">API Tokens</div><div class="custom-panel"><div class="custom-panel-note">Generate named API tokens for external integrations. The raw token is shown once.</div><div id="tokens-list">Loading&hellip;</div><div class="bcc-section-hdr">Create Token</div><div id="form-grid" class="form-grid"><div class="form-field"><label>Name</label><input id="token-name" value="Integration"></div><div class="form-field"><label>Expiry</label><select id="token-expiry"><option value="0">Never</option><option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option><option value="180">180 days</option></select></div></div><div class="form-actions"><button class="btn-save" onclick="createApiToken()">Create Token</button><span id="token-msg" class="test-result" style="display:none"></span></div></div>';
+      loadApiTokens(); return;
+    }}
+    if (key === 'account_login_history') {{
+      right.innerHTML = '<div class="integ-form-title">Login History</div><div class="custom-panel"><div class="custom-panel-note">Last 100 login attempts with timestamp, IP, username, and result.</div><div id="login-history">Loading&hellip;</div></div>';
+      loadLoginHistory(); return;
+    }}
+    if (key === 'account_password_expiry') {{
+      right.innerHTML = '<div class="integ-form-title">Password Expiry</div><div class="custom-panel"><div class="custom-panel-note">Optional password expiry. Disabled by default, because mandatory rotation without cause is how auditors summon entropy demons.</div><div id="form-grid" class="form-grid"><div class="form-field span2"><label><input type="checkbox" id="expiry-enabled" style="width:16px;accent-color:var(--green)"> Enable password expiry</label></div><div class="form-field"><label>Expiry Period</label><select id="expiry-days"><option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option><option value="180">180 days</option></select></div></div><div class="form-actions"><button class="btn-save" onclick="savePasswordExpiry()">Save</button><span id="expiry-msg" class="test-result" style="display:none"></span></div></div>';
+      loadPasswordExpiry(); return;
     }}
 
     // General dashboard branding panel
@@ -5647,7 +5670,7 @@ PAGE = """<!DOCTYPE html>
 
   function loadAuthStatus(cb) {{
     fetch('/api/auth-status').then(function(r){{ if(r.status===401){{ location.href='/login'; return null; }} return r.json(); }})
-      .then(function(d){{ if(!d) return; CURRENT_USER=d.user||null; applyRoleUI(); if(cb) cb(d); }})
+      .then(function(d){{ if(!d) return; CURRENT_USER=d.user||null; applyRoleUI(); if(CURRENT_USER&&CURRENT_USER.password_expired){{setTimeout(function(){{ alert('Your password has expired. Change it now.'); window.toggleSettings(); selectInteg('account_change_password'); }},500);}} else if(CURRENT_USER&&CURRENT_USER.password_warning_days!==null&&CURRENT_USER.password_warning_days!==undefined){{setTimeout(function(){{ alert('Password expires in '+CURRENT_USER.password_warning_days+' day(s).'); }},500);}} if(cb) cb(d); }})
       .catch(function(){{ if(cb) cb(null); }});
   }}
   function applyRoleUI() {{
@@ -5676,7 +5699,7 @@ PAGE = """<!DOCTYPE html>
   window.loadUsers = function() {{
     fetch('/api/users',{{method:'POST'}}).then(function(r){{return r.json();}}).then(function(d){{
       var el=document.getElementById('users-list'); if(!el) return;
-      var rows=(d.users||[]).map(function(u){{return '<tr><td>'+_escapeHtml(u.username)+'</td><td>'+_escapeHtml(u.role)+'</td><td><button class="report-action" onclick="resetUserPassword(&quot;'+_escapeHtml(u.username)+'&quot;)">Reset Password</button> <button class="report-action" onclick="deleteUser(&quot;'+_escapeHtml(u.username)+'&quot;)">Delete</button></td></tr>';}}).join('');
+      var rows=(d.users||[]).map(function(u){{return '<tr><td>'+_escapeHtml(u.username)+(u.locked?' <span class="badge-soon">LOCKED</span>':'')+(u.totp_enabled?' <span class="badge-soon">2FA</span>':'')+'</td><td>'+_escapeHtml(u.role)+'</td><td><button class="report-action" onclick="resetUserPassword(&quot;'+_escapeHtml(u.username)+'&quot;)">Reset Password</button> <button class="report-action" onclick="unlockUser(&quot;'+_escapeHtml(u.username)+'&quot;)">Unlock</button> <button class="report-action" onclick="resetUser2FA(&quot;'+_escapeHtml(u.username)+'&quot;)">Reset 2FA</button> <button class="report-action" onclick="deleteUser(&quot;'+_escapeHtml(u.username)+'&quot;)">Delete</button></td></tr>';}}).join('');
       el.innerHTML='<table class="user-table"><thead><tr><th>User</th><th>Role</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table>';
     }});
   }};
@@ -5700,6 +5723,21 @@ PAGE = """<!DOCTYPE html>
       .then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})
       .then(function(x){{_acctMsg('users-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ User deleted':(x.d.error||'Delete failed')); if(x.ok&&x.d.ok)loadUsers();}});
   }};
+  function fmtTime(ts) {{ if(!ts) return '—'; try {{ return new Date(ts*1000).toLocaleString(); }} catch(e) {{ return String(ts); }} }}
+  window.loadSessions = function() {{ fetch('/api/sessions',{{method:'POST'}}).then(function(r){{return r.json();}}).then(function(d){{ var el=document.getElementById('sessions-list'); if(!el)return; var rows=(d.sessions||[]).map(function(s){{return '<tr><td>'+_escapeHtml(s.username||'')+(s.current?' <span class="badge-soon">CURRENT</span>':'')+'</td><td>'+_escapeHtml(s.ip||'')+'</td><td>'+fmtTime(s.last_activity)+'</td><td>'+_escapeHtml((s.user_agent||'').slice(0,80))+'</td><td><button class="report-action" onclick="revokeSession(&quot;'+_escapeHtml(s.id)+'&quot;)">Revoke</button></td></tr>';}}).join(''); el.innerHTML='<table class="user-table"><thead><tr><th>User</th><th>IP</th><th>Last Activity</th><th>Browser</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'; }}); }};
+  window.revokeSession = function(id) {{ fetch('/api/sessions/revoke',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{id:id}})}}).then(function(){{loadSessions();}}); }};
+  window.render2FA = function() {{ var el=document.getElementById('twofa-box'); if(el) el.innerHTML='<div>2FA status: '+((CURRENT_USER&&CURRENT_USER.totp_enabled)?'enabled':'disabled')+'</div>'; }};
+  window.setup2FA = function() {{ fetch('/api/2fa/setup',{{method:'POST'}}).then(function(r){{return r.json();}}).then(function(d){{ var el=document.getElementById('twofa-box'); if(!el)return; el.innerHTML='<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap"><img alt="TOTP QR" src="'+d.qr_url+'" style="background:#fff;padding:8px;border-radius:4px"><div><div class="custom-panel-note">Scan the QR code, or enter this key manually:</div><code>'+_escapeHtml(d.secret)+'</code><div class="form-field"><label>Confirmation Code</label><input id="twofa-code" inputmode="numeric" autocomplete="one-time-code"></div><button class="btn-save" onclick="enable2FA()">Confirm & Enable</button></div></div>'; }}); }};
+  window.enable2FA = function() {{ fetch('/api/2fa/enable',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{code:(document.getElementById('twofa-code')||{{}}).value||''}})}}).then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}}).then(function(x){{_acctMsg('twofa-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ 2FA enabled':(x.d.error||'Enable failed')); loadAuthStatus(render2FA);}}); }};
+  window.disable2FA = function() {{ var p=prompt('Current password to disable 2FA:'); if(!p)return; fetch('/api/2fa/disable',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{password:p}})}}).then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}}).then(function(x){{_acctMsg('twofa-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ 2FA disabled':(x.d.error||'Disable failed')); loadAuthStatus(render2FA);}}); }};
+  window.loadApiTokens = function() {{ fetch('/api/api-tokens',{{method:'POST'}}).then(function(r){{return r.json();}}).then(function(d){{ var el=document.getElementById('tokens-list'); if(!el)return; var rows=(d.tokens||[]).map(function(t){{return '<tr><td>'+_escapeHtml(t.name||'')+'</td><td>'+fmtTime(t.created)+'</td><td>'+(t.expires?fmtTime(t.expires):'Never')+'</td><td><button class="report-action" onclick="revokeApiToken(&quot;'+_escapeHtml(t.id)+'&quot;)">Revoke</button></td></tr>';}}).join(''); el.innerHTML='<table class="user-table"><thead><tr><th>Name</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>'; }}); }};
+  window.createApiToken = function() {{ fetch('/api/api-tokens/create',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{name:(document.getElementById('token-name')||{{}}).value||'Integration',expiry_days:parseInt((document.getElementById('token-expiry')||{{}}).value||'0',10)}})}}).then(function(r){{return r.json();}}).then(function(d){{_acctMsg('token-msg',!!d.ok,d.ok?'Token: '+d.token:(d.error||'Create failed')); loadApiTokens();}}); }};
+  window.revokeApiToken = function(id) {{ fetch('/api/api-tokens/revoke',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{id:id}})}}).then(function(){{loadApiTokens();}}); }};
+  window.loadLoginHistory = function() {{ fetch('/api/login-history',{{method:'POST'}}).then(function(r){{return r.json();}}).then(function(d){{ var el=document.getElementById('login-history'); if(!el)return; var rows=(d.entries||[]).map(function(e){{return '<tr><td>'+fmtTime(e.ts)+'</td><td>'+_escapeHtml(e.ip||'')+'</td><td>'+_escapeHtml(e.username||'')+'</td><td>'+(e.success?'OK':'FAIL')+'</td><td>'+_escapeHtml(e.reason||'')+'</td></tr>';}}).join(''); el.innerHTML='<table class="user-table"><thead><tr><th>Time</th><th>IP</th><th>User</th><th>Result</th><th>Reason</th></tr></thead><tbody>'+rows+'</tbody></table>'; }}); }};
+  window.loadPasswordExpiry = function() {{ fetch('/api/security-settings',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{}})}}).then(function(r){{return r.json();}}).then(function(d){{ var s=d.settings||{{}}; var e=document.getElementById('expiry-enabled'), days=document.getElementById('expiry-days'); if(e)e.checked=!!s.password_expiry_enabled; if(days)days.value=String(s.password_expiry_days||90); }}); }};
+  window.savePasswordExpiry = function() {{ var payload={{password_expiry_enabled:!!(document.getElementById('expiry-enabled')||{{}}).checked,password_expiry_days:parseInt((document.getElementById('expiry-days')||{{}}).value||'90',10)}}; fetch('/api/security-settings',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}}).then(function(r){{return r.json();}}).then(function(d){{_acctMsg('expiry-msg',!!d.ok,d.ok?'✓ Saved':(d.error||'Save failed'));}}); }};
+  window.unlockUser = function(username) {{ fetch('/api/users/unlock',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{username:username}})}}).then(function(){{loadUsers();}}); }};
+  window.resetUser2FA = function(username) {{ if(!confirm('Reset 2FA for '+username+'?')) return; fetch('/api/users/reset-2fa',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{username:username}})}}).then(function(){{loadUsers();}}); }};
   loadAuthStatus();
 
   /* ── Welcome screen ── */

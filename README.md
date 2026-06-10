@@ -2,13 +2,25 @@
 
 **A zero-dependency homelab NOC dashboard — static Python generator, vanilla JS, Docker-ready. No React, no build step.**
 
-Deploy it, add credentials, and get a fully live operations dashboard regenerated every 15 minutes. Edit mode: drag cards, resize, remove, add new cards, create sections. 130+ integrations with live status or Coming Soon badges.
+Deploy it, create an admin account, add credentials, and get a fully live operations dashboard regenerated every 15 minutes. Multi-user authentication supports admin and read-only viewer roles, account lockout, login audit history, session management, optional TOTP 2FA, optional password expiry, and named API tokens. Edit mode: drag cards, resize, remove, add new cards, create sections. 130+ integrations with live status or READY badges.
 
 ---
 
 ![NOC Dashboard — Dark NOC Theme](screenshots/dark-noc.png)
 
 *Dark NOC theme — true black background, green accents, terminal aesthetic*
+
+---
+
+![NOC Dashboard — Login](screenshots/login.png)
+
+*Login and first-time setup — create the first admin account before the dashboard loads*
+
+---
+
+![NOC Dashboard — Account Settings](screenshots/account-settings.png)
+
+*Account settings — password changes, active sessions, TOTP 2FA, API tokens, admin user management, login history, lockout controls, and password-expiry policy*
 
 ---
 
@@ -72,6 +84,21 @@ One container. One port (8081). No external databases.
 ---
 
 ## Features
+
+### Authentication & Account Security
+- **First-time setup** creates the initial admin account before the dashboard loads
+- **bcrypt password hashes** stored in persistent `state/config.json`
+- **90-day session cookie** with Remember me checked by default
+- **Admin role** — full dashboard access, card editing, settings, and user management
+- **Viewer role** — read-only dashboard with edit/settings changes disabled
+- **Account lockout** — 5 failed login attempts locks the account for 15 minutes; admins can unlock users from Manage Users
+- **Login audit log** — every success/failure records timestamp, IP address, username, and reason; admins can view the last 100 entries
+- **Session management** — users can view/revoke their own sessions; admins can revoke any active session with IP, browser/user-agent, and last activity shown
+- **TOTP two-factor authentication** — optional per user, disabled by default; users scan a QR code, confirm a 6-digit code, and admins can reset a user's 2FA
+- **Password expiry policy** — optional and disabled by default; admins can enable 30/60/90/180-day expiry, users get a 7-day warning and expired users are forced toward password change on login
+- **API tokens** — users can generate named bearer tokens with optional expiry for external integrations and revoke them individually
+- **Protected APIs** — `/api/` endpoints reject unauthenticated requests with `401`; API tokens authenticate separately from browser session cookies
+- **Dynamic favicon** — dashboard and login page both render the same status-color SVG favicon logic
 
 ### Visual Design — NOC Room Aesthetic
 - **True black background** — `#0a0a0a`, not washed-out dark grey
