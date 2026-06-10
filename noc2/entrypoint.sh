@@ -38,6 +38,7 @@ POST /test-connection — run a collector with provided creds, return state
 import http.server, json, os, subprocess, threading, sys, importlib.util, ssl, time, secrets, hashlib, re, base64, hmac, struct, uuid
 import urllib.parse
 import html
+from email.utils import formatdate
 import bcrypt
 
 CTX = ssl.create_default_context()
@@ -219,10 +220,12 @@ def new_session(state, username, ip="", user_agent=""):
     return token, exp
 
 def cookie_header(token, expires):
-    return f"{AUTH_COOKIE}={token}; Max-Age={SESSION_DAYS*86400}; Path=/; HttpOnly; SameSite=Lax"
+    # Max-Age is enough by spec, but Expires makes browser/proxy behavior explicit.
+    exp_http = formatdate(int(expires), usegmt=True)
+    return f"{AUTH_COOKIE}={token}; Max-Age={SESSION_DAYS*86400}; Expires={exp_http}; Path=/; HttpOnly; SameSite=Lax"
 
 def clear_cookie_header():
-    return f"{AUTH_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax"
+    return f"{AUTH_COOKIE}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly; SameSite=Lax"
 
 def parse_cookies(header):
     out = {}
@@ -231,6 +234,15 @@ def parse_cookies(header):
             k, v = part.strip().split('=', 1)
             out[k] = urllib.parse.unquote(v)
     return out
+
+def cookie_values(header, name):
+    vals = []
+    for part in str(header or "").split(';'):
+        if '=' in part:
+            k, v = part.strip().split('=', 1)
+            if k == name:
+                vals.append(urllib.parse.unquote(v))
+    return vals
 
 def client_ip_from_headers(headers, fallback=""):
     xf = str(headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
@@ -325,11 +337,11 @@ def user_from_api_token(state, headers):
     return None
 
 def current_user_from_headers(headers, ip=""):
-    token = parse_cookies(headers.get("Cookie")).get(AUTH_COOKIE, "")
+    tokens = [t for t in cookie_values(headers.get("Cookie"), AUTH_COOKIE) if t]
     state = read_state_config()
-    if not token:
+    if not tokens:
         return user_from_api_token(state, headers)
-    th = hashlib.sha256(token.encode()).hexdigest()
+    token_hashes = {hashlib.sha256(t.encode()).hexdigest() for t in tokens}
     now = int(time.time())
     valid_sessions = []
     found = None
@@ -338,7 +350,7 @@ def current_user_from_headers(headers, ip=""):
         if int(sess.get("expires", 0)) <= now:
             changed = True
             continue
-        if sess.get("token_hash") == th:
+        if sess.get("token_hash") in token_hashes:
             user = find_user(state, sess.get("username"))
             if user:
                 sess["last_activity"] = now
@@ -772,11 +784,11 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(500, {"error": str(e)})
             return
         if path == "/api/logout":
-            token = parse_cookies(self.headers.get("Cookie")).get(AUTH_COOKIE, "")
+            tokens = [t for t in cookie_values(self.headers.get("Cookie"), AUTH_COOKIE) if t]
             state = read_state_config()
-            if token:
-                th = hashlib.sha256(token.encode()).hexdigest()
-                state["sessions"] = [s for s in state.get("sessions", []) if s.get("token_hash") != th]
+            if tokens:
+                token_hashes = {hashlib.sha256(t.encode()).hexdigest() for t in tokens}
+                state["sessions"] = [s for s in state.get("sessions", []) if s.get("token_hash") not in token_hashes]
                 write_state_config(state)
             self.send_json(200, {"ok": True}, {"Set-Cookie": clear_cookie_header()})
             return
@@ -896,11 +908,11 @@ class NOCHandler(http.server.SimpleHTTPRequestHandler):
             return
         if path == "/api/sessions":
             state = read_state_config()
-            th = hashlib.sha256(parse_cookies(self.headers.get("Cookie")).get(AUTH_COOKIE, "").encode()).hexdigest()
+            current_hashes = {hashlib.sha256(t.encode()).hexdigest() for t in cookie_values(self.headers.get("Cookie"), AUTH_COOKIE) if t}
             sessions = []
             for sess in state.get("sessions", []):
                 if user.get("role") == "admin" or normalize_username(sess.get("username")).lower() == normalize_username(user.get("username")).lower():
-                    sessions.append({"id": sess.get("id") or sess.get("token_hash", "")[:12], "username": sess.get("username"), "created": sess.get("created"), "last_activity": sess.get("last_activity"), "ip": sess.get("ip"), "user_agent": sess.get("user_agent"), "current": sess.get("token_hash") == th})
+                    sessions.append({"id": sess.get("id") or sess.get("token_hash", "")[:12], "username": sess.get("username"), "created": sess.get("created"), "last_activity": sess.get("last_activity"), "ip": sess.get("ip"), "user_agent": sess.get("user_agent"), "current": sess.get("token_hash") in current_hashes})
             self.send_json(200, {"ok": True, "sessions": sessions})
             return
         if path == "/api/sessions/revoke":
