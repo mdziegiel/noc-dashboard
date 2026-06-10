@@ -4390,7 +4390,24 @@ PAGE = """<!DOCTYPE html>
   .sidebar-dot.warn {{ background:var(--warn); }}
   .sidebar-dot.error, .sidebar-dot.crit {{ background:var(--crit); }}
   .sidebar-check {{ width:14px; height:14px; accent-color:var(--green); cursor:pointer; }}
-  .auth-user-chip {{ color:var(--muted); font-size:10px; letter-spacing:1px; }}
+  .auth-user-menu {{ position:relative; display:inline-flex; align-items:center; }}
+  .auth-user-chip {{ background:var(--panel2); border:1px solid var(--line); color:var(--green);
+    font-size:10px; letter-spacing:1px; font-family:inherit; padding:3px 8px;
+    border-radius:4px; cursor:pointer; display:inline-flex; align-items:center; gap:5px;
+    text-transform:uppercase; }}
+  .auth-user-chip:hover, .auth-user-menu.open .auth-user-chip {{ border-color:var(--green-dim); background:rgba(0,255,65,.06); }}
+  .auth-user-chevron {{ color:var(--green-dim); font-size:9px; line-height:1; }}
+  .auth-user-dropdown {{ display:none; position:absolute; right:0; top:calc(100% + 6px); min-width:190px;
+    background:var(--panel); border:1px solid var(--line); border-radius:5px;
+    box-shadow:0 8px 28px rgba(0,0,0,.85); z-index:10050; padding:7px 0;
+    font-size:11px; letter-spacing:1px; }}
+  .auth-user-menu.open .auth-user-dropdown {{ display:block; }}
+  .auth-user-info {{ padding:5px 12px 7px; color:var(--green); text-transform:uppercase; }}
+  .auth-user-role {{ color:var(--muted); font-size:9px; margin-top:2px; }}
+  .auth-user-divider {{ height:1px; background:var(--line); margin:5px 0; }}
+  .auth-user-logout {{ width:100%; background:none; border:none; color:var(--green); font-family:inherit;
+    font-size:11px; letter-spacing:1px; text-align:left; padding:7px 12px; cursor:pointer; text-transform:uppercase; }}
+  .auth-user-logout:hover {{ background:rgba(0,255,65,.08); color:var(--txt); }}
   .viewer-role #edit-btn,.viewer-role #save-btn,.viewer-role #add-card-btn,.viewer-role #add-custom-card-btn {{ display:none!important; }}
   .user-table {{ width:100%; border-collapse:collapse; font-size:11px; margin:10px 0 16px; }}
   .user-table th,.user-table td {{ border-bottom:1px solid var(--line); padding:7px; text-align:left; }}
@@ -5181,7 +5198,7 @@ PAGE = """<!DOCTYPE html>
   var CURRENT_USER = null;
 
   var CATEGORIES = [
-    {{ id:'account',    label:'Account', keys:['account_change_password','account_sessions','account_2fa','account_api_tokens','account_logout','account_manage_users','account_login_history','account_password_expiry'] }},
+    {{ id:'account',    label:'Account', keys:['account_change_password','account_sessions','account_2fa','account_api_tokens','account_manage_users','account_login_history','account_password_expiry'] }},
     {{ id:'general',    label:'General', keys:['general_dashboard', 'datetime_settings', 'reports', 'toggle_alerts'] }},
     {{ id:'infra',      label:'Infrastructure',
       keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
@@ -5277,7 +5294,7 @@ PAGE = """<!DOCTYPE html>
     if (!list) return;
     var html = '';
     var isAdmin = CURRENT_USER && CURRENT_USER.role === 'admin';
-    var cats = isAdmin ? CATEGORIES : [{{id:'account', label:'Account', keys:['account_change_password','account_sessions','account_2fa','account_api_tokens','account_logout']}}];
+    var cats = isAdmin ? CATEGORIES : [{{id:'account', label:'Account', keys:['account_change_password','account_sessions','account_2fa','account_api_tokens']}}];
     cats.forEach(function(cat) {{
       var items = cat.keys.filter(function(k) {{
         if (k === 'account_manage_users' || k === 'account_login_history' || k === 'account_password_expiry') return isAdmin;
@@ -5296,10 +5313,6 @@ PAGE = """<!DOCTYPE html>
         if (key === 'account_sessions') {{ html += '<div class="sidebar-item" data-key="account_sessions"><span>Sessions</span><span class="sidebar-dot ok"></span></div>'; return; }}
         if (key === 'account_2fa') {{ html += '<div class="sidebar-item" data-key="account_2fa"><span>Two-Factor Auth</span><span class="sidebar-dot ok"></span></div>'; return; }}
         if (key === 'account_api_tokens') {{ html += '<div class="sidebar-item" data-key="account_api_tokens"><span>API Tokens</span><span class="sidebar-dot ok"></span></div>'; return; }}
-        if (key === 'account_logout') {{
-          html += '<div class="sidebar-item" data-key="account_logout"><span>Logout</span><span class="sidebar-dot ok"></span></div>';
-          return;
-        }}
         if (key === 'account_manage_users') {{ html += '<div class="sidebar-item" data-key="account_manage_users"><span>Manage Users</span><span class="sidebar-dot ok"></span></div>'; return; }}
         if (key === 'account_login_history') {{ html += '<div class="sidebar-item" data-key="account_login_history"><span>Login History</span><span class="sidebar-dot ok"></span></div>'; return; }}
         if (key === 'account_password_expiry') {{ html += '<div class="sidebar-item" data-key="account_password_expiry"><span>Password Expiry</span><span class="sidebar-dot ok"></span></div>'; return; }}
@@ -5367,10 +5380,6 @@ PAGE = """<!DOCTYPE html>
         +'<div class="form-field"><label>New Password</label><input id="acct-new" type="password" autocomplete="new-password"></div>'
         +'<div class="form-field"><label>Confirm Password</label><input id="acct-confirm" type="password" autocomplete="new-password"></div>'
         +'</div><div class="form-actions"><button class="btn-save" onclick="changeOwnPassword()">&#10003; Change Password</button><span id="acct-msg" class="test-result" style="display:none"></span></div></div>';
-      return;
-    }}
-    if (key === 'account_logout') {{
-      right.innerHTML = '<div class="integ-form-title">Logout</div><div class="custom-panel"><div class="custom-panel-note">End this browser session.</div><button class="btn-save" onclick="logoutUser()">Logout</button></div>';
       return;
     }}
     if (key === 'account_manage_users') {{
@@ -5676,12 +5685,36 @@ PAGE = """<!DOCTYPE html>
   function applyRoleUI() {{
     var isViewer = CURRENT_USER && CURRENT_USER.role === 'viewer';
     document.body.classList.toggle('viewer-role', !!isViewer);
-    var chip = document.getElementById('auth-user-chip');
-    if (!chip) {{
-      chip = document.createElement('div'); chip.id='auth-user-chip'; chip.className='auth-user-chip';
-      var tr = document.querySelector('.top-right'); if (tr) tr.insertBefore(chip, document.getElementById('settings-btn'));
+    var menu = document.getElementById('auth-user-menu');
+    if (!menu) {{
+      menu = document.createElement('div');
+      menu.id = 'auth-user-menu';
+      menu.className = 'auth-user-menu';
+      menu.innerHTML = '<button id="auth-user-chip" class="auth-user-chip" type="button" title="Account menu"><span class="auth-user-label"></span><span class="auth-user-chevron">&#9662;</span></button>'
+        + '<div class="auth-user-dropdown" role="menu">'
+        + '<div class="auth-user-info"><div class="auth-user-name"></div><div class="auth-user-role"></div></div>'
+        + '<div class="auth-user-divider"></div>'
+        + '<button class="auth-user-logout" type="button" role="menuitem">Logout</button>'
+        + '</div>';
+      var tr = document.querySelector('.top-right');
+      if (tr) tr.insertBefore(menu, document.getElementById('settings-btn'));
+      var btn = menu.querySelector('#auth-user-chip');
+      if (btn) btn.addEventListener('click', function(e) {{ e.stopPropagation(); menu.classList.toggle('open'); }});
+      var logoutBtn = menu.querySelector('.auth-user-logout');
+      if (logoutBtn) logoutBtn.addEventListener('click', function(e) {{ e.stopPropagation(); menu.classList.remove('open'); logoutUser(); }});
+      document.addEventListener('click', function(e) {{ if (!menu.contains(e.target)) menu.classList.remove('open'); }});
+      document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') menu.classList.remove('open'); }});
     }}
-    if (chip && CURRENT_USER) chip.textContent = CURRENT_USER.username + ' · ' + CURRENT_USER.role;
+    if (menu && CURRENT_USER) {{
+      var username = CURRENT_USER.username || 'user';
+      var role = CURRENT_USER.role || 'viewer';
+      var label = menu.querySelector('.auth-user-label');
+      var name = menu.querySelector('.auth-user-name');
+      var roleEl = menu.querySelector('.auth-user-role');
+      if (label) label.textContent = username + ' · ' + role;
+      if (name) name.textContent = username;
+      if (roleEl) roleEl.textContent = 'Role: ' + role;
+    }}
   }}
   var _adminToggleEditMode = window.toggleEditMode;
   window.toggleEditMode = function() {{
