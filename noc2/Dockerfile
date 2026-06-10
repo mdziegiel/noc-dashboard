@@ -6,7 +6,7 @@ LABEL description="NOC 2 — static homelab dashboard on port 9900, 15-min cron 
 WORKDIR /app
 
 # Generator deps
-RUN pip install --no-cache-dir requests pyyaml pywinrm
+RUN pip install --no-cache-dir requests pyyaml pywinrm bcrypt
 
 COPY generate_dashboard.py /app/generate_dashboard.py
 COPY entrypoint.sh /entrypoint.sh

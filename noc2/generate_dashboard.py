@@ -4390,6 +4390,11 @@ PAGE = """<!DOCTYPE html>
   .sidebar-dot.warn {{ background:var(--warn); }}
   .sidebar-dot.error, .sidebar-dot.crit {{ background:var(--crit); }}
   .sidebar-check {{ width:14px; height:14px; accent-color:var(--green); cursor:pointer; }}
+  .auth-user-chip {{ color:var(--muted); font-size:10px; letter-spacing:1px; }}
+  .viewer-role #edit-btn,.viewer-role #save-btn,.viewer-role #add-card-btn,.viewer-role #add-custom-card-btn {{ display:none!important; }}
+  .user-table {{ width:100%; border-collapse:collapse; font-size:11px; margin:10px 0 16px; }}
+  .user-table th,.user-table td {{ border-bottom:1px solid var(--line); padding:7px; text-align:left; }}
+  .user-table th {{ color:var(--green-dim); text-transform:uppercase; letter-spacing:1px; font-size:9px; }}
   .settings-content {{ flex:1; overflow-y:auto; padding:22px 28px; position:relative; }}
   .settings-close {{ display:none; }}
   .settings-welcome {{ color:var(--muted); font-size:12px; padding-top:60px;
@@ -5173,8 +5178,10 @@ PAGE = """<!DOCTYPE html>
   var _fieldDefs = null;
   var _currentCfg = null;
   var _selectedType = null;
+  var CURRENT_USER = null;
 
   var CATEGORIES = [
+    {{ id:'account',    label:'Account', keys:['account_change_password','account_logout','account_manage_users'] }},
     {{ id:'general',    label:'General', keys:['general_dashboard', 'datetime_settings', 'reports', 'toggle_alerts'] }},
     {{ id:'infra',      label:'Infrastructure',
       keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
@@ -5269,8 +5276,12 @@ PAGE = """<!DOCTYPE html>
     var list = document.getElementById('settings-sidebar-list');
     if (!list) return;
     var html = '';
-    CATEGORIES.forEach(function(cat) {{
+    var isAdmin = CURRENT_USER && CURRENT_USER.role === 'admin';
+    var cats = isAdmin ? CATEGORIES : [{{id:'account', label:'Account', keys:['account_change_password','account_logout']}}];
+    cats.forEach(function(cat) {{
       var items = cat.keys.filter(function(k) {{
+        if (k === 'account_manage_users') return isAdmin;
+        if (k === 'account_change_password' || k === 'account_logout') return true;
         if (k === 'custom' || k === 'general_dashboard' || k === 'datetime_settings' || k === 'reports' || k === 'toggle_alerts') return true;
         var i = _integByKey(k);
         return !!i;
@@ -5278,6 +5289,18 @@ PAGE = """<!DOCTYPE html>
       if (!items.length) return;
       html += '<div class="sidebar-cat">'+cat.label+'</div>';
       items.forEach(function(key) {{
+        if (key === 'account_change_password') {{
+          html += '<div class="sidebar-item" data-key="account_change_password"><span>Change Password</span><span class="sidebar-dot ok"></span></div>';
+          return;
+        }}
+        if (key === 'account_logout') {{
+          html += '<div class="sidebar-item" data-key="account_logout"><span>Logout</span><span class="sidebar-dot ok"></span></div>';
+          return;
+        }}
+        if (key === 'account_manage_users') {{
+          html += '<div class="sidebar-item" data-key="account_manage_users"><span>Manage Users</span><span class="sidebar-dot ok"></span></div>';
+          return;
+        }}
         if (key === 'general_dashboard') {{
           html += '<div class="sidebar-item" data-key="general_dashboard">'            +'<span>Dashboard Branding</span>'            +'<span class="sidebar-dot ok"></span>'            +'</div>';
           return;
@@ -5331,6 +5354,36 @@ PAGE = """<!DOCTYPE html>
     }});
     var right = document.getElementById('settings-right');
     if (!right) return;
+
+    // Account panels
+    if (key === 'account_change_password') {{
+      right.innerHTML = '<div class="integ-form-title">Account</div>'
+        +'<div class="custom-panel">'
+        +'<div class="custom-panel-note">Change password for '+_escapeHtml((CURRENT_USER||{{}}).username||'current user')+'. Requirements: minimum 8 characters, one uppercase, one lowercase, one number.</div>'
+        +'<div id="form-grid" class="form-grid">'
+        +'<div class="form-field span2"><label>Current Password</label><input id="acct-old" type="password" autocomplete="current-password"></div>'
+        +'<div class="form-field"><label>New Password</label><input id="acct-new" type="password" autocomplete="new-password"></div>'
+        +'<div class="form-field"><label>Confirm Password</label><input id="acct-confirm" type="password" autocomplete="new-password"></div>'
+        +'</div><div class="form-actions"><button class="btn-save" onclick="changeOwnPassword()">&#10003; Change Password</button><span id="acct-msg" class="test-result" style="display:none"></span></div></div>';
+      return;
+    }}
+    if (key === 'account_logout') {{
+      right.innerHTML = '<div class="integ-form-title">Logout</div><div class="custom-panel"><div class="custom-panel-note">End this browser session.</div><button class="btn-save" onclick="logoutUser()">Logout</button></div>';
+      return;
+    }}
+    if (key === 'account_manage_users') {{
+      if (!CURRENT_USER || CURRENT_USER.role !== 'admin') {{ right.innerHTML='<div class="settings-welcome">Admin role required.</div>'; return; }}
+      right.innerHTML = '<div class="integ-form-title">Manage Users</div>'
+        +'<div class="custom-panel"><div class="custom-panel-note">Create users, set role, reset passwords, or delete accounts. Password requirements: minimum 8 characters, one uppercase, one lowercase, one number.</div>'
+        +'<div id="users-list">Loading&hellip;</div>'
+        +'<div class="bcc-section-hdr">Create User</div><div id="form-grid" class="form-grid">'
+        +'<div class="form-field"><label>Username</label><input id="new-user" autocomplete="off"></div>'
+        +'<div class="form-field"><label>Role</label><select id="new-role"><option value="viewer">viewer</option><option value="admin">admin</option></select></div>'
+        +'<div class="form-field"><label>Password</label><input id="new-pass" type="password"></div>'
+        +'<div class="form-field"><label>Confirm</label><input id="new-confirm" type="password"></div>'
+        +'</div><div class="form-actions"><button class="btn-save" onclick="createUser()">&#10003; Create User</button><span id="users-msg" class="test-result" style="display:none"></span></div></div>';
+      loadUsers(); return;
+    }}
 
     // General dashboard branding panel
     if (key === 'general_dashboard') {{
@@ -5572,12 +5625,12 @@ PAGE = """<!DOCTYPE html>
     var ov=document.getElementById('settings-overlay');
     var isOpen=ov.classList.toggle('open');
     if (isOpen) {{
-      buildSidebar(); document.body.style.overflow='hidden';
+      loadAuthStatus(function(){{ buildSidebar(); }}); document.body.style.overflow='hidden';
       _selectedType=null;
       var right=document.getElementById('settings-right');
       if (right) right.innerHTML='<div class="settings-welcome">'
         +'<span class="settings-welcome-icon">&#9881;</span>'
-        +'Select an integration from the sidebar to configure credentials.</div>';
+        +'Select Account or an integration from the sidebar.</div>';
     }} else {{ document.body.style.overflow=''; }}
   }};
 
@@ -5592,6 +5645,62 @@ PAGE = """<!DOCTYPE html>
     }}
   }});
 
+  function loadAuthStatus(cb) {{
+    fetch('/api/auth-status').then(function(r){{ if(r.status===401){{ location.href='/login'; return null; }} return r.json(); }})
+      .then(function(d){{ if(!d) return; CURRENT_USER=d.user||null; applyRoleUI(); if(cb) cb(d); }})
+      .catch(function(){{ if(cb) cb(null); }});
+  }}
+  function applyRoleUI() {{
+    var isViewer = CURRENT_USER && CURRENT_USER.role === 'viewer';
+    document.body.classList.toggle('viewer-role', !!isViewer);
+    var chip = document.getElementById('auth-user-chip');
+    if (!chip) {{
+      chip = document.createElement('div'); chip.id='auth-user-chip'; chip.className='auth-user-chip';
+      var tr = document.querySelector('.top-right'); if (tr) tr.insertBefore(chip, document.getElementById('settings-btn'));
+    }}
+    if (chip && CURRENT_USER) chip.textContent = CURRENT_USER.username + ' · ' + CURRENT_USER.role;
+  }}
+  var _adminToggleEditMode = window.toggleEditMode;
+  window.toggleEditMode = function() {{
+    if (CURRENT_USER && CURRENT_USER.role !== 'admin') return;
+    return _adminToggleEditMode.apply(this, arguments);
+  }};
+  window.logoutUser = function() {{ fetch('/api/logout',{{method:'POST'}}).then(function(){{ location.href='/login'; }}); }};
+  function _acctMsg(id, ok, msg) {{ var el=document.getElementById(id); if(el){{el.style.display='inline-block';el.className='test-result '+(ok?'ok':'error');el.textContent=msg;}} }}
+  window.changeOwnPassword = function() {{
+    var payload={{old_password:(document.getElementById('acct-old')||{{}}).value||'',new_password:(document.getElementById('acct-new')||{{}}).value||'',confirm_password:(document.getElementById('acct-confirm')||{{}}).value||''}};
+    fetch('/api/change-password',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}})
+      .then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})
+      .then(function(x){{_acctMsg('acct-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ Password changed':(x.d.error||'Password change failed'));}});
+  }};
+  window.loadUsers = function() {{
+    fetch('/api/users',{{method:'POST'}}).then(function(r){{return r.json();}}).then(function(d){{
+      var el=document.getElementById('users-list'); if(!el) return;
+      var rows=(d.users||[]).map(function(u){{return '<tr><td>'+_escapeHtml(u.username)+'</td><td>'+_escapeHtml(u.role)+'</td><td><button class="report-action" onclick="resetUserPassword(&quot;'+_escapeHtml(u.username)+'&quot;)">Reset Password</button> <button class="report-action" onclick="deleteUser(&quot;'+_escapeHtml(u.username)+'&quot;)">Delete</button></td></tr>';}}).join('');
+      el.innerHTML='<table class="user-table"><thead><tr><th>User</th><th>Role</th><th>Actions</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    }});
+  }};
+  window.createUser = function() {{
+    var p=(document.getElementById('new-pass')||{{}}).value||'', c=(document.getElementById('new-confirm')||{{}}).value||'';
+    if(p!==c){{_acctMsg('users-msg',false,'Passwords do not match.');return;}}
+    var payload={{username:(document.getElementById('new-user')||{{}}).value||'',role:(document.getElementById('new-role')||{{}}).value||'viewer',password:p}};
+    fetch('/api/users/create',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}})
+      .then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})
+      .then(function(x){{_acctMsg('users-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ User created':(x.d.error||'Create failed')); if(x.ok&&x.d.ok)loadUsers();}});
+  }};
+  window.resetUserPassword = function(username) {{
+    var p=prompt('New password for '+username+' (min 8, upper, lower, number):'); if(!p) return;
+    fetch('/api/users/reset-password',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{username:username,password:p}})}})
+      .then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})
+      .then(function(x){{_acctMsg('users-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ Password reset':(x.d.error||'Reset failed'));}});
+  }};
+  window.deleteUser = function(username) {{
+    if(!confirm('Delete user '+username+'?')) return;
+    fetch('/api/users/delete',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{username:username}})}})
+      .then(function(r){{return r.json().then(function(d){{return {{ok:r.ok,d:d}};}});}})
+      .then(function(x){{_acctMsg('users-msg',x.ok&&x.d.ok,x.ok&&x.d.ok?'✓ User deleted':(x.d.error||'Delete failed')); if(x.ok&&x.d.ok)loadUsers();}});
+  }};
+  loadAuthStatus();
 
   /* ── Welcome screen ── */
   var WELCOME_KEY = 'noc-welcomed';
