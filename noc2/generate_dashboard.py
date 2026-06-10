@@ -37,6 +37,7 @@ def load_dashboard_config():
         "dashboard_subtitle": DEFAULT_DASHBOARD_SUBTITLE,
         "logo_url": "",
         "timezone": "UTC",
+        "show_ticker_bar": True,
     }
     try:
         with open(CONFIG_FILE, encoding="utf-8") as f:
@@ -44,7 +45,10 @@ def load_dashboard_config():
         if isinstance(raw, dict):
             for key in cfg:
                 val = raw.get(key)
-                if isinstance(val, str):
+                if key == "show_ticker_bar":
+                    if isinstance(val, bool):
+                        cfg[key] = val
+                elif isinstance(val, str):
                     cfg[key] = val.strip()
     except FileNotFoundError:
         pass
@@ -53,6 +57,8 @@ def load_dashboard_config():
     cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_TITLE
     cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_SUBTITLE
     cfg["timezone"] = cfg.get("timezone") or "UTC"
+    if not isinstance(cfg.get("show_ticker_bar"), bool):
+        cfg["show_ticker_bar"] = True
     return cfg
 
 def dashboard_logo_html(cfg):
@@ -2703,7 +2709,8 @@ def render(data, gen_epoch, errors, trends=None):
     _badge_cls = "tb-crit" if any(c == "t-crit" for _, c in ticker_items) else \
                  ("tb-warn" if any(c == "t-warn" for _, c in ticker_items) else "tb-ok")
     _badge_txt = "ALERT" if _badge_cls == "tb-crit" else ("WARN" if _badge_cls == "tb-warn" else "INFO")
-    ticker_bar = (f'<div class="ticker-bar">'
+    _ticker_hidden_cls = "" if dashboard_cfg.get("show_ticker_bar", True) else " ticker-hidden"
+    ticker_bar = (f'<div class="ticker-bar{_ticker_hidden_cls}" id="ticker-bar">'
                   f'<div class="tk-badge {_badge_cls}">{_badge_txt}</div>'
                   f'{_ticker_content}'
                   f'</div>')
@@ -4225,7 +4232,12 @@ PAGE = """<!DOCTYPE html>
     background:linear-gradient(90deg,#050905,#080e08,#050905);
     border-bottom:1px solid var(--line);
     height:32px; overflow:hidden; position:sticky; top:50px; z-index:4;
+    transition:height .2s ease, opacity .2s ease, border-width .2s ease;
   }}
+  .ticker-bar.ticker-hidden {{
+    height:0 !important; opacity:0; border-bottom-width:0; overflow:hidden;
+  }}
+  #ticker-toggle-btn.ticker-active {{ color:var(--green); border-color:var(--green); }}
   .tk-badge {{
     flex:none; font-size:10px; font-weight:bold; letter-spacing:2px;
     padding:0 14px; height:100%; display:flex; align-items:center;
@@ -4448,6 +4460,7 @@ PAGE = """<!DOCTYPE html>
       <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
       {cc_btn}
+      <button id="ticker-toggle-btn" class="theme-btn" onclick="toggleTickerBar()" title="Toggle alert ticker bar">&#9646;&#9646;</button>
       <button id="reports-btn" class="theme-btn" onclick="toggleReports()" title="Reports">&#9776;</button>
       <button id="settings-btn" class="theme-btn" onclick="toggleSettings()" title="Integrations &amp; Settings">&#9881;</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
@@ -4586,6 +4599,48 @@ PAGE = """<!DOCTYPE html>
 
   var pin = localStorage.getItem('theme-pin');
   applyTheme(pin && THEMES.indexOf(pin) !== -1 ? pin : DEFAULT_THEME);
+
+  /* ── Ticker bar toggle ── */
+  var TICKER_PREF_KEY = 'noc-ticker-visible';
+  function _applyTickerPref(visible) {{
+    var tb = document.getElementById('ticker-bar');
+    var btn = document.getElementById('ticker-toggle-btn');
+    if (!tb) return;
+    if (visible) {{
+      tb.classList.remove('ticker-hidden');
+      if (btn) btn.classList.add('ticker-active');
+    }} else {{
+      tb.classList.add('ticker-hidden');
+      if (btn) btn.classList.remove('ticker-active');
+    }}
+  }}
+  window.toggleTickerBar = function() {{
+    var tb = document.getElementById('ticker-bar');
+    if (!tb) return;
+    var isHidden = tb.classList.contains('ticker-hidden');
+    var newVisible = isHidden; // toggling: if hidden now, make visible
+    _applyTickerPref(newVisible);
+    localStorage.setItem(TICKER_PREF_KEY, newVisible ? '1' : '0');
+    // Persist to server config
+    fetch('/save-dashboard-config', {{method:'POST', headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify({{show_ticker_bar: newVisible}})
+    }}).catch(function(){{}});
+  }};
+  // Init from localStorage (instant, no flicker) — server-rendered class handles SSR
+  (function() {{
+    var stored = localStorage.getItem(TICKER_PREF_KEY);
+    if (stored !== null) {{
+      _applyTickerPref(stored === '1');
+    }} else {{
+      // No preference stored — read from current DOM state (server rendered)
+      var tb = document.getElementById('ticker-bar');
+      if (tb) {{
+        var serverVisible = !tb.classList.contains('ticker-hidden');
+        localStorage.setItem(TICKER_PREF_KEY, serverVisible ? '1' : '0');
+        _applyTickerPref(serverVisible);
+      }}
+    }}
+  }})();
 
   window.focusCard = function(el) {{
     var title = el.getAttribute('data-title');
@@ -5226,7 +5281,7 @@ PAGE = """<!DOCTYPE html>
     if (key === 'general_dashboard') {{
       var cfg = DASHBOARD_CONFIG || {{}};
       function _escAttr(v) {{ return String(v||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }}
-      right.innerHTML = '<div class="integ-form-title">General</div>'        +'<div class="custom-panel">'        +'<div class="custom-panel-note">Customize the top-bar branding. Saved to <code>state/config.json</code> and read on every regeneration.</div>'        +'<div id="form-grid" class="form-grid">'        +'<div class="form-field span2"><label>Dashboard Title</label>'        +'<input id="field-dashboard_title" type="text" value="'+_escAttr(cfg.dashboard_title||'NOC Dashboard')+'" data-key="dashboard_title" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Subtitle</label>'        +'<input id="field-dashboard_subtitle" type="text" value="'+_escAttr(cfg.dashboard_subtitle||'Infrastructure Monitoring')+'" data-key="dashboard_subtitle" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Logo URL (optional)</label>'        +'<input id="field-logo_url" type="text" value="'+_escAttr(cfg.logo_url||'')+'" placeholder="https://example.com/logo.png" data-key="logo_url" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Time Zone</label>'        +'<select id="field-timezone" data-key="timezone">'        +['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','Europe/London','Europe/Berlin','Asia/Tokyo','Australia/Sydney'].map(function(tz){{return '<option value="'+tz+'" '+((cfg.timezone||'UTC')===tz?'selected':'')+'>'+tz+'</option>';}}).join('')        +'</select></div>'        +'</div><div class="form-actions">'        +'<button class="btn-save" id="btn-save" onclick="saveDashboardConfig()">&#10003; Save &amp; Apply</button>'        +'<span id="test-result" class="test-result" style="display:none"></span>'        +'</div></div>';
+      right.innerHTML = '<div class="integ-form-title">General</div>'        +'<div class="custom-panel">'        +'<div class="custom-panel-note">Customize the top-bar branding. Saved to <code>state/config.json</code> and read on every regeneration.</div>'        +'<div id="form-grid" class="form-grid">'        +'<div class="form-field span2"><label>Dashboard Title</label>'        +'<input id="field-dashboard_title" type="text" value="'+_escAttr(cfg.dashboard_title||'NOC Dashboard')+'" data-key="dashboard_title" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Subtitle</label>'        +'<input id="field-dashboard_subtitle" type="text" value="'+_escAttr(cfg.dashboard_subtitle||'Infrastructure Monitoring')+'" data-key="dashboard_subtitle" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Logo URL (optional)</label>'        +'<input id="field-logo_url" type="text" value="'+_escAttr(cfg.logo_url||'')+'" placeholder="https://example.com/logo.png" data-key="logo_url" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Time Zone</label>'        +'<select id="field-timezone" data-key="timezone">'        +['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','Europe/London','Europe/Berlin','Asia/Tokyo','Australia/Sydney'].map(function(tz){{return '<option value="'+tz+'" '+((cfg.timezone||'UTC')===tz?'selected':'')+'>'+tz+'</option>';}}).join('')        +'</select></div>'        +'<div class="form-field span2" style="align-items:center;display:flex;gap:10px;padding:6px 0">'        +'<label style="margin:0;font-size:12px;letter-spacing:1px;cursor:pointer;display:flex;align-items:center;gap:8px">'        +'<input type="checkbox" id="field-show_ticker_bar" '+(cfg.show_ticker_bar!==false?'checked':'')+' style="width:14px;height:14px;cursor:pointer;accent-color:var(--green)">'        +'Show ticker bar (scrolling alert strip)</label>'        +'</div>'        +'</div><div class="form-actions">'        +'<button class="btn-save" id="btn-save" onclick="saveDashboardConfig()">&#10003; Save &amp; Apply</button>'        +'<span id="test-result" class="test-result" style="display:none"></span>'        +'</div></div>';
       return;
     }}
 
@@ -5335,11 +5390,13 @@ PAGE = """<!DOCTYPE html>
   }};
 
   window.saveDashboardConfig = function() {{
+    var tickerCb = document.getElementById('field-show_ticker_bar');
     var vals = {{
       dashboard_title: (document.getElementById('field-dashboard_title')||{{value:''}}).value.trim(),
       dashboard_subtitle: (document.getElementById('field-dashboard_subtitle')||{{value:''}}).value.trim(),
       logo_url: (document.getElementById('field-logo_url')||{{value:''}}).value.trim(),
-      timezone: (document.getElementById('field-timezone')||{{value:'UTC'}}).value.trim() || 'UTC'
+      timezone: (document.getElementById('field-timezone')||{{value:'UTC'}}).value.trim() || 'UTC',
+      show_ticker_bar: tickerCb ? tickerCb.checked : true
     }};
     var btn=document.getElementById('btn-save'), tr=document.getElementById('test-result');
     if (btn) {{ btn.disabled=true; btn.textContent='⧙ Saving…'; }}
@@ -5348,6 +5405,9 @@ PAGE = """<!DOCTYPE html>
     .then(function(d){{
       if (btn) {{ btn.disabled=false; btn.textContent='✓ Save & Apply'; }}
       DASHBOARD_CONFIG=d.config||vals;
+      // Apply ticker preference immediately
+      _applyTickerPref(vals.show_ticker_bar);
+      localStorage.setItem(TICKER_PREF_KEY, vals.show_ticker_bar ? '1' : '0');
       if (tr){{tr.style.display='inline-block';tr.className='test-result ok';tr.textContent='✓ Saved — regen started';}}
     }})
     .catch(function(e){{if(btn){{btn.disabled=false;btn.textContent='✓ Save & Apply';}} alert('Save failed: '+e.message);}});

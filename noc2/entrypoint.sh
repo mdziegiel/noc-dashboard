@@ -54,6 +54,7 @@ DEFAULT_DASHBOARD_CONFIG = {
     "dashboard_subtitle": "Infrastructure Monitoring",
     "logo_url": "",
     "timezone": "UTC",
+    "show_ticker_bar": True,
 }
 
 # ── env helpers ────────────────────────────────────────────────────────────────
@@ -84,24 +85,34 @@ def read_dashboard_config():
         if isinstance(raw, dict):
             for key in cfg:
                 val = raw.get(key)
-                if isinstance(val, str):
+                if key == "show_ticker_bar":
+                    if isinstance(val, bool):
+                        cfg[key] = val
+                elif isinstance(val, str):
                     cfg[key] = val.strip()
     except FileNotFoundError:
         pass
     cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
     cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
     cfg["timezone"] = cfg.get("timezone") or "UTC"
+    if not isinstance(cfg.get("show_ticker_bar"), bool):
+        cfg["show_ticker_bar"] = True
     return cfg
 
 def write_dashboard_config(payload):
     cfg = read_dashboard_config()
     for key in cfg:
         val = payload.get(key, "") if isinstance(payload, dict) else ""
-        if isinstance(val, str):
+        if key == "show_ticker_bar":
+            if isinstance(val, bool):
+                cfg[key] = val
+        elif isinstance(val, str):
             cfg[key] = val.strip()
     cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
     cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
     cfg["timezone"] = cfg.get("timezone") or "UTC"
+    if not isinstance(cfg.get("show_ticker_bar"), bool):
+        cfg["show_ticker_bar"] = True
     os.makedirs(STATE_DIR, exist_ok=True)
     tmp = CONFIG_FILE + ".tmp"
     with open(tmp, "w") as f:
