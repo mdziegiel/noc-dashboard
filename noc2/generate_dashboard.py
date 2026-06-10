@@ -3138,6 +3138,8 @@ _CC_CSS = """
   .cb-field{display:flex;flex-direction:column;gap:4px;}
   .cb-field.span2{grid-column:span 2;}
   .cb-field label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;}
+  .custom-builder-shell input,.custom-builder-shell select,.custom-builder-shell textarea{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:inherit;width:100%;box-sizing:border-box;}
+  .custom-builder-shell input:focus,.custom-builder-shell select:focus,.custom-builder-shell textarea:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 1px rgba(0,255,65,.16);}
   .cb-field input,.cb-field select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:inherit;width:100%;box-sizing:border-box;}
   .cb-field input:focus,.cb-field select:focus{outline:none;border-color:var(--green-dim);}
   .cb-field select option{background:var(--panel);}
@@ -4165,10 +4167,11 @@ PAGE = """<!DOCTYPE html>
   @media(max-width:700px) {{ .form-grid {{ grid-template-columns:1fr; }} }}
   .form-field {{ display:flex; flex-direction:column; gap:4px; }}
   .form-field label {{ font-size:10px; color:var(--muted); letter-spacing:1px; text-transform:uppercase; }}
-  .form-field input {{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
+  .form-field input, .form-field select {{ background:var(--panel); border:1px solid var(--line); color:var(--txt);
     padding:6px 10px; border-radius:4px; font-size:12px; font-family:inherit;
-    transition:border-color .15s; }}
-  .form-field input:focus {{ outline:none; border-color:var(--green); }}
+    transition:border-color .15s; box-sizing:border-box; width:100%; }}
+  .form-field input:focus, .form-field select:focus {{ outline:none; border-color:var(--green); box-shadow:0 0 0 1px rgba(0,255,65,.16); }}
+  .form-field select option {{ background:var(--panel); color:var(--txt); }}
   .form-field input::placeholder {{ color:var(--muted); opacity:.5; }}
   .form-actions {{ display:flex; gap:10px; margin-top:16px; align-items:center; }}
   .btn-test {{ background:none; border:1px solid var(--green-dim); color:var(--green-dim);
@@ -4195,14 +4198,15 @@ PAGE = """<!DOCTYPE html>
     flex-shrink:0; }}
   .sidebar-item.coming-soon {{ opacity:.6; }}
   .sidebar-item.coming-soon:hover {{ opacity:.85; }}
-  .coming-soon-panel {{ padding:24px; text-align:center; }}
-  .coming-soon-icon {{ font-size:28px; display:block; margin-bottom:10px; opacity:.35; }}
+  .coming-soon-panel {{ padding:0; text-align:left; }}
+  .coming-soon-icon {{ font-size:18px; display:inline-block; margin-right:8px; opacity:.45; }}
   .coming-soon-title {{ font-size:14px; font-weight:700; letter-spacing:2px; color:var(--txt);
-    text-transform:uppercase; margin-bottom:6px; }}
-  .coming-soon-msg {{ font-size:11px; color:var(--muted); line-height:1.6; }}
+    text-transform:uppercase; margin-bottom:6px; display:inline-block; }}
+  .coming-soon-msg {{ font-size:11px; color:var(--muted); line-height:1.6; margin:8px 0 16px;
+    padding:8px 10px; background:var(--panel2); border-radius:4px; border-left:3px solid var(--green-dim); }}
   .custom-panel {{ padding:4px 0 12px; }}
   .custom-panel-note {{ font-size:11px; color:var(--muted); margin-bottom:16px;\n    padding:8px 10px; background:var(--panel2); border-radius:4px; border-left:3px solid var(--green-dim); }}
-{{cc_css}}
+{cc_css}
 
   /* ── First-launch welcome overlay ── */
   .welcome-overlay {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,.92);
@@ -4857,6 +4861,23 @@ PAGE = """<!DOCTYPE html>
     return s==='ok'?'ok':s==='warn'?'warn':(s==='error'||s==='crit')?'error':'degraded';
   }}
 
+  function _envPrefix(key) {{
+    return String(key || 'integration').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'INTEGRATION';
+  }}
+  function _defaultFieldsFor(key) {{
+    var p = _envPrefix(key);
+    return [
+      {{key:p+'_URL',      label:'URL',      type:'text'}},
+      {{key:p+'_API_KEY',  label:'API Key',  type:'password'}},
+      {{key:p+'_USERNAME', label:'Username', type:'text'}},
+      {{key:p+'_PASSWORD', label:'Password', type:'password'}}
+    ];
+  }}
+  function _fieldsFor(defs, key) {{
+    var fields = (defs && defs[key]) || [];
+    return fields.length ? fields : _defaultFieldsFor(key);
+  }}
+
   function _loadFieldDefs(cb) {{
     if (_fieldDefs) {{ cb(_fieldDefs); return; }}
     fetch('/api/integration-fields').then(function(r){{return r.json();}})
@@ -4933,7 +4954,7 @@ PAGE = """<!DOCTYPE html>
       right.innerHTML = '<div class="integ-form-title">&#10010; Custom Integration</div>'\
         +'<div class="custom-panel">'\
         +'<div class="custom-panel-note">Define your own integration: name, URL, auth type, and a JSONPath to extract a status value. The collector will make a periodic HTTP request and surface the result as a card.</div>'\
-        +'<div class="form-grid">'\
+        +'<div id="form-grid" class="form-grid">'\
         +'<div class="form-field span2"><label>Integration Name</label>'\
         +'<input id="field-CUSTOM_NAME" type="text" placeholder="My Service" data-key="CUSTOM_NAME" autocomplete="off"></div>'\
         +'<div class="form-field span2"><label>URL</label>'\
@@ -4959,30 +4980,22 @@ PAGE = """<!DOCTYPE html>
 
     var integ = _integByKey(key);
     if (!integ) return;
-
-    // Coming Soon panel
-    if (integ.state === 'coming_soon') {{
-      right.innerHTML = '<div class="coming-soon-panel">'\
-        +'<span class="coming-soon-icon">&#9899;</span>'\
-        +'<div class="coming-soon-title">'+integ.label+'</div>'\
-        +'<div class="badge-soon" style="display:inline-block;margin-bottom:14px">Coming Soon</div>'\
-        +'<div class="coming-soon-msg">A collector for '+integ.label+' is on the roadmap.<br>'\
-        +'Star the repo or open an issue to request it sooner.</div>'\
-        +'</div>';
-      return;
-    }}
-
     var sc = _stateColor(integ.state);
-    var statusLabel = integ.state==='ok'?'&#10003; Connected'\
+    var isComingSoon = integ.state === 'coming_soon';
+    var statusLabel = isComingSoon?'Coming Soon — credentials can be staged now'
+      :integ.state==='ok'?'&#10003; Connected'\
       :integ.state==='warn'?'&#9888; Warning'\
       :integ.state==='degraded'?'&#8212; Not Configured':'&#10005; Error';
-    var statusColor = integ.state==='ok'?'var(--green)':integ.state==='warn'?'var(--warn)'\
+    var statusColor = isComingSoon?'var(--muted)'
+      :integ.state==='ok'?'var(--green)':integ.state==='warn'?'var(--warn)'\
       :integ.state==='degraded'?'var(--degr)':'var(--crit)';
-    right.innerHTML = '<div class="integ-form-title">'+integ.label+'</div>'\
+    right.innerHTML = '<div class="integ-form-title">'+(isComingSoon?'&#9899; ':'')+integ.label+'</div>'\
+      +(isComingSoon?'<div class="badge-soon" style="display:inline-block;margin-bottom:10px">Coming Soon</div>':'')\
       +'<div class="integ-form-status" style="color:'+statusColor+';border-color:'+statusColor+'">'\
       +'<span class="sidebar-dot '+sc+'"></span>&nbsp;'+statusLabel\
       +(integ.note?' &mdash; <span style="font-weight:normal;text-transform:none;color:var(--muted)">'+integ.note+'</span>':'')\
       +'</div>'\
+      +(isComingSoon?'<div class="coming-soon-msg">Collector support is not wired yet. Store the standard credentials now so the integration is ready when the collector lands.</div>':'')\
       +'<div id="form-grid" class="form-grid"><div style="color:var(--muted);font-size:11px">Loading&hellip;</div></div>'\
       +'<div class="form-actions">'\
       +'<button class="btn-test" id="btn-test" onclick="testConnection()">&#9654; Test Connection</button>'\
@@ -4991,7 +5004,7 @@ PAGE = """<!DOCTYPE html>
       +'</div>';
     _loadFieldDefs(function(defs) {{
       _loadCurrentCfg(function(cfg) {{
-        var fields = defs[key]||[];
+        var fields = _fieldsFor(defs, key);
         var fg = document.getElementById('form-grid');
         if (!fg) return;
         if (!fields.length) {{
@@ -5013,7 +5026,7 @@ PAGE = """<!DOCTYPE html>
 
   function _getFormValues() {{
     var vals = {{}};
-    document.querySelectorAll('#form-grid input[data-key]').forEach(function(inp){{
+    document.querySelectorAll('#form-grid input[data-key], #form-grid select[data-key]').forEach(function(inp){{
       if (inp.value.trim()) vals[inp.dataset.key]=inp.value.trim();
     }});
     return vals;
