@@ -36,6 +36,7 @@ def load_dashboard_config():
         "dashboard_title": DEFAULT_DASHBOARD_TITLE,
         "dashboard_subtitle": DEFAULT_DASHBOARD_SUBTITLE,
         "logo_url": "",
+        "timezone": "UTC",
     }
     try:
         with open(CONFIG_FILE, encoding="utf-8") as f:
@@ -51,6 +52,7 @@ def load_dashboard_config():
         print(f"warn: dashboard config load failed: {type(e).__name__}: {str(e)[:80]}")
     cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_TITLE
     cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_SUBTITLE
+    cfg["timezone"] = cfg.get("timezone") or "UTC"
     return cfg
 
 def dashboard_logo_html(cfg):
@@ -2051,16 +2053,18 @@ def render(data, gen_epoch, errors, trends=None):
     overall_txt = {"ok": "ALL SYSTEMS OPERATIONAL", "warn": "ATTENTION NEEDED",
                    "crit": "CRITICAL", "degraded": "DEGRADED"}[overall]
 
-    # Render the generation time in Eastern (America/New_York). zoneinfo handles
-    # the EDT/EST switch automatically - no hardcoded offset to drift twice a year.
+    dashboard_cfg = load_dashboard_config()
+    tz_name = dashboard_cfg.get("timezone") or "UTC"
     from datetime import datetime as _datetime, timezone as _timezone
     try:
         from zoneinfo import ZoneInfo
-        _et = _datetime.fromtimestamp(gen_epoch, ZoneInfo("America/New_York"))
+        _tz = ZoneInfo(tz_name)
     except Exception:
-        # Fallback: VM is UTC; apply a fixed -4h EDT offset if tzdata is missing.
-        _et = _datetime.fromtimestamp(gen_epoch, _timezone.utc).astimezone()
-    ts = _et.strftime("%a %b %-d, %Y %-I:%M %p ET")
+        tz_name = "UTC"
+        _tz = _timezone.utc
+    _local_dt = _datetime.fromtimestamp(gen_epoch, _tz)
+    _tz_label = _local_dt.tzname() or tz_name
+    ts = _local_dt.strftime("%a %b %-d, %Y %-I:%M %p ") + _tz_label
 
     # ---- Row 1: status ----
     prox_body = (metric("VMs", f'{P.get("vms_running",0)}/{P.get("vms_total",0)}',
@@ -2885,7 +2889,6 @@ def render(data, gen_epoch, errors, trends=None):
     integ_list.append({"key": "custom", "label": "Custom Integration", "state": "custom", "note": ""})
     integ_list.sort(key=lambda x: (0 if x["state"] == "ok" else 1 if x["state"] == "warn" else 2, x["label"]))
     integrations_json = json.dumps(integ_list)
-    dashboard_cfg = load_dashboard_config()
 
     return PAGE.format(
         ts=esc(ts), overall=overall, overall_txt=overall_txt,
@@ -5133,7 +5136,7 @@ PAGE = """<!DOCTYPE html>
     if (key === 'general_dashboard') {{
       var cfg = DASHBOARD_CONFIG || {{}};
       function _escAttr(v) {{ return String(v||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }}
-      right.innerHTML = '<div class="integ-form-title">General</div>'        +'<div class="custom-panel">'        +'<div class="custom-panel-note">Customize the top-bar branding. Saved to <code>state/config.json</code> and read on every regeneration.</div>'        +'<div id="form-grid" class="form-grid">'        +'<div class="form-field span2"><label>Dashboard Title</label>'        +'<input id="field-dashboard_title" type="text" value="'+_escAttr(cfg.dashboard_title||'NOC Dashboard')+'" data-key="dashboard_title" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Subtitle</label>'        +'<input id="field-dashboard_subtitle" type="text" value="'+_escAttr(cfg.dashboard_subtitle||'Infrastructure Monitoring')+'" data-key="dashboard_subtitle" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Logo URL (optional)</label>'        +'<input id="field-logo_url" type="text" value="'+_escAttr(cfg.logo_url||'')+'" placeholder="https://example.com/logo.png" data-key="logo_url" autocomplete="off"></div>'        +'</div><div class="form-actions">'        +'<button class="btn-save" id="btn-save" onclick="saveDashboardConfig()">&#10003; Save &amp; Apply</button>'        +'<span id="test-result" class="test-result" style="display:none"></span>'        +'</div></div>';
+      right.innerHTML = '<div class="integ-form-title">General</div>'        +'<div class="custom-panel">'        +'<div class="custom-panel-note">Customize the top-bar branding. Saved to <code>state/config.json</code> and read on every regeneration.</div>'        +'<div id="form-grid" class="form-grid">'        +'<div class="form-field span2"><label>Dashboard Title</label>'        +'<input id="field-dashboard_title" type="text" value="'+_escAttr(cfg.dashboard_title||'NOC Dashboard')+'" data-key="dashboard_title" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Subtitle</label>'        +'<input id="field-dashboard_subtitle" type="text" value="'+_escAttr(cfg.dashboard_subtitle||'Infrastructure Monitoring')+'" data-key="dashboard_subtitle" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Logo URL (optional)</label>'        +'<input id="field-logo_url" type="text" value="'+_escAttr(cfg.logo_url||'')+'" placeholder="https://example.com/logo.png" data-key="logo_url" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Time Zone</label>'        +'<select id="field-timezone" data-key="timezone">'        +['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','Europe/London','Europe/Berlin','Asia/Tokyo','Australia/Sydney'].map(function(tz){{return '<option value="'+tz+'" '+((cfg.timezone||'UTC')===tz?'selected':'')+'>'+tz+'</option>';}}).join('')        +'</select></div>'        +'</div><div class="form-actions">'        +'<button class="btn-save" id="btn-save" onclick="saveDashboardConfig()">&#10003; Save &amp; Apply</button>'        +'<span id="test-result" class="test-result" style="display:none"></span>'        +'</div></div>';
       return;
     }}
 
@@ -5245,7 +5248,8 @@ PAGE = """<!DOCTYPE html>
     var vals = {{
       dashboard_title: (document.getElementById('field-dashboard_title')||{{value:''}}).value.trim(),
       dashboard_subtitle: (document.getElementById('field-dashboard_subtitle')||{{value:''}}).value.trim(),
-      logo_url: (document.getElementById('field-logo_url')||{{value:''}}).value.trim()
+      logo_url: (document.getElementById('field-logo_url')||{{value:''}}).value.trim(),
+      timezone: (document.getElementById('field-timezone')||{{value:'UTC'}}).value.trim() || 'UTC'
     }};
     var btn=document.getElementById('btn-save'), tr=document.getElementById('test-result');
     if (btn) {{ btn.disabled=true; btn.textContent='⧙ Saving…'; }}

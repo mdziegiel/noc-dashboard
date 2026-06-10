@@ -53,6 +53,7 @@ DEFAULT_DASHBOARD_CONFIG = {
     "dashboard_title": "NOC Dashboard",
     "dashboard_subtitle": "Infrastructure Monitoring",
     "logo_url": "",
+    "timezone": "UTC",
 }
 
 # ── env helpers ────────────────────────────────────────────────────────────────
@@ -89,6 +90,7 @@ def read_dashboard_config():
         pass
     cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
     cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
+    cfg["timezone"] = cfg.get("timezone") or "UTC"
     return cfg
 
 def write_dashboard_config(payload):
@@ -99,6 +101,7 @@ def write_dashboard_config(payload):
             cfg[key] = val.strip()
     cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
     cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
+    cfg["timezone"] = cfg.get("timezone") or "UTC"
     os.makedirs(STATE_DIR, exist_ok=True)
     tmp = CONFIG_FILE + ".tmp"
     with open(tmp, "w") as f:
