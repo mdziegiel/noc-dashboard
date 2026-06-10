@@ -38,6 +38,8 @@ def load_dashboard_config():
         "logo_url": "",
         "timezone": "UTC",
         "show_ticker_bar": True,
+        "date_format": "YYYY-MM-DD",
+        "clock_format": "24hr",
     }
     try:
         with open(CONFIG_FILE, encoding="utf-8") as f:
@@ -59,6 +61,10 @@ def load_dashboard_config():
     cfg["timezone"] = cfg.get("timezone") or "UTC"
     if not isinstance(cfg.get("show_ticker_bar"), bool):
         cfg["show_ticker_bar"] = True
+    if cfg.get("date_format") not in ("MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"):
+        cfg["date_format"] = "YYYY-MM-DD"
+    if cfg.get("clock_format") not in ("12hr", "24hr"):
+        cfg["clock_format"] = "24hr"
     return cfg
 
 def dashboard_logo_html(cfg):
@@ -2061,6 +2067,8 @@ def render(data, gen_epoch, errors, trends=None):
 
     dashboard_cfg = load_dashboard_config()
     tz_name = dashboard_cfg.get("timezone") or "UTC"
+    date_fmt = dashboard_cfg.get("date_format") or "YYYY-MM-DD"
+    clock_fmt = dashboard_cfg.get("clock_format") or "24hr"
     from datetime import datetime as _datetime, timezone as _timezone
     try:
         from zoneinfo import ZoneInfo
@@ -2070,7 +2078,21 @@ def render(data, gen_epoch, errors, trends=None):
         _tz = _timezone.utc
     _local_dt = _datetime.fromtimestamp(gen_epoch, _tz)
     _tz_label = _local_dt.tzname() or tz_name
-    ts = _local_dt.strftime("%a %b %-d, %Y %-I:%M %p ") + _tz_label
+    # Apply date format preference
+    if date_fmt == "MM/DD/YYYY":
+        _date_str = _local_dt.strftime("%-m/%-d/%Y")
+    elif date_fmt == "DD/MM/YYYY":
+        _date_str = _local_dt.strftime("%-d/%-m/%Y")
+    else:  # YYYY-MM-DD (ISO)
+        _date_str = _local_dt.strftime("%Y-%m-%d")
+    # Apply clock format preference
+    if clock_fmt == "12hr":
+        _time_str = _local_dt.strftime("%-I:%M %p")
+    else:
+        _time_str = _local_dt.strftime("%H:%M")
+    # Day of week
+    _dow = _local_dt.strftime("%a")
+    ts = f"{_dow} {_date_str} {_time_str} {_tz_label}"
 
     # ---- Row 1: status ----
     prox_body = (metric("VMs", f'{P.get("vms_running",0)}/{P.get("vms_total",0)}',
@@ -5134,7 +5156,7 @@ PAGE = """<!DOCTYPE html>
   var _selectedType = null;
 
   var CATEGORIES = [
-    {{ id:'general',    label:'General', keys:['general_dashboard'] }},
+    {{ id:'general',    label:'General', keys:['general_dashboard', 'datetime_settings'] }},
     {{ id:'infra',      label:'Infrastructure',
       keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
     {{ id:'security',   label:'Security',
@@ -5230,7 +5252,7 @@ PAGE = """<!DOCTYPE html>
     var html = '';
     CATEGORIES.forEach(function(cat) {{
       var items = cat.keys.filter(function(k) {{
-        if (k === 'custom' || k === 'general_dashboard') return true;
+        if (k === 'custom' || k === 'general_dashboard' || k === 'datetime_settings') return true;
         var i = _integByKey(k);
         return !!i;
       }});
@@ -5239,6 +5261,10 @@ PAGE = """<!DOCTYPE html>
       items.forEach(function(key) {{
         if (key === 'general_dashboard') {{
           html += '<div class="sidebar-item" data-key="general_dashboard">'            +'<span>Dashboard Branding</span>'            +'<span class="sidebar-dot ok"></span>'            +'</div>';
+          return;
+        }}
+        if (key === 'datetime_settings') {{
+          html += '<div class="sidebar-item" data-key="datetime_settings">'            +'<span>Date &amp; Time</span>'            +'<span class="sidebar-dot ok"></span>'            +'</div>';
           return;
         }}
         if (key === 'custom') {{
@@ -5281,7 +5307,35 @@ PAGE = """<!DOCTYPE html>
     if (key === 'general_dashboard') {{
       var cfg = DASHBOARD_CONFIG || {{}};
       function _escAttr(v) {{ return String(v||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }}
-      right.innerHTML = '<div class="integ-form-title">General</div>'        +'<div class="custom-panel">'        +'<div class="custom-panel-note">Customize the top-bar branding. Saved to <code>state/config.json</code> and read on every regeneration.</div>'        +'<div id="form-grid" class="form-grid">'        +'<div class="form-field span2"><label>Dashboard Title</label>'        +'<input id="field-dashboard_title" type="text" value="'+_escAttr(cfg.dashboard_title||'NOC Dashboard')+'" data-key="dashboard_title" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Subtitle</label>'        +'<input id="field-dashboard_subtitle" type="text" value="'+_escAttr(cfg.dashboard_subtitle||'Infrastructure Monitoring')+'" data-key="dashboard_subtitle" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Logo URL (optional)</label>'        +'<input id="field-logo_url" type="text" value="'+_escAttr(cfg.logo_url||'')+'" placeholder="https://example.com/logo.png" data-key="logo_url" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Time Zone</label>'        +'<select id="field-timezone" data-key="timezone">'        +['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','Europe/London','Europe/Berlin','Asia/Tokyo','Australia/Sydney'].map(function(tz){{return '<option value="'+tz+'" '+((cfg.timezone||'UTC')===tz?'selected':'')+'>'+tz+'</option>';}}).join('')        +'</select></div>'        +'<div class="form-field span2" style="align-items:center;display:flex;gap:10px;padding:6px 0">'        +'<label style="margin:0;font-size:12px;letter-spacing:1px;cursor:pointer;display:flex;align-items:center;gap:8px">'        +'<input type="checkbox" id="field-show_ticker_bar" '+(cfg.show_ticker_bar!==false?'checked':'')+' style="width:14px;height:14px;cursor:pointer;accent-color:var(--green)">'        +'Show ticker bar (scrolling alert strip)</label>'        +'</div>'        +'</div><div class="form-actions">'        +'<button class="btn-save" id="btn-save" onclick="saveDashboardConfig()">&#10003; Save &amp; Apply</button>'        +'<span id="test-result" class="test-result" style="display:none"></span>'        +'</div></div>';
+      right.innerHTML = '<div class="integ-form-title">General</div>'        +'<div class="custom-panel">'        +'<div class="custom-panel-note">Customize the top-bar branding. Saved to <code>state/config.json</code> and read on every regeneration.</div>'        +'<div id="form-grid" class="form-grid">'        +'<div class="form-field span2"><label>Dashboard Title</label>'        +'<input id="field-dashboard_title" type="text" value="'+_escAttr(cfg.dashboard_title||'NOC Dashboard')+'" data-key="dashboard_title" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Subtitle</label>'        +'<input id="field-dashboard_subtitle" type="text" value="'+_escAttr(cfg.dashboard_subtitle||'Infrastructure Monitoring')+'" data-key="dashboard_subtitle" autocomplete="off"></div>'        +'<div class="form-field span2"><label>Logo URL (optional)</label>'        +'<input id="field-logo_url" type="text" value="'+_escAttr(cfg.logo_url||'')+'" placeholder="https://example.com/logo.png" data-key="logo_url" autocomplete="off"></div>'        +'<div class="form-field span2" style="align-items:center;display:flex;gap:10px;padding:6px 0">'        +'<label style="margin:0;font-size:12px;letter-spacing:1px;cursor:pointer;display:flex;align-items:center;gap:8px">'        +'<input type="checkbox" id="field-show_ticker_bar" '+(cfg.show_ticker_bar!==false?'checked':'')+' style="width:14px;height:14px;cursor:pointer;accent-color:var(--green)">'        +'Show ticker bar (scrolling alert strip)</label>'        +'</div>'        +'</div><div class="form-actions">'        +'<button class="btn-save" id="btn-save" onclick="saveDashboardConfig()">&#10003; Save &amp; Apply</button>'        +'<span id="test-result" class="test-result" style="display:none"></span>'        +'</div></div>';
+      return;
+    }}
+
+    // Date & Time settings panel
+    if (key === 'datetime_settings') {{
+      var cfg = DASHBOARD_CONFIG || {{}};
+      var tzOpts = ['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','Europe/London','Europe/Berlin','Europe/Paris','Europe/Madrid','Asia/Tokyo','Asia/Shanghai','Asia/Singapore','Asia/Kolkata','Australia/Sydney','Australia/Melbourne','Pacific/Auckland'].map(function(tz){{return '<option value="'+tz+'" '+((cfg.timezone||'UTC')===tz?'selected':'')+'>'+tz+'</option>';}}).join('');
+      var dfOpts = ['YYYY-MM-DD','MM/DD/YYYY','DD/MM/YYYY'].map(function(f){{return '<option value="'+f+'" '+((cfg.date_format||'YYYY-MM-DD')===f?'selected':'')+'>'+f+'</option>';}}).join('');
+      right.innerHTML = '<div class="integ-form-title">&#128197; Date &amp; Time</div>'
+        +'<div class="custom-panel">'
+        +'<div class="custom-panel-note">All timestamps on the dashboard respect these settings. Changes take effect on the next regeneration.</div>'
+        +'<div id="form-grid" class="form-grid">'
+        +'<div class="form-field span2"><label>Time Zone</label>'
+        +'<select id="dt-timezone">'+tzOpts+'</select></div>'
+        +'<div class="form-field span2"><label>Date Format</label>'
+        +'<select id="dt-date-format">'+dfOpts+'</select></div>'
+        +'<div class="form-field span2"><label>Clock Format</label>'
+        +'<div style="display:flex;gap:16px;align-items:center;margin-top:4px">'
+        +'<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;letter-spacing:1px">'
+        +'<input type="radio" name="clock-fmt" id="dt-clock-12" value="12hr" style="accent-color:var(--green)" '+((cfg.clock_format||'24hr')==='12hr'?'checked':'')+'>12-hour (1:30 PM)</label>'
+        +'<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;letter-spacing:1px">'
+        +'<input type="radio" name="clock-fmt" id="dt-clock-24" value="24hr" style="accent-color:var(--green)" '+((cfg.clock_format||'24hr')==='24hr'?'checked':'')+'>24-hour (13:30)</label>'
+        +'</div></div>'
+        +'</div>'
+        +'<div class="form-actions">'
+        +'<button class="btn-save" id="btn-save" onclick="saveDateTimeConfig()">&#10003; Save &amp; Apply</button>'
+        +'<span id="test-result" class="test-result" style="display:none"></span>'
+        +'</div></div>';
       return;
     }}
 
@@ -5408,6 +5462,28 @@ PAGE = """<!DOCTYPE html>
       // Apply ticker preference immediately
       _applyTickerPref(vals.show_ticker_bar);
       localStorage.setItem(TICKER_PREF_KEY, vals.show_ticker_bar ? '1' : '0');
+      if (tr){{tr.style.display='inline-block';tr.className='test-result ok';tr.textContent='✓ Saved — regen started';}}
+    }})
+    .catch(function(e){{if(btn){{btn.disabled=false;btn.textContent='✓ Save & Apply';}} alert('Save failed: '+e.message);}});
+  }};
+
+  window.saveDateTimeConfig = function() {{
+    var tz = (document.getElementById('dt-timezone')||{{}}).value || 'UTC';
+    var df = (document.getElementById('dt-date-format')||{{}}).value || 'YYYY-MM-DD';
+    var clkEl = document.querySelector('input[name="clock-fmt"]:checked');
+    var clk = clkEl ? clkEl.value : '24hr';
+    var vals = Object.assign({{}}, DASHBOARD_CONFIG || {{}}, {{
+      timezone: tz,
+      date_format: df,
+      clock_format: clk
+    }});
+    var btn = document.getElementById('btn-save'), tr = document.getElementById('test-result');
+    if (btn) {{ btn.disabled=true; btn.textContent='⧙ Saving…'; }}
+    fetch('/save-dashboard-config',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(vals)}})
+    .then(function(r){{return r.json();}})
+    .then(function(d){{
+      if (btn) {{ btn.disabled=false; btn.textContent='✓ Save & Apply'; }}
+      DASHBOARD_CONFIG = d.config || vals;
       if (tr){{tr.style.display='inline-block';tr.className='test-result ok';tr.textContent='✓ Saved — regen started';}}
     }})
     .catch(function(e){{if(btn){{btn.disabled=false;btn.textContent='✓ Save & Apply';}} alert('Save failed: '+e.message);}});

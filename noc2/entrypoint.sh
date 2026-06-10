@@ -55,6 +55,8 @@ DEFAULT_DASHBOARD_CONFIG = {
     "logo_url": "",
     "timezone": "UTC",
     "show_ticker_bar": True,
+    "date_format": "YYYY-MM-DD",
+    "clock_format": "24hr",
 }
 
 # ── env helpers ────────────────────────────────────────────────────────────────
@@ -97,6 +99,10 @@ def read_dashboard_config():
     cfg["timezone"] = cfg.get("timezone") or "UTC"
     if not isinstance(cfg.get("show_ticker_bar"), bool):
         cfg["show_ticker_bar"] = True
+    if cfg.get("date_format") not in ("MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"):
+        cfg["date_format"] = "YYYY-MM-DD"
+    if cfg.get("clock_format") not in ("12hr", "24hr"):
+        cfg["clock_format"] = "24hr"
     return cfg
 
 def write_dashboard_config(payload):
@@ -113,6 +119,10 @@ def write_dashboard_config(payload):
     cfg["timezone"] = cfg.get("timezone") or "UTC"
     if not isinstance(cfg.get("show_ticker_bar"), bool):
         cfg["show_ticker_bar"] = True
+    if cfg.get("date_format") not in ("MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"):
+        cfg["date_format"] = "YYYY-MM-DD"
+    if cfg.get("clock_format") not in ("12hr", "24hr"):
+        cfg["clock_format"] = "24hr"
     os.makedirs(STATE_DIR, exist_ok=True)
     tmp = CONFIG_FILE + ".tmp"
     with open(tmp, "w") as f:
