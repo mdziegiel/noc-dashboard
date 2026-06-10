@@ -4389,6 +4389,7 @@ PAGE = """<!DOCTYPE html>
   .sidebar-dot.ok {{ background:var(--green); box-shadow:0 0 4px var(--green); }}
   .sidebar-dot.warn {{ background:var(--warn); }}
   .sidebar-dot.error, .sidebar-dot.crit {{ background:var(--crit); }}
+  .sidebar-check {{ width:14px; height:14px; accent-color:var(--green); cursor:pointer; }}
   .settings-content {{ flex:1; overflow-y:auto; padding:22px 28px; position:relative; }}
   .settings-close {{ display:none; }}
   .settings-welcome {{ color:var(--muted); font-size:12px; padding-top:60px;
@@ -4482,8 +4483,6 @@ PAGE = """<!DOCTYPE html>
       <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="edit-btn" class="theme-btn" onclick="toggleEditMode()" title="Edit card layout">&#9998; EDIT</button>
       {cc_btn}
-      <button id="ticker-toggle-btn" class="theme-btn" onclick="toggleTickerBar()" title="Toggle alert ticker bar">&#9646;&#9646;</button>
-      <button id="reports-btn" class="theme-btn" onclick="toggleReports()" title="Reports">&#9776;</button>
       <button id="settings-btn" class="theme-btn" onclick="toggleSettings()" title="Integrations &amp; Settings">&#9881;</button>
       <button id="theme-btn" class="theme-btn" onclick="toggleTheme()" title="Cycle theme">&#9680;</button>
     </div>
@@ -4636,17 +4635,23 @@ PAGE = """<!DOCTYPE html>
       if (btn) btn.classList.remove('ticker-active');
     }}
   }}
+  window.setTickerVisibility = function(visible) {{
+    visible = !!visible;
+    _applyTickerPref(visible);
+    localStorage.setItem(TICKER_PREF_KEY, visible ? '1' : '0');
+    if (DASHBOARD_CONFIG) DASHBOARD_CONFIG.show_ticker_bar = visible;
+    document.querySelectorAll('.sidebar-check').forEach(function(cb) {{ cb.checked = visible; }});
+    var panelCheck = document.getElementById('settings-toggle-alerts');
+    if (panelCheck) panelCheck.checked = visible;
+    fetch('/save-dashboard-config', {{method:'POST', headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify(Object.assign({{}}, DASHBOARD_CONFIG || {{}}, {{show_ticker_bar: visible}}))
+    }}).catch(function(){{}});
+  }};
   window.toggleTickerBar = function() {{
     var tb = document.getElementById('ticker-bar');
     if (!tb) return;
     var isHidden = tb.classList.contains('ticker-hidden');
-    var newVisible = isHidden; // toggling: if hidden now, make visible
-    _applyTickerPref(newVisible);
-    localStorage.setItem(TICKER_PREF_KEY, newVisible ? '1' : '0');
-    // Persist to server config
-    fetch('/save-dashboard-config', {{method:'POST', headers:{{'Content-Type':'application/json'}},
-      body:JSON.stringify({{show_ticker_bar: newVisible}})
-    }}).catch(function(){{}});
+    window.setTickerVisibility(isHidden); // toggling: if hidden now, make visible
   }};
   // Init from localStorage (instant, no flicker) — server-rendered class handles SSR
   (function() {{
@@ -4726,6 +4731,20 @@ PAGE = """<!DOCTYPE html>
     var el=document.getElementById('report-summary'); if(el) el.innerHTML=html;
   }}
   window.renderReport = renderReport;
+  window.renderSettingsReport = function(range) {{
+    window._currentReportRange = range || 'daily';
+    document.querySelectorAll('#settings-right .report-tab').forEach(function(b){{ b.classList.toggle('active', b.dataset.range === window._currentReportRange); }});
+    var d = collectReportData(window._currentReportRange);
+    var bad = d.cards.filter(function(c){{ return ['crit','error','warn','degraded'].indexOf(c.state) !== -1; }}).slice(0,12);
+    var html = '<h4>'+_escapeHtml(window._currentReportRange)+' Summary</h4>'
+      + '<div>Generated: '+_escapeHtml(new Date(d.generated).toLocaleString())+'</div>'
+      + '<div>Total cards: '+d.total+'</div>'
+      + '<div>OK: '+(d.counts.ok||0)+' · Warn: '+(d.counts.warn||0)+' · Critical/Error: '+((d.counts.crit||0)+(d.counts.error||0))+' · Degraded: '+(d.counts.degraded||0)+'</div>'
+      + '<div>Recorded alerts: '+d.alerts.length+'</div>';
+    if (bad.length) html += '<ul>'+bad.map(function(c){{return '<li><b>'+_escapeHtml(c.state.toUpperCase())+'</b> '+_escapeHtml(c.title)+(c.note?' — '+_escapeHtml(c.note):'')+'</li>';}}).join('')+'</ul>';
+    else html += '<div style="margin-top:8px;color:var(--green)">No non-green cards in the current dashboard snapshot.</div>';
+    var el=document.getElementById('settings-report-summary'); if(el) el.innerHTML=html;
+  }};
   window.toggleReports = function(force) {{
     var panel=document.getElementById('reports-panel'), ov=document.getElementById('reports-overlay'); if(!panel||!ov) return;
     var open = force === undefined ? !panel.classList.contains('open') : !!force;
@@ -5156,7 +5175,7 @@ PAGE = """<!DOCTYPE html>
   var _selectedType = null;
 
   var CATEGORIES = [
-    {{ id:'general',    label:'General', keys:['general_dashboard', 'datetime_settings'] }},
+    {{ id:'general',    label:'General', keys:['general_dashboard', 'datetime_settings', 'reports', 'toggle_alerts'] }},
     {{ id:'infra',      label:'Infrastructure',
       keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
     {{ id:'security',   label:'Security',
@@ -5252,7 +5271,7 @@ PAGE = """<!DOCTYPE html>
     var html = '';
     CATEGORIES.forEach(function(cat) {{
       var items = cat.keys.filter(function(k) {{
-        if (k === 'custom' || k === 'general_dashboard' || k === 'datetime_settings') return true;
+        if (k === 'custom' || k === 'general_dashboard' || k === 'datetime_settings' || k === 'reports' || k === 'toggle_alerts') return true;
         var i = _integByKey(k);
         return !!i;
       }});
@@ -5265,6 +5284,16 @@ PAGE = """<!DOCTYPE html>
         }}
         if (key === 'datetime_settings') {{
           html += '<div class="sidebar-item" data-key="datetime_settings">'            +'<span>Date &amp; Time</span>'            +'<span class="sidebar-dot ok"></span>'            +'</div>';
+          return;
+        }}
+        if (key === 'reports') {{
+          html += '<div class="sidebar-item" data-key="reports">'            +'<span>Reports</span>'            +'<span class="sidebar-dot ok"></span>'            +'</div>';
+          return;
+        }}
+        if (key === 'toggle_alerts') {{
+          var tickerVisible = (DASHBOARD_CONFIG || {{}}).show_ticker_bar !== false;
+          try {{ var storedTicker = localStorage.getItem(TICKER_PREF_KEY); if (storedTicker !== null) tickerVisible = storedTicker === '1'; }} catch(e) {{}}
+          html += '<div class="sidebar-item" data-key="toggle_alerts">'            +'<span>Toggle Alerts</span>'            +'<input type="checkbox" class="sidebar-check" '+(tickerVisible?'checked':'')+' onclick="event.stopPropagation(); setTickerVisibility(this.checked);">'            +'</div>';
           return;
         }}
         if (key === 'custom') {{
@@ -5336,6 +5365,40 @@ PAGE = """<!DOCTYPE html>
         +'<button class="btn-save" id="btn-save" onclick="saveDateTimeConfig()">&#10003; Save &amp; Apply</button>'
         +'<span id="test-result" class="test-result" style="display:none"></span>'
         +'</div></div>';
+      return;
+    }}
+
+    // Reports panel
+    if (key === 'reports') {{
+      right.innerHTML = '<div class="integ-form-title">Reports</div>'
+        +'<div class="custom-panel">'
+        +'<div class="custom-panel-note">Generate dashboard reports from the current rendered card state and recorded alert history.</div>'
+        +'<div class="report-tabs">'
+        +'<button class="report-tab active" data-range="daily" onclick="renderSettingsReport(&quot;daily&quot;)">Daily</button>'
+        +'<button class="report-tab" data-range="weekly" onclick="renderSettingsReport(&quot;weekly&quot;)">Weekly</button>'
+        +'<button class="report-tab" data-range="monthly" onclick="renderSettingsReport(&quot;monthly&quot;)">Monthly</button>'
+        +'</div>'
+        +'<div class="report-actions">'
+        +'<button class="report-action" onclick="downloadReportCSV()">Download</button>'
+        +'<button class="report-action" onclick="downloadReportPDF()">Export</button>'
+        +'</div>'
+        +'<div id="settings-report-summary" class="report-summary"></div>'
+        +'</div>';
+      renderSettingsReport('daily');
+      return;
+    }}
+
+    // Alert ticker toggle panel
+    if (key === 'toggle_alerts') {{
+      var tickerVisible = (DASHBOARD_CONFIG || {{}}).show_ticker_bar !== false;
+      try {{ var storedTicker = localStorage.getItem(TICKER_PREF_KEY); if (storedTicker !== null) tickerVisible = storedTicker === '1'; }} catch(e) {{}}
+      right.innerHTML = '<div class="integ-form-title">Toggle Alerts</div>'
+        +'<div class="custom-panel">'
+        +'<div class="custom-panel-note">Show or hide the scrolling alert ticker bar. This uses the same dashboard preference as the old top-bar toggle.</div>'
+        +'<label style="display:flex;align-items:center;gap:10px;font-size:12px;letter-spacing:1px;cursor:pointer">'
+        +'<input type="checkbox" id="settings-toggle-alerts" '+(tickerVisible?'checked':'')+' style="width:16px;height:16px;accent-color:var(--green);cursor:pointer" onchange="setTickerVisibility(this.checked)">'
+        +'Show ticker bar</label>'
+        +'</div>';
       return;
     }}
 
