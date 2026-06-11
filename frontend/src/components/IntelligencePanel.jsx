@@ -5,6 +5,16 @@ import { fetchIntelligence } from '../api.js'
 const COLORS = { ok: 'var(--green)', warn: 'var(--warn)', crit: 'var(--crit)' }
 const REFRESH_MS = 30_000
 
+function isGenuineBackdropClick(e, panelSelector) {
+  if (!e || e.target !== e.currentTarget) return false
+  const doc = document.documentElement
+  if (typeof e.clientX === 'number' && (e.clientX >= doc.clientWidth || e.clientY >= doc.clientHeight)) return false
+  const panel = panelSelector ? document.querySelector(panelSelector) : null
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+  if (panel && (panel.contains(e.target) || path.includes(panel))) return false
+  return true
+}
+
 function healthState(pct) {
   if (pct >= 95) return 'ok'
   if (pct >= 90) return 'warn'
@@ -66,7 +76,7 @@ export function HealthDetailModal({ intelligence, onClose }) {
   const [range, setRange] = useState('24h')
   const h = intelligence?.health || { pct: 0, categories: [] }
   return (
-    <div className="intel-modal-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="intel-modal-backdrop" onClick={e => { if (isGenuineBackdropClick(e, '.intel-modal')) onClose() }}>
       <div className="intel-modal">
         <button className="card-modal-close" onClick={onClose}>×</button>
         <div className="card-modal-title">NOC Health Score</div>
@@ -94,10 +104,10 @@ export function HealthDetailModal({ intelligence, onClose }) {
   )
 }
 
-function CollapsibleCard({ title, children, defaultOpen = true }) {
+function CollapsibleCard({ title, children, defaultOpen = true, className = '' }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="intel-card">
+    <div className={`intel-card ${className}`.trim()}>
       <button className="intel-card-title" onClick={() => setOpen(o => !o)}><span>{title}</span><b>{open ? '−' : '+'}</b></button>
       {open && <div className="intel-card-body">{children}</div>}
     </div>
@@ -117,24 +127,24 @@ export function IntelligencePanel({ open, onClose, intelligence, onOpenHealth })
   const certs = intelligence?.certificates || {}
   return (
     <>
-      {open && <div className="intel-overlay" onClick={onClose} />}
+      {open && <div className="intel-overlay" onClick={e => { if (isGenuineBackdropClick(e, '.intel-panel')) onClose() }} />}
       <aside className={`intel-panel${open ? ' open' : ''}`}>
         <div className="intel-panel-hdr"><span>📊 NOC INTELLIGENCE</span><button onClick={onClose}>×</button></div>
         <div className="intel-panel-scroll">
-          <CollapsibleCard title="Health Score"><div className="intel-overview compact" onClick={onOpenHealth} role="button" title="Open NOC Health details"><Donut pct={h.pct || 0} size={118} /><Breakdown categories={h.categories || []} /></div></CollapsibleCard>
-          <CollapsibleCard title="Backup Coverage">
+          <CollapsibleCard title="Health Score" className="intel-health-card"><div className="intel-overview compact" onClick={onOpenHealth} role="button" title="Open NOC Health details"><Donut pct={h.pct || 0} size={118} /><Breakdown categories={h.categories || []} /></div></CollapsibleCard>
+          <CollapsibleCard title="Backup Coverage" className="intel-backup-card">
             <div className="intel-dual-score"><span>File <b className={`q-${healthState(backup.file_pct || 0)}`}>{backup.file_pct ?? 0}%</b></span><span>Image <b className={`q-${healthState(backup.image_pct || 0)}`}>{backup.image_pct ?? 0}%</b></span></div>
             {(backup.clients || []).map(c => <div key={c.name} className="intel-list-row"><span>{c.name}</span><em>{c.last_file_backup} · image {c.days_since_image_backup ?? 'never'}d</em><b className={`q-${c.status}`}>●</b></div>)}
           </CollapsibleCard>
-          <CollapsibleCard title="Security Posture">
+          <CollapsibleCard title="Security Posture" className="intel-security-card">
             <div className={`intel-big-score q-${security.state || 'ok'}`}>{security.pct ?? 100}%</div>
             {Object.entries(security.breakdown || {}).map(([k,v]) => <div key={k} className="intel-break-row"><span>{k.replaceAll('_',' ')}</span><b>{v}</b></div>)}
           </CollapsibleCard>
-          <CollapsibleCard title="Storage Health">
+          <CollapsibleCard title="Storage Health" className="intel-storage-card">
             <div className="intel-break-row"><span>Total aggregate</span><b>{storage.aggregate_pct ?? 0}% used</b></div><Bar pct={storage.aggregate_pct || 0} />
             {(storage.volumes || []).map(v => <div key={`${v.source}-${v.name}`} className="intel-storage-row"><div><span>{v.name}</span><b>{v.pct}%</b></div><Bar pct={v.pct || 0} /></div>)}
           </CollapsibleCard>
-          <CollapsibleCard title="Certificate Expiry">
+          <CollapsibleCard title="Certificate Expiry" className="intel-cert-card">
             {(certs.flagged || []).length > 0 && <div className="intel-cert-flag">Portainer invalid: {(certs.flagged || []).map(c => c.name).join(', ')}</div>}
             {(certs.certs || []).map(c => {
               const cls = c.valid === false || c.days < 15 ? 'crit' : c.days <= 30 ? 'warn' : 'ok'

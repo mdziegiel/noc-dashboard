@@ -1,4 +1,14 @@
 import React, { useState, useEffect } from 'react'
+
+function isGenuineBackdropClick(e, panelSelector) {
+  if (!e || e.target !== e.currentTarget) return false
+  const doc = document.documentElement
+  if (typeof e.clientX === 'number' && (e.clientX >= doc.clientWidth || e.clientY >= doc.clientHeight)) return false
+  const panel = panelSelector ? document.querySelector(panelSelector) : null
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+  if (panel && (panel.contains(e.target) || path.includes(panel))) return false
+  return true
+}
 import { fetchCardTypes, fetchIntegrations } from '../api.js'
 
 const CATEGORY_ORDER = ['Infrastructure', 'Security', 'Network', 'Storage', 'Media', 'Monitoring']
@@ -117,9 +127,9 @@ export default function AddCardPanel({ onAdd, onClose }) {
         paddingTop: 80,
         animation: 'fadeIn 0.15s ease',
       }}
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      onClick={e => { if (isGenuineBackdropClick(e, '.add-card-panel')) onClose() }}
     >
-      <div style={{
+      <div className="add-card-panel" style={{
         background: 'var(--panel)',
         border: '1px solid var(--line)',
         borderRadius: 4,

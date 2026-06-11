@@ -522,3 +522,13 @@
   .intel-panel-scroll { overflow:visible; flex:0 0 auto; min-height:auto; padding-right:16px; }
   .intel-card-body { max-height:none; overflow:visible; }
   .intel-card.cert-expiry .intel-card-body,.intel-cert-card .intel-card-body { max-height:min(360px,42vh); overflow-y:auto; overflow-x:hidden; scrollbar-gutter:stable; }
+
+  /* INTEL hybrid scrolling: panel scrolls, only certificates scroll internally. */
+  .intel-panel { overflow-y:auto; scrollbar-gutter:stable; }
+  .intel-panel-scroll { overflow:visible; flex:0 0 auto; min-height:auto; padding-right:16px; }
+  .intel-card-body { max-height:none; overflow:visible; }
+  .intel-health-card .intel-card-body,
+  .intel-backup-card .intel-card-body,
+  .intel-security-card .intel-card-body,
+  .intel-storage-card .intel-card-body { max-height:none; overflow:visible; }
+  .intel-cert-card .intel-card-body { max-height:min(360px,42vh); overflow-y:auto; overflow-x:hidden; scrollbar-gutter:stable; }

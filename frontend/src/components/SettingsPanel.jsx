@@ -1,5 +1,15 @@
 import React, { useState } from 'react'
 
+function isGenuineBackdropClick(e, panelSelector) {
+  if (!e || e.target !== e.currentTarget) return false
+  const doc = document.documentElement
+  if (typeof e.clientX === 'number' && (e.clientX >= doc.clientWidth || e.clientY >= doc.clientHeight)) return false
+  const panel = panelSelector ? document.querySelector(panelSelector) : null
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+  if (panel && (panel.contains(e.target) || path.includes(panel))) return false
+  return true
+}
+
 const AVAILABLE_ICONS = [
   'Server', 'HardDrive', 'Box', 'Archive', 'RotateCcw', 'Home', 'Activity',
   'Shield', 'AlertTriangle', 'ShieldAlert', 'Cloud', 'Eye',
@@ -114,9 +124,9 @@ export default function SettingsPanel({ card, onSave, onRemove, onClose, section
         justifyContent: 'flex-end',
         background: 'rgba(0,0,0,0.45)',
       }}
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      onClick={e => { if (isGenuineBackdropClick(e, '.settings-panel')) onClose() }}
     >
-      <div style={{
+      <div className="settings-panel" style={{
         position: 'relative',
         zIndex: 1,
         width: 320,

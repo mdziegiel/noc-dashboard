@@ -6,6 +6,16 @@ import SettingsPanel from './components/SettingsPanel.jsx'
 import IntegrationsPage from './components/IntegrationsPage.jsx'
 import { HealthDetailModal, IntelligencePanel, useIntelligence } from './components/IntelligencePanel.jsx'
 
+function isGenuineBackdropClick(e, panelSelector) {
+  if (!e || e.target !== e.currentTarget) return false
+  const doc = document.documentElement
+  if (typeof e.clientX === 'number' && (e.clientX >= doc.clientWidth || e.clientY >= doc.clientHeight)) return false
+  const panel = panelSelector ? document.querySelector(panelSelector) : null
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+  if (panel && (panel.contains(e.target) || path.includes(panel))) return false
+  return true
+}
+
 // Default sections — mirrors NOC 1 / generate_dashboard.py. Used as fallback
 // when layout.json has no sections array (old layouts get migrated by server, but
 // we keep this for the rare case where the client sees an unmigrated layout).
@@ -41,6 +51,13 @@ const TYPE_TO_SECTION = {
 
 function cardSectionId(card) {
   return card.section || TYPE_TO_SECTION[card.type] || 'system_status'
+}
+
+function isStandaloneHealthCard(card) {
+  const type = String(card?.type || '').toLowerCase().replace(/[- ]/g, '_')
+  const title = String(card?.title || '').toLowerCase()
+  return ['noc_health_score', 'health_score', 'noc_health', 'health'].includes(type)
+    || title.includes('noc health score')
 }
 
 function formatDate(d) {
@@ -580,7 +597,7 @@ export default function App() {
     return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', color:'var(--green,#00ff41)' }}>Initializing NOC Dashboard...</div>
   }
 
-  const cards = layout?.cards || []
+  const cards = (layout?.cards || []).filter(card => !isStandaloneHealthCard(card))
   const sections = layout?.sections?.length ? layout.sections : DEFAULT_SECTIONS_DEF
 
   // Group cards by section id
@@ -631,19 +648,6 @@ export default function App() {
           onDelete={handleDeleteSection}
           onToggleCollapse={handleToggleCollapse}
         />
-
-        {/* Edit mode: per-section Add Card button */}
-        {editMode && !collapsed && (
-          <div style={{ marginBottom: 6 }}>
-            <button
-              className="theme-btn"
-              onClick={() => { setAddCardTargetSection(section.id); setShowAdd(true) }}
-              style={{ fontSize: 10, padding: '2px 8px', background: 'transparent', color: 'var(--green-dim)', border: '1px dashed var(--green-dim)' }}
-            >
-              + Add Card to Section
-            </button>
-          </div>
-        )}
 
         {!collapsed && (
           <>
@@ -705,7 +709,7 @@ export default function App() {
                 ))}
                 {editMode && sectionCards.length === 0 && (
                   <div style={{ color: 'var(--muted)', fontSize: 11, padding: '12px 4px', fontStyle: 'italic', letterSpacing: '1px' }}>
-                    Empty section — drag cards here or click + Add Card to Section
+                    Empty section — use + ADD CARD in the navbar
                   </div>
                 )}
               </div>
@@ -788,7 +792,7 @@ export default function App() {
               </div>
             )}
           </div>
-          <button className="theme-btn" onClick={cycleTheme} title="Cycle theme">◐ {themeLabel}</button>
+          <button className="theme-btn nav-icon-btn" onClick={cycleTheme} title={`Cycle theme (${themeLabel})`} aria-label={`Cycle theme (${themeLabel})`}>🌙</button>
         </div>
       </div>
 
@@ -824,7 +828,7 @@ export default function App() {
 
       {showAlerts && (
         <>
-          <div className="alert-overlay" style={{ display:'block' }} onClick={(e) => { if (e.target === e.currentTarget) setShowAlerts(false) }} />
+          <div className="alert-overlay" style={{ display:'block' }} onClick={(e) => { if (isGenuineBackdropClick(e, '.alert-panel')) setShowAlerts(false) }} />
           <aside className="alert-panel open">
             <div className="alert-panel-hdr"><span>ALERT HISTORY</span><button onClick={() => setShowAlerts(false)}>×</button></div>
             {alertItems.length === 0 ? (
@@ -839,7 +843,7 @@ export default function App() {
       )}
 
       {/* Card modal */}
-      <div id="card-modal" className="card-modal" onClick={e => { if (e.target.id==='card-modal') document.getElementById('card-modal').style.display='none' }} style={{ display:'none' }}>
+      <div id="card-modal" className="card-modal" onClick={e => { if (isGenuineBackdropClick(e, '.card-modal-box')) document.getElementById('card-modal').style.display='none' }} style={{ display:'none' }}>
         <div className="card-modal-box">
           <button className="card-modal-close" onClick={() => document.getElementById('card-modal').style.display='none'}>×</button>
           <div id="card-modal-title" className="card-modal-title"></div>

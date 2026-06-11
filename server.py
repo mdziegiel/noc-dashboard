@@ -379,12 +379,22 @@ TYPE_TO_SECTION = {
 
 
 
+def _is_standalone_health_card(card):
+    ctype = str((card or {}).get('type', '')).lower().replace('-', '_').replace(' ', '_')
+    title = str((card or {}).get('title', '')).lower()
+    return ctype in {'noc_health_score', 'health_score', 'noc_health', 'health'} or 'noc health score' in title
+
+
 def _migrate_layout(data):
     """Add sections[] + card.section fields to old layouts. Returns (data, changed)."""
     import copy
     changed = False
     if not data.get("sections"):
         data["sections"] = copy.deepcopy(DEFAULT_SECTIONS)
+        changed = True
+    cards = [card for card in data.get("cards", []) if not _is_standalone_health_card(card)]
+    if len(cards) != len(data.get("cards", [])):
+        data["cards"] = cards
         changed = True
     for card in data.get("cards", []):
         if not card.get("section"):
@@ -445,6 +455,8 @@ def _bootstrap_layout_from_yaml():
     for section in cfg.get("sections", []):
         section_id = YAML_SECTION_TO_ID.get(section.get("name", ""), "system_status")
         for card in section.get("cards", []):
+            if _is_standalone_health_card(card):
+                continue
             size = card.get("size", "normal")
             w, h = SIZE_TO_WH.get(size, (1, 2))
             if x + w > COLS:

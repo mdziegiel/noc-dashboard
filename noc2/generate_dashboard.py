@@ -3384,7 +3384,12 @@ _ACP_JS_TMPL = r"""
     document.body.style.overflow = '';
   };
   window.acpOverlayClick = function(e) {
-    if (e.target === document.getElementById('acp-overlay')) closeACP();
+    var ov = document.getElementById('acp-overlay');
+    if (typeof _nocBackdropClick === 'function') {
+      if (_nocBackdropClick(e, ov, '.acp-shell')) closeACP();
+      return;
+    }
+    if (e && ov && e.target === ov) closeACP();
   };
   function _acpIsConfigured(integKey) {
     if (!integKey) return true;
@@ -4932,7 +4937,7 @@ PAGE = """<!DOCTYPE html>
       <div id="card-modal-body" class="card-modal-body"></div>
     </div>
   </div>
-  <div id="reports-overlay" class="reports-overlay" onclick="toggleReports(false)"></div>
+  <div id="reports-overlay" class="reports-overlay" onclick="if(typeof _nocBackdropClick!=='function'||_nocBackdropClick(event,this,'#reports-panel'))toggleReports(false)"></div>
   <div id="reports-panel" class="reports-panel">
     <div class="reports-panel-hdr">
       <div class="reports-title">Reports</div>
@@ -5108,8 +5113,11 @@ PAGE = """<!DOCTYPE html>
     document.body.style.overflow = 'hidden';
   }};
   window.closeCardModal = function(evt) {{
-    if (evt && evt.target !== document.getElementById('card-modal')) return;
-    document.getElementById('card-modal').style.display = 'none';
+    var modal = document.getElementById('card-modal');
+    if (evt && typeof _nocBackdropClick === 'function') {{
+      if (!_nocBackdropClick(evt, modal, '.card-modal-box')) return;
+    }} else if (evt && evt.target !== modal) return;
+    modal.style.display = 'none';
     document.body.style.overflow = '';
   }};
   document.addEventListener('keydown', function(e) {{
