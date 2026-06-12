@@ -142,6 +142,35 @@ def jget(url, headers=None, data=None, method=None, cookiejar=None):
     return json.loads(req(url, headers, data, method, cookiejar))
 
 
+def collect_system_tools_suite():
+    base = E.get("SYSTEM_TOOLS_URL", "http://10.10.10.237:10233").strip().rstrip("/")
+    d = {"state": "error", "status": "unknown", "app": "System Tools Suite",
+         "version": "?", "tool_count": 23, "url": base}
+    if not base:
+        d.update({"state": "degraded", "note": "SYSTEM_TOOLS_URL not set"})
+        return d
+    try:
+        health = jget(f"{base}/api/health")
+        status = str(health.get("status", "unknown")).lower()
+        d["status"] = status
+        d["app"] = health.get("app") or d["app"]
+        if isinstance(health.get("tool_count"), int):
+            d["tool_count"] = health["tool_count"]
+        elif isinstance(health.get("tools"), list):
+            d["tool_count"] = len(health["tools"])
+        d["state"] = "ok" if status == "ok" else "warn"
+        d["note"] = health.get("note") or "health endpoint responding"
+        try:
+            info = jget(f"{base}/openapi.json").get("info", {})
+            d["version"] = str(info.get("version") or d["version"])
+        except Exception:
+            pass
+        return d
+    except Exception as e:
+        d["error"] = str(e)[:160]
+        return d
+
+
 def _docker_mux_decode(buf):
     """Decode Docker exec multiplexed stdout/stderr frames."""
     if isinstance(buf, str):
@@ -1782,6 +1811,7 @@ def collect_wan_health():
 SOURCES = [
     ("proxmox", collect_proxmox),
     ("hyperv", collect_hyperv),
+    ("system_tools", collect_system_tools_suite),
     ("smart", collect_smart_health),
     ("docker", collect_docker),
     ("pbs", collect_pbs),
@@ -2384,6 +2414,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
     SM = data.get("smart", {})
     WAN = data.get("wan", {})
     HV = data.get("hyperv", {})
+    STS = data.get("system_tools", {})
 
     # overall health
     states = [v.get("state", "error") for v in data.values()]
@@ -2884,6 +2915,17 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
                  + card("SEERR", OV.get("state", "error"), ov_body, ov_sub)
                  + card("PROWLARR", PR.get("state", "error"), pr_body, pr_sub))
 
+    sts_url = STS.get("url") or "http://10.10.10.237:10233"
+    sts_status = str(STS.get("status", "unknown")).upper()
+    sts_body = (metric("Status", sts_status, "ok" if STS.get("state") == "ok" else "warn")
+                + metric("Tools", STS.get("tool_count", "?"))
+                + metric("Version", esc(str(STS.get("version", "?")))))
+    sts_body += (f'<div class="ublist"><a class="svc-link" href="{esc(sts_url)}" '
+                 f'target="_blank" rel="noopener" onclick="event.stopPropagation()">'
+                 f'Open System Tools Suite &rarr;</a></div>')
+    sts_sub = STS.get("note") or STS.get("error") or "tool suite health endpoint responding"
+    system_tools_row = card("SYSTEM TOOLS SUITE", STS.get("state", "error"), sts_body, sts_sub)
+
     # ---- Row 3: storage gauges ----
     gauges = "".join(donut(s["name"], s["pct"]) for s in P.get("storage", []))
     if not gauges:
@@ -3266,7 +3308,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         dashboard_config_json=json.dumps(dashboard_cfg),
         health_current_json=json.dumps(health_summary),
         ticker_bar=ticker_bar,
-        row1=row1, row2=row2, media_row=media_row, row3=row3,
+        row1=row1, row2=row2, media_row=media_row, system_tools_row=system_tools_row, row3=row3,
         qnap_cards=qnap_cards, kuma_history=hist_block,
         cert_tiles=cert_tiles, alert_block=alert_block,
         integrations_json=integrations_json,
@@ -4639,6 +4681,11 @@ PAGE = """<!DOCTYPE html>
     cursor:pointer; padding:5px 12px; border-radius:4px; font-size:12px;
     font-family:inherit; letter-spacing:1px; transition:border-color .2s,color .2s; }}
   .theme-btn:hover {{ border-color:var(--green); color:var(--green); }}
+  .nav-svg {{ width:16px; height:16px; display:block; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }}
+  #intel-btn {{ display:inline-flex; align-items:center; justify-content:center; padding:5px 9px; }}
+  #intel-btn:hover .nav-svg {{ color:var(--green); filter:drop-shadow(0 0 4px rgba(0,255,65,.35)); }}
+  .svc-link {{ display:block; color:var(--green-dim); text-decoration:none; font-size:11px; letter-spacing:1px; text-transform:uppercase; }}
+  .svc-link:hover {{ color:var(--green); text-decoration:underline; }}
   /* ── Ticker / scrolling info bar ── */
   .ticker-bar {{
     display:flex; align-items:center;
@@ -4892,7 +4939,7 @@ PAGE = """<!DOCTYPE html>
       <div class="ts">UPDATED <b>{ts}</b></div>
       <div class="health h-{overall}"><span class="led"></span>{overall_txt}</div>
       <button id="alert-bell" class="theme-btn" onclick="toggleAlertPanel()" title="Alert history">&#128276;<span id="bell-badge" class="bell-badge"></span></button>
-      <button id="intel-btn" class="theme-btn" onclick="toggleIntel(true)" title="NOC Intelligence" aria-label="NOC Intelligence">📊</button>
+      <button id="intel-btn" class="theme-btn" onclick="toggleIntel(true)" title="NOC Intelligence" aria-label="NOC Intelligence"><svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 16v-5"/><path d="M12 16V8"/><path d="M16 16v-7"/><path d="M20 16v-3"/></svg></button>
       <button id="save-btn" class="theme-btn" onclick="saveLayout()" title="Save layout" style="display:none;background:var(--green);color:#000;font-weight:700;border-color:var(--green)">&#10003; SAVE</button>
       <button id="cancel-edit-btn" class="theme-btn" onclick="cancelEditMode()" title="Cancel edit mode without saving" style="display:none;border-color:var(--crit);color:var(--crit)">&#10005; CANCEL</button>
       {cc_btn}
@@ -4917,6 +4964,8 @@ PAGE = """<!DOCTYPE html>
     <div class="row">{row2}</div>
     <div class="section-label">Media &amp; Downloads</div>
     <div class="row">{media_row}</div>
+    <div class="section-label">System Tools</div>
+    <div class="row">{system_tools_row}</div>
     <div class="section-label">QNAP Storage Appliances</div>
     <div class="row">{qnap_cards}</div>
     <div class="section-label">Proxmox Storage Utilization</div>

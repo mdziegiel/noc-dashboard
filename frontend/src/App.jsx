@@ -762,7 +762,7 @@ export default function App() {
           <div className="ts">UPDATED <b>{lastUpdated ? formatDate(lastUpdated) : '—'}</b></div>
           <div className={`health h-${overallHealth}`}><span className="led" />{overallTxt}</div>
           <button className="theme-btn nav-icon-btn" onClick={() => setShowAlerts(true)} title="Alert history" aria-label="Alert history">🔔{alertItems.length > 0 && <span className="bell-badge" style={{ display:'inline-block' }}>{alertItems.length}</span>}</button>
-          <button className="theme-btn nav-icon-btn" onClick={() => setShowIntel(true)} title="NOC Intelligence" aria-label="NOC Intelligence">📊</button>
+          <button className="theme-btn nav-icon-btn" onClick={() => setShowIntel(true)} title="NOC Intelligence" aria-label="NOC Intelligence"><svg className="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 16v-5"/><path d="M12 16V8"/><path d="M16 16v-7"/><path d="M20 16v-3"/></svg></button>
           {editMode && (
             <>
               <button className="theme-btn" onClick={saveEditMode} title="Save layout" style={{ background:'var(--green)', color:'#000', border:'none', fontWeight:700 }}>✓ SAVE</button>
