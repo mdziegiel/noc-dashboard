@@ -129,7 +129,7 @@ export function IntelligencePanel({ open, onClose, intelligence, onOpenHealth })
     <>
       {open && <div className="intel-overlay" onClick={e => { if (isGenuineBackdropClick(e, '.intel-panel')) onClose() }} />}
       <aside className={`intel-panel${open ? ' open' : ''}`}>
-        <div className="intel-panel-hdr"><span>📊 NOC INTELLIGENCE</span><button onClick={onClose}>×</button></div>
+        <div className="intel-panel-hdr"><span>NOC INTELLIGENCE</span><button onClick={onClose}>×</button></div>
         <div className="intel-panel-scroll">
           <CollapsibleCard title="Health Score" className="intel-health-card"><div className="intel-overview compact" onClick={onOpenHealth} role="button" title="Open NOC Health details"><Donut pct={h.pct || 0} size={118} /><Breakdown categories={h.categories || []} /></div></CollapsibleCard>
           <CollapsibleCard title="Backup Coverage" className="intel-backup-card">
