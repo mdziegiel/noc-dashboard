@@ -230,14 +230,23 @@ def collect_proxmox():
         d["note"] = "token has no ACL grant (0 VMs visible)"
     # storage
     st = jget(f"{base}/nodes/{node}/storage", auth)["data"]
+    qnap_overrides = qnap_storage_overrides()
     for s in st:
         if not s.get("total"):
             continue
+        name = s["storage"]
         used, tot = s.get("used", 0), s.get("total", 1)
-        pct = round(100 * used / tot, 1)
-        d["storage"].append({"name": s["storage"], "pct": pct,
+        source = "proxmox"
+        # Proxmox reports the NFS mount backing share, not the NAS volume.
+        # For the QNAP-backed stores, replace it with direct QNAP volume usage.
+        if name in qnap_overrides:
+            used, tot = qnap_overrides[name]
+            source = "qnap"
+        pct = round(100 * used / tot, 1) if tot else 0
+        d["storage"].append({"name": name, "pct": pct,
                              "used_g": round(used / 1e9, 1),
-                             "total_g": round(tot / 1e9, 1)})
+                             "total_g": round(tot / 1e9, 1),
+                             "source": source})
     d["storage"].sort(key=lambda x: -x["pct"])
     if any(s["pct"] > 85 for s in d["storage"]):
         d["state"] = "crit" if d["state"] != "degraded" else d["state"]
@@ -1091,7 +1100,8 @@ def collect_qnap_one(ip, label):
         pct = round(100 * used / tot, 1)
         nm = labels.get(vv, "Vol " + vv)
         d["volumes"].append({"name": nm, "pct": pct,
-                             "used_t": round(used / 1e12, 2), "total_t": round(tot / 1e12, 2)})
+                             "used_t": round(used / 1e12, 2), "total_t": round(tot / 1e12, 2),
+                             "used_bytes": used, "total_bytes": tot})
         if pct > 90:
             d["problems"].append(f"volume {nm} {pct:.0f}% full")
             d["state"] = "crit"
@@ -1128,8 +1138,14 @@ def collect_qnap_one(ip, label):
     return d
 
 
+_QNAP_CACHE = None
+
+
 def collect_qnaps():
     """Aggregate wrapper: returns a dict of per-unit results keyed q1/q2/q3."""
+    global _QNAP_CACHE
+    if _QNAP_CACHE is not None:
+        return _QNAP_CACHE
     units = [("QNAP1", E.get("QNAP1_HOST")), ("QNAP2", E.get("QNAP2_HOST")),
              ("QNAP3", E.get("QNAP3_HOST"))]
     out = {"state": "ok", "units": []}
@@ -1146,7 +1162,25 @@ def collect_qnaps():
         if order.index(r.get("state", "error")) > order.index(worst):
             worst = r.get("state", "error")
     out["state"] = worst
+    _QNAP_CACHE = out
     return out
+
+
+def qnap_storage_overrides():
+    """Map Proxmox NFS-QNAP* stores to direct QNAP volume used/total bytes."""
+    overrides = {}
+    try:
+        qnaps = collect_qnaps()
+    except Exception:
+        return overrides
+    for unit in qnaps.get("units", []):
+        label = unit.get("label")
+        vols = [v for v in unit.get("volumes", []) if v.get("total_bytes")]
+        if not label or not vols:
+            continue
+        vol = max(vols, key=lambda v: v.get("total_bytes", 0))
+        overrides[f"NFS-{label}"] = (vol.get("used_bytes", 0), vol.get("total_bytes", 0))
+    return overrides
 
 
 def collect_homeassistant():
@@ -2151,9 +2185,21 @@ def pct_color(p):
     return "ok"
 
 
-def donut(name, pct):
+def fmt_storage_gb(gb):
+    try:
+        gb = float(gb)
+    except (TypeError, ValueError):
+        return "?"
+    if gb >= 1000:
+        return f"{gb / 1000:.2f}T"
+    return f"{gb:.1f}G"
+
+
+def donut(name, pct, detail=""):
     """Inline SVG donut gauge."""
     cls = pct_color(pct)
+    pct_label = f"{pct:.1f}%" if 0 < pct < 10 else f"{pct:.0f}%"
+    detail_svg = f'<text x="70" y="104" class="g-detail">{esc(detail)[:20]}</text>' if detail else ""
     r = 52
     circ = 2 * 3.14159265 * r
     dash = circ * min(pct, 100) / 100
@@ -2163,8 +2209,9 @@ def donut(name, pct):
         <circle cx="70" cy="70" r="{r}" class="g-val"
                 stroke-dasharray="{dash:.1f} {circ:.1f}"
                 transform="rotate(-90 70 70)"/>
-        <text x="70" y="64" class="g-pct">{pct:.0f}%</text>
-        <text x="70" y="86" class="g-lbl">{esc(name)[:14]}</text>
+        <text x="70" y="60" class="g-pct">{pct_label}</text>
+        <text x="70" y="82" class="g-lbl">{esc(name)[:14]}</text>
+        {detail_svg}
       </svg>
     </div>"""
 
@@ -3053,7 +3100,9 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
     system_tools_row = card("SYSTEM TOOLS SUITE", STS.get("state", "error"), sts_body, sts_sub)
 
     # ---- Row 3: storage gauges ----
-    gauges = "".join(donut(s["name"], s["pct"]) for s in P.get("storage", []))
+    gauges = "".join(
+        donut(s["name"], s["pct"], f'{fmt_storage_gb(s.get("used_g"))} / {fmt_storage_gb(s.get("total_g"))}')
+        for s in P.get("storage", []))
     if not gauges:
         gauges = '<div class="empty">No storage volumes visible (Proxmox token ACL).</div>'
     row3 = f'<div class="gauges">{gauges}</div>'
@@ -4740,6 +4789,7 @@ PAGE = """<!DOCTYPE html>
   .g-warn .g-pct {{ fill:var(--warn); }}
   .g-crit .g-pct {{ fill:var(--crit); }}
   .g-lbl {{ fill:var(--muted); font-size:10px; text-anchor:middle; letter-spacing:.5px; }}
+  .g-detail {{ fill:var(--muted); font-size:8px; text-anchor:middle; letter-spacing:.3px; }}
   .certs {{ display:flex; flex-wrap:wrap; gap:12px; }}
   .cert {{ background:var(--panel); border:1px solid var(--line); border-radius:6px;
     padding:14px 18px; min-width:130px; text-align:center; border-top:3px solid var(--green); }}
