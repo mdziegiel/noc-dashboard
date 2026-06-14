@@ -2382,6 +2382,132 @@ def unifi_device_rows(devices):
     return rows or '<div class="empty">No devices reported.</div>'
 
 
+def load_monitor_status_json(filename):
+    candidates = [
+        os.path.join(STATE_DIR, filename),
+        os.path.join(OUT_DIR, "state", filename),
+        os.path.join("/home/michaeld/scripts", filename),
+        os.path.join("/app/output/state", filename),
+    ]
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                return raw
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {str(e)[:120]}", "timestamp": "?"}
+    return {"error": f"{filename} not found", "timestamp": "?"}
+
+
+def port_unifi_monitor_card():
+    ps = load_monitor_status_json("port-status.json")
+    us = load_monitor_status_json("unifi-status.json")
+    services = ps.get("services") or []
+    ports = us.get("ports") or []
+    up_services = sum(1 for s in services if str(s.get("status", "")).lower() == "up")
+    down_services = sum(1 for s in services if str(s.get("status", "")).lower() == "down")
+    up_ports = sum(1 for p in ports if str(p.get("status", "")).lower() == "up")
+    warn_ports = sum(1 for p in ports if str(p.get("status", "")).lower() == "warning" or int(p.get("speed") or 0) == 100)
+    down_ports = sum(1 for p in ports if str(p.get("status", "")).lower() == "down" or int(p.get("speed") or 0) <= 0)
+    state = "ok"
+    if ps.get("error") or us.get("error") or down_services or down_ports:
+        state = "crit"
+    elif warn_ports:
+        state = "warn"
+
+    def service_status_cell(status):
+        st = str(status or "unknown").lower()
+        label = "UP" if st == "up" else "DOWN"
+        cls = "ok" if st == "up" else "crit"
+        return f'<span class="nmt-pill nmt-{cls}">{esc(label)}</span>'
+
+    def switch_name(raw):
+        raw = str(raw or "")
+        first = raw.split("/", 1)[0].strip()
+        lowered = first.lower()
+        if "flex-5" in lowered:
+            return "Flex-5"
+        if "lite-8" in lowered:
+            return "Lite-8"
+        if "main-8" in lowered:
+            return "Main-8"
+        if "udm" in lowered:
+            return "UDM"
+        return first or "Unknown"
+
+    def speed_label(speed):
+        try:
+            sp = int(speed or 0)
+        except Exception:
+            sp = 0
+        if sp <= 0:
+            return "down"
+        if sp >= 1000:
+            return "1 Gbps" if sp == 1000 else f"{sp / 1000:g} Gbps"
+        return f"{sp} Mbps"
+
+    def switch_status_cell(port):
+        try:
+            sp = int(port.get("speed") or 0)
+        except Exception:
+            sp = 0
+        st = str(port.get("status") or "").lower()
+        if st == "down" or sp <= 0:
+            return '<span class="nmt-pill nmt-crit">down</span>'
+        if sp == 100 or st == "warning":
+            return '<span class="nmt-pill nmt-warn">100Mbps</span>'
+        return f'<span class="nmt-pill nmt-ok">{esc("1Gbps" if sp == 1000 else f"{sp / 1000:g}Gbps")}</span>'
+
+    switch_order = {"UDM": 0, "Flex-5": 1, "Lite-8": 2, "Main-8": 3}
+    grouped_ports = sorted(
+        ports,
+        key=lambda p: (switch_order.get(switch_name(p.get("name")), 99), switch_name(p.get("name")), int(p.get("port") or 0)),
+    )
+
+    svc_rows = "".join(
+        f'<tr><td>{esc(s.get("name", "?"))}</td><td>{esc(s.get("host", "?"))}</td><td>{esc(str(s.get("port", "?")))}</td><td>{service_status_cell(s.get("status"))}</td></tr>'
+        for s in services
+    ) or f'<tr><td colspan="4" class="nmt-empty">{esc(ps.get("error") or "No service port data")}</td></tr>'
+
+    last_switch = None
+    port_rows = []
+    for p in grouped_ports:
+        sw = switch_name(p.get("name"))
+        if sw != last_switch:
+            port_rows.append(f'<tr class="nmt-group-row"><td colspan="5">{esc(sw)}</td></tr>')
+            last_switch = sw
+        port_rows.append(
+            f'<tr><td>{esc(sw)}</td><td>{esc(str(p.get("port", "?")))}</td><td>{esc(p.get("name", "?"))}</td><td>{esc(speed_label(p.get("speed")))}</td><td>{switch_status_cell(p)}</td></tr>'
+        )
+    port_rows = "".join(port_rows) or f'<tr><td colspan="5" class="nmt-empty">{esc(us.get("error") or "No UniFi switch data")}</td></tr>'
+
+    stamps = []
+    if ps.get("timestamp"):
+        stamps.append(f'ports {ps.get("timestamp")}')
+    if us.get("timestamp"):
+        stamps.append(f'UniFi {us.get("timestamp")}')
+    sub = f'Last updated: {" · ".join(stamps)}' if stamps else "Last updated: waiting for cron data"
+
+    body = f'''
+      <div class="nmt-wrap">
+        <div class="nmt-section">
+          <div class="nmt-title">Service Port Status</div>
+          <div class="nmt-summary"><b class="q-ok">{up_services} up</b> / <b class="q-crit">{down_services} down</b></div>
+          <div class="nmt-table-wrap"><table class="nmt-table nmt-service-table"><thead><tr><th>Service Name</th><th>Host</th><th>Port</th><th>Status</th></tr></thead><tbody>{svc_rows}</tbody></table></div>
+        </div>
+        <div class="nmt-section">
+          <div class="nmt-title">UniFi Switch Ports</div>
+          <div class="nmt-summary"><b class="q-ok">{up_ports} up</b> / <b class="q-warn">{warn_ports} at 100Mbps</b> / <b class="q-crit">{down_ports} down</b></div>
+          <div class="nmt-table-wrap"><table class="nmt-table nmt-switch-table"><thead><tr><th>Switch</th><th>Port</th><th>Name</th><th>Speed</th><th>Status</th></tr></thead><tbody>{port_rows}</tbody></table></div>
+        </div>
+      </div>'''
+    return f'''<div class="card nmt-card s-{state}" data-title="PORT MONITOR / UNIFI SWITCH PORTS" data-state="{state}" onclick="focusCard(this)" style="cursor:pointer">
+      <div class="card-h"><span class="dot"></span><h3>PORT MONITOR / UNIFI SWITCH PORTS</h3></div>
+      <div class="card-b">{body}</div><div class="sub">{esc(sub)}</div>
+    </div>'''
 def render(data, gen_epoch, errors, trends=None, health_summary=None):
     trends = trends or {"daily": {}, "kuma_history": {}}
     health_summary = health_summary or build_health_summary(data, gen_epoch)
@@ -3308,7 +3434,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         dashboard_config_json=json.dumps(dashboard_cfg),
         health_current_json=json.dumps(health_summary),
         ticker_bar=ticker_bar,
-        row1=row1, row2=row2, media_row=media_row, system_tools_row=system_tools_row, row3=row3,
+        row1=row1, row2=row2, port_unifi_row=port_unifi_monitor_card(), media_row=media_row, system_tools_row=system_tools_row, row3=row3,
         qnap_cards=qnap_cards, kuma_history=hist_block,
         cert_tiles=cert_tiles, alert_block=alert_block,
         integrations_json=integrations_json,
@@ -4575,6 +4701,24 @@ PAGE = """<!DOCTYPE html>
   .s-warn .dot {{ background:var(--warn); box-shadow:0 0 7px var(--warn); }}
   .s-crit .dot {{ background:var(--crit); box-shadow:0 0 7px var(--crit); }}
   .card-b {{ display:flex; gap:10px; flex-wrap:wrap; }}
+  .nmt-card {{ grid-column:1 / -1; width:100%; }}
+  .nmt-wrap {{ width:100%; display:flex; flex-direction:column; gap:18px; }}
+  .nmt-section {{ width:100%; min-width:0; }}
+  .nmt-title {{ font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:var(--green); margin:0 0 6px; }}
+  .nmt-summary {{ font-size:11px; color:var(--muted); margin-bottom:8px; }}
+  .nmt-table-wrap {{ width:100%; overflow-x:auto; }}
+  .nmt-table {{ width:100%; border-collapse:collapse; font-size:11px; table-layout:auto; min-width:760px; }}
+  .nmt-switch-table {{ min-width:920px; }}
+  .nmt-table th {{ text-align:left; color:var(--muted); font-weight:700; border-bottom:1px solid var(--line); padding:6px 8px; white-space:nowrap; }}
+  .nmt-table td {{ border-bottom:1px solid rgba(255,255,255,.05); padding:6px 8px; vertical-align:top; overflow:visible; text-overflow:clip; white-space:normal; word-break:normal; }}
+  .nmt-service-table td:nth-child(1), .nmt-switch-table td:nth-child(3) {{ white-space:normal; min-width:220px; }}
+  .nmt-service-table td:nth-child(2), .nmt-switch-table td:nth-child(1), .nmt-switch-table td:nth-child(2), .nmt-switch-table td:nth-child(4), .nmt-switch-table td:nth-child(5) {{ white-space:nowrap; }}
+  .nmt-group-row td {{ color:var(--green); background:rgba(0,255,65,.04); font-size:10px; text-transform:uppercase; letter-spacing:1.4px; font-weight:800; padding-top:10px; }}
+  .nmt-pill {{ display:inline-block; min-width:58px; text-align:center; border-radius:999px; padding:2px 8px; font-size:9px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; white-space:nowrap; }}
+  .nmt-ok {{ color:#001a08; background:var(--green); }}
+  .nmt-warn {{ color:#1d1400; background:var(--warn); }}
+  .nmt-crit {{ color:#fff; background:var(--crit); }}
+  .nmt-empty {{ color:var(--muted); font-style:italic; }}
   .metric {{ flex:1; min-width:70px; }}
   .metric .m-v {{ font-size:20px; color:var(--green); font-weight:bold;
     text-shadow:0 0 6px rgba(0,255,65,.25); white-space:nowrap; }}
@@ -4962,6 +5106,8 @@ PAGE = """<!DOCTYPE html>
     <div class="row">{row1}</div>
     <div class="section-label">Security &amp; Network</div>
     <div class="row">{row2}</div>
+    <div class="section-label">Service Ports &amp; Switch Speeds</div>
+    <div class="row">{port_unifi_row}</div>
     <div class="section-label">Media &amp; Downloads</div>
     <div class="row">{media_row}</div>
     <div class="section-label">System Tools</div>
