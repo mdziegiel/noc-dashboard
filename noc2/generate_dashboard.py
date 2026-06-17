@@ -171,6 +171,68 @@ def collect_system_tools_suite():
         return d
 
 
+def collect_speedtest():
+    speed_state_dir = os.environ.get(
+        "NOC_SPEEDTEST_STATE_DIR",
+        os.path.join(os.environ.get("NOC_OUT_DIR", OUT_DIR), "state"),
+    )
+    latest_path = os.path.join(speed_state_dir, "speedtest-latest.json")
+    history_path = os.path.join(speed_state_dir, "speedtest-history.jsonl")
+    d = {"state": "error", "download": None, "upload": None, "ping": None,
+         "history": [], "samples": 0, "latest_path": latest_path}
+    try:
+        with open(latest_path, encoding="utf-8") as f:
+            latest = json.load(f)
+        def num(key):
+            val = latest.get(key)
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return None
+        d["download"] = num("download")
+        d["upload"] = num("upload")
+        d["ping"] = num("ping")
+        d["timestamp"] = latest.get("timestamp")
+        d["received_at"] = latest.get("received_at")
+        hist = []
+        try:
+            with open(history_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        h = json.loads(line)
+                        hist.append({
+                            "download": float(h.get("download")),
+                            "upload": float(h.get("upload")),
+                            "ping": float(h.get("ping")),
+                            "timestamp": h.get("timestamp"),
+                            "received_at": h.get("received_at"),
+                        })
+                    except Exception:
+                        continue
+        except FileNotFoundError:
+            pass
+        d["history"] = hist[-24:]
+        d["samples"] = len(d["history"])
+        if d["download"] is None or d["upload"] is None or d["ping"] is None:
+            d["state"] = "degraded"
+            d["note"] = "latest speedtest JSON missing download/upload/ping"
+        else:
+            d["state"] = "ok"
+            if d["ping"] >= 80:
+                d["state"] = "warn"
+        return d
+    except FileNotFoundError:
+        d["state"] = "degraded"
+        d["note"] = "speedtest-latest.json not found"
+        return d
+    except Exception as e:
+        d["error"] = f"{type(e).__name__}: {str(e)[:140]}"
+        return d
+
+
 def _docker_mux_decode(buf):
     """Decode Docker exec multiplexed stdout/stderr frames."""
     if isinstance(buf, str):
@@ -1845,7 +1907,7 @@ def collect_wan_health():
 SOURCES = [
     ("proxmox", collect_proxmox),
     ("hyperv", collect_hyperv),
-    ("system_tools", collect_system_tools_suite),
+    ("speedtest", collect_speedtest),
     ("smart", collect_smart_health),
     ("docker", collect_docker),
     ("pbs", collect_pbs),
@@ -2452,7 +2514,10 @@ def load_monitor_status_json(filename):
 def port_unifi_monitor_card():
     ps = load_monitor_status_json("port-status.json")
     us = load_monitor_status_json("unifi-status.json")
-    services = ps.get("services") or []
+    services = [
+        s for s in (ps.get("services") or [])
+        if str(s.get("name", "")).strip().lower() != "system tools suite"
+    ]
     ports = us.get("ports") or []
     up_services = sum(1 for s in services if str(s.get("status", "")).lower() == "up")
     down_services = sum(1 for s in services if str(s.get("status", "")).lower() == "down")
@@ -2587,7 +2652,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
     SM = data.get("smart", {})
     WAN = data.get("wan", {})
     HV = data.get("hyperv", {})
-    STS = data.get("system_tools", {})
+    SP = data.get("speedtest", {})
 
     # overall health
     states = [v.get("state", "error") for v in data.values()]
@@ -2776,7 +2841,24 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         hv_sub = (f'host {cpus} vCPU · {mem} GB' if hv_total > 0
                   else esc(HV.get("note", "all VMs running")))
 
+    sp_hist = SP.get("history", []) or []
+    sp_down_series = [h.get("download") for h in sp_hist if h.get("download") is not None]
+    def _speed_val(key, suffix):
+        v = SP.get(key)
+        try:
+            return f'{float(v):.0f} {suffix}'
+        except (TypeError, ValueError):
+            return "n/a"
+    speed_body = (metric("Download", _speed_val("download", "Mbps"), "ok" if SP.get("download") is not None else "")
+                  + metric("Upload", _speed_val("upload", "Mbps"), "ok" if SP.get("upload") is not None else "")
+                  + metric("Ping", _speed_val("ping", "ms"),
+                           "warn" if SP.get("ping") is not None and float(SP.get("ping") or 0) >= 80 else "ok"))
+    speed_body += f'<div class="trend"><span class="trend-lbl">download {len(sp_down_series)} of last 24 readings</span>{sparkline(sp_down_series, state="ok")}</div>'
+    speed_sub = (SP.get("note") or SP.get("error")
+                 or f'latest {esc(str(SP.get("timestamp") or SP.get("received_at") or "unknown"))}')
+
     row1 = (card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
+            + card("SPEED TEST", SP.get("state", "error"), speed_body, speed_sub)
             + card("PROXMOX", prox_state, prox_body, prox_sub)
             + card("HYPER-V", HV.get("state", "error"), hv_body, hv_sub)
             + card("HOME ASSISTANT", HA.get("state", "error"), ha_body, ha_sub)
@@ -3087,17 +3169,6 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
                  + card("SABNZBD", SB.get("state", "error"), sab_body, sab_sub)
                  + card("SEERR", OV.get("state", "error"), ov_body, ov_sub)
                  + card("PROWLARR", PR.get("state", "error"), pr_body, pr_sub))
-
-    sts_url = STS.get("url") or "http://10.10.10.237:10233"
-    sts_status = str(STS.get("status", "unknown")).upper()
-    sts_body = (metric("Status", sts_status, "ok" if STS.get("state") == "ok" else "warn")
-                + metric("Tools", STS.get("tool_count", "?"))
-                + metric("Version", esc(str(STS.get("version", "?")))))
-    sts_body += (f'<div class="ublist"><a class="svc-link" href="{esc(sts_url)}" '
-                 f'target="_blank" rel="noopener" onclick="event.stopPropagation()">'
-                 f'Open System Tools Suite &rarr;</a></div>')
-    sts_sub = STS.get("note") or STS.get("error") or "tool suite health endpoint responding"
-    system_tools_row = card("SYSTEM TOOLS SUITE", STS.get("state", "error"), sts_body, sts_sub)
 
     # ---- Row 3: storage gauges ----
     gauges = "".join(
@@ -3483,7 +3554,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         dashboard_config_json=json.dumps(dashboard_cfg),
         health_current_json=json.dumps(health_summary),
         ticker_bar=ticker_bar,
-        row1=row1, row2=row2, port_unifi_row=port_unifi_monitor_card(), media_row=media_row, system_tools_row=system_tools_row, row3=row3,
+        row1=row1, row2=row2, port_unifi_row=port_unifi_monitor_card(), media_row=media_row, row3=row3,
         qnap_cards=qnap_cards, kuma_history=hist_block,
         cert_tiles=cert_tiles, alert_block=alert_block,
         integrations_json=integrations_json,
@@ -5160,8 +5231,6 @@ PAGE = """<!DOCTYPE html>
     <div class="row">{port_unifi_row}</div>
     <div class="section-label">Media &amp; Downloads</div>
     <div class="row">{media_row}</div>
-    <div class="section-label">System Tools</div>
-    <div class="row">{system_tools_row}</div>
     <div class="section-label">QNAP Storage Appliances</div>
     <div class="row">{qnap_cards}</div>
     <div class="section-label">Proxmox Storage Utilization</div>
