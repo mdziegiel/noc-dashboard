@@ -1,1951 +1,1190 @@
 #!/usr/bin/env python3
 """
-NOC Dashboard — FastAPI backend server
-Wraps existing collectors, serves JSON API + React frontend static files.
-
-Endpoints:
-  GET  /api/card-types            list of known card types with metadata
-  GET  /api/data/{card_type}      run collector, return live data as JSON
-  GET  /api/themes                all themes as CSS variable maps
-  GET  /api/layout                current layout.json
-  POST /api/layout                save layout.json
-  GET  /api/config                dashboard.yaml top-level config
-  GET  /api/ticker                aggregated alerts/stats for scrolling ticker
-  GET  /api/status-overview       counts of ok/warn/crit across all cards
-  GET  /api/events                SSE stream for live card updates
-  GET  /                          React app (served from frontend/dist/)
-
-Usage:
-    uvicorn server:app --host 0.0.0.0 --port 8081
+NOC 2 HTTP server — serves /app/output as static files.
+POST /save-layout   — persist card drag order
+POST /regenerate    — trigger immediate regen
+POST /save-config   — write credential k/v pairs to .env, trigger regen
+POST /save-dashboard-config — write branding settings to state/config.json, trigger regen
+POST /test-connection — run a collector with provided creds, return state
 """
+import http.server, json, os, subprocess, threading, sys, importlib.util, ssl, time, secrets, hashlib, re, base64, hmac, struct, uuid
+import urllib.parse
+import html
+from email.utils import formatdate
+import bcrypt
 
-import asyncio
-import hashlib
-import hmac
-import json
-import os
-import re
-import secrets
-import sqlite3
-import sys
-import time
-import traceback
-from pathlib import Path
+CTX = ssl.create_default_context()
+CTX.check_hostname = False
+CTX.verify_mode = ssl.CERT_NONE
 
-try:
-    import yaml
-except ImportError:
-    print("ERROR: PyYAML not installed.", file=sys.stderr)
-    sys.exit(1)
+OUTPUT_DIR  = "/app/output"
+STATE_DIR   = os.environ.get("NOC_STATE_DIR", os.path.join(OUTPUT_DIR, "state"))
+LAYOUT_FILE = os.path.join(OUTPUT_DIR, "layout.json")
+CONFIG_FILE = os.environ.get("NOC_CONFIG_FILE", os.path.join(STATE_DIR, "config.json"))
+ENV_FILE    = "/root/.noc-dashboard/.env"
+GENERATOR   = "/app/generate_dashboard.py"
+CUSTOM_CARDS_FILE = os.path.join(OUTPUT_DIR, "custom_cards.json")
+BUILTIN_CARD_CONFIGS_FILE = os.path.join(OUTPUT_DIR, "builtin_card_configs.json")
+DEFAULT_DASHBOARD_CONFIG = {
+    "dashboard_title": "NOC Dashboard",
+    "dashboard_subtitle": "Infrastructure Monitoring",
+    "logo_url": "",
+    "timezone": "UTC",
+    "show_ticker_bar": True,
+    "date_format": "YYYY-MM-DD",
+    "clock_format": "24hr",
+}
+AUTH_COOKIE="noc_session"
+SESSION_DAYS = 90
 
-try:
-    import bcrypt
-    from fastapi import FastAPI, HTTPException, Request
-    from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
-    from fastapi.staticfiles import StaticFiles
-except ImportError:
-    print("ERROR: fastapi not installed. Run: pip install fastapi uvicorn", file=sys.stderr)
-    sys.exit(1)
 
-# ── Project root ───────────────────────────────────────────────────────────────
-ROOT = Path(__file__).parent.resolve()
-STATE_DIR = ROOT / "state"
-STATE_FILE = STATE_DIR / "trends.json"
-THEMES_DIR = ROOT / "themes"
-FRONTEND_DIST = ROOT / "frontend" / "dist"
-LAYOUT_FILE = STATE_DIR / "layout.json"
-CONFIG_FILE = ROOT / (os.environ.get("CONFIG_FILE") or "dashboard.yaml")
-ENV_FILE = ROOT / ".env"
-CONFIG_JSON = STATE_DIR / "config.json"
-DB_FILE = STATE_DIR / "noc_dashboard.sqlite3"
-SESSION_COOKIE = "noc_session"
-SESSION_TTL_SECONDS = 90 * 24 * 3600
+# ── env helpers ────────────────────────────────────────────────────────────────
 
-# ── Env loader ─────────────────────────────────────────────────────────────────
-
-def load_env(path):
+def read_env():
     d = {}
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
+        with open(ENV_FILE) as f:
             for line in f:
-                m = re.match(r'^\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*(.*)$', line.rstrip("\n"))
-                if m:
-                    d[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+                line = line.rstrip('\n')
+                if '=' in line and not line.startswith('#'):
+                    k, v = line.split('=', 1)
+                    d[k.strip()] = v.strip()
     except FileNotFoundError:
         pass
-    for k, v in os.environ.items():
-        if k in d or k.isupper():
-            d[k] = v
     return d
 
+def write_env(d):
+    lines = [f"{k}={v}" for k, v in sorted(d.items())]
+    with open(ENV_FILE, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
 
-E = load_env(ENV_FILE)
-# Note: E is patched at startup (after CONFIG_JSON is defined) and on each integration save.
-# See _apply_config_json_to_E() called after CONFIG_JSON is defined below.
-
-
-# ── Authentication ─────────────────────────────────────────────────────────────
-
-def _now() -> int:
-    return int(time.time())
-
-
-def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _get_admin(cfg_json: dict) -> dict | None:
-    admin = cfg_json.get("admin")
-    if isinstance(admin, dict) and admin.get("username") and admin.get("password_hash"):
-        return admin
-    return None
-
-
-def _create_session(cfg_json: dict) -> str:
-    token = secrets.token_urlsafe(48)
-    sessions = cfg_json.setdefault("sessions", {})
-    sessions[_hash_token(token)] = {"created": _now(), "expires": _now() + SESSION_TTL_SECONDS}
-    # Prune expired sessions. State files should not become a landfill.
-    for key, sess in list(sessions.items()):
-        if int(sess.get("expires", 0)) < _now():
-            sessions.pop(key, None)
-    save_config_json(cfg_json)
-    return token
-
-
-def _verify_session_token(cfg_json: dict, token: str | None) -> bool:
-    if not token or not _get_admin(cfg_json):
-        return False
-    sessions = cfg_json.get("sessions", {})
-    token_hash = _hash_token(token)
-    sess = sessions.get(token_hash)
-    if not sess:
-        return False
-    if int(sess.get("expires", 0)) < _now():
-        sessions.pop(token_hash, None)
-        save_config_json(cfg_json)
-        return False
-    return True
-
-
-def _clear_session_token(cfg_json: dict, token: str | None):
-    if token:
-        cfg_json.get("sessions", {}).pop(_hash_token(token), None)
-        save_config_json(cfg_json)
-
-
-def _password_ok(password: str) -> bool:
-    return isinstance(password, str) and len(password) >= 8
-
-
-def _auth_response(payload: dict, token: str | None = None, remember: bool = True):
-    resp = JSONResponse(payload)
-    if token:
-        cookie_args = {
-            "key": SESSION_COOKIE,
-            "value": token,
-            "httponly": True,
-            "samesite": "lax",
-            "path": "/",
-        }
-        if remember:
-            cookie_args["max_age"] = SESSION_TTL_SECONDS
-        resp.set_cookie(**cookie_args)
-    return resp
-
-# ── Theme loader ───────────────────────────────────────────────────────────────
-
-THEME_DEFAULTS = {
-    "background": "#0a0a0a",
-    "card_background": "#111111",
-    "card_border": "#1e1e1e",
-    "accent": "#00ff41",
-    "accent_secondary": "#00cc33",
-    "text_primary": "#e0e0e0",
-    "text_secondary": "#a0a0a0",
-    "text_muted": "#555555",
-    "ok_color": "#00ff41",
-    "warn_color": "#ffaa00",
-    "error_color": "#ff3333",
-    "critical_color": "#ff0000",
-    "font_family": "JetBrains Mono, Fira Code, Consolas, monospace",
-    "font_size_base": "13px",
-    "heading_font": "JetBrains Mono, Fira Code, monospace",
-    "card_border_radius": "4px",
-    "card_shadow": "0 0 8px rgba(0,255,65,0.08)",
-    "section_header_color": "#00ff41",
-    "graph_line_color": "#00ff41",
-    "graph_fill_color": "rgba(0,255,65,0.12)",
-    "gauge_track_color": "#1a1a1a",
-    "gauge_fill_ok": "#00ff41",
-    "gauge_fill_warn": "#ffaa00",
-    "gauge_fill_critical": "#ff3333",
-    "sparkline_stroke_width": "2",
-    "top_bar_background": "#000000",
-    "top_bar_border": "#1a1a1a",
-}
-
-
-def load_all_themes():
-    themes = {}
-    for f in THEMES_DIR.glob("*.yaml"):
-        try:
-            with open(f) as fh:
-                data = yaml.safe_load(fh) or {}
-            merged = dict(THEME_DEFAULTS)
-            merged.update({k: v for k, v in data.items() if k not in ("name", "description")})
-            themes[f.stem] = merged
-        except Exception:
-            pass
-    if not themes:
-        themes["dark-noc"] = dict(THEME_DEFAULTS)
-    return themes
-
-
-# ── Dashboard config ───────────────────────────────────────────────────────────
-
-def load_dashboard_config():
+def read_dashboard_config():
+    cfg = dict(DEFAULT_DASHBOARD_CONFIG)
     try:
         with open(CONFIG_FILE) as f:
-            return yaml.safe_load(f) or {}
-    except Exception:
-        return {}
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            for key in cfg:
+                val = raw.get(key)
+                if key == "show_ticker_bar":
+                    if isinstance(val, bool):
+                        cfg[key] = val
+                elif isinstance(val, str):
+                    cfg[key] = val.strip()
+    except FileNotFoundError:
+        pass
+    cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
+    cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
+    cfg["timezone"] = cfg.get("timezone") or "UTC"
+    if not isinstance(cfg.get("show_ticker_bar"), bool):
+        cfg["show_ticker_bar"] = True
+    if cfg.get("date_format") not in ("MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"):
+        cfg["date_format"] = "YYYY-MM-DD"
+    if cfg.get("clock_format") not in ("12hr", "24hr"):
+        cfg["clock_format"] = "24hr"
+    return cfg
 
+def write_dashboard_config(payload):
+    state = read_state_config()
+    cfg = read_dashboard_config()
+    for key in cfg:
+        val = payload.get(key, "") if isinstance(payload, dict) else ""
+        if key == "show_ticker_bar":
+            if isinstance(val, bool):
+                cfg[key] = val
+        elif isinstance(val, str):
+            cfg[key] = val.strip()
+    cfg["dashboard_title"] = cfg["dashboard_title"] or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
+    cfg["dashboard_subtitle"] = cfg["dashboard_subtitle"] or DEFAULT_DASHBOARD_CONFIG["dashboard_subtitle"]
+    cfg["timezone"] = cfg.get("timezone") or "UTC"
+    if not isinstance(cfg.get("show_ticker_bar"), bool):
+        cfg["show_ticker_bar"] = True
+    if cfg.get("date_format") not in ("MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"):
+        cfg["date_format"] = "YYYY-MM-DD"
+    if cfg.get("clock_format") not in ("12hr", "24hr"):
+        cfg["clock_format"] = "24hr"
+    state.update(cfg)
+    write_state_config(state)
+    return cfg
 
-# ── Collector dispatch ─────────────────────────────────────────────────────────
-
-def get_collector_map():
-    from collectors import (
-        proxmox, wazuh, malware_sources, docker_portainer, pbs, uptime_kuma,
-        crowdsec, unifi, adguard, home_assistant, smart_health, urbackup,
-        qnap, media, cloudflare, nginx_proxy, tailscale, limacharlie, custom_url,
-        hyperv, adguard2, wgdashboard
-    )
-    return {
-        "proxmox": proxmox.collect,
-        "proxmox_storage": proxmox.collect_storage,
-        "wazuh": wazuh.collect,
-        "malware_sources": malware_sources.collect,
-        "docker": docker_portainer.collect,
-        "pbs": pbs.collect,
-        "uptime_kuma": uptime_kuma.collect,
-        "crowdsec": crowdsec.collect,
-        "unifi": unifi.collect,
-        "adguard": adguard.collect,
-        "adguard2": adguard2.collect,
-        "home_assistant": home_assistant.collect,
-        "smart_health": smart_health.collect,
-        "urbackup": urbackup.collect,
-        "qnap": qnap.collect,
-        "plex": media.collect_plex,
-        "tautulli": media.collect_tautulli,
-        "sonarr": media.collect_sonarr,
-        "radarr": media.collect_radarr,
-        "prowlarr": media.collect_prowlarr,
-        "sabnzbd": media.collect_sabnzbd,
-        "overseerr": media.collect_overseerr,
-        "cloudflare": cloudflare.collect,
-        "nginx_proxy": nginx_proxy.collect,
-        "tailscale": tailscale.collect,
-        "limacharlie": limacharlie.collect,
-        "custom_url": custom_url.collect,
-        "wan_health": unifi.collect,
-        "hyperv": hyperv.collect,
-        "wgdashboard": wgdashboard.collect,
-    }
-
-
-CARD_TYPE_META = {
-    "proxmox":          {"label": "Proxmox",              "description": "Proxmox node CPU, RAM, VMs, storage",      "category": "Infrastructure", "icon": "Server"},
-    "proxmox_storage":  {"label": "Proxmox Storage",      "description": "Proxmox storage pool usage donuts",         "category": "Infrastructure", "icon": "HardDrive"},
-    "docker":           {"label": "Docker",               "description": "Container counts and unhealthy containers", "category": "Infrastructure", "icon": "Box"},
-    "pbs":              {"label": "Proxmox Backup Server","description": "Backup tasks, last backup time, datastore", "category": "Infrastructure", "icon": "Archive"},
-    "urbackup":         {"label": "URBackup",             "description": "Client backup status",                      "category": "Infrastructure", "icon": "RotateCcw"},
-    "home_assistant":   {"label": "Home Assistant",       "description": "Entity counts, alerts, notifications",      "category": "Infrastructure", "icon": "Home"},
-    "smart_health":     {"label": "Disk Health",          "description": "SMART disk health from Proxmox",            "category": "Infrastructure", "icon": "Activity"},
-    "hyperv":           {"label": "Hyper-V",             "description": "Hyper-V VMs, CPU/memory, host resources",    "category": "Infrastructure", "icon": "Server"},
-    "wazuh":            {"label": "Wazuh SIEM",           "description": "Agent status, alerts 24h",                  "category": "Security",       "icon": "Shield"},
-    "malware_sources":  {"label": "Malware Detect",       "description": "Malware feed detections",                   "category": "Security",       "icon": "AlertTriangle"},
-    "crowdsec":         {"label": "CrowdSec",             "description": "Bans and detections",                       "category": "Security",       "icon": "ShieldAlert"},
-    "cloudflare":       {"label": "Cloudflare",           "description": "Requests, threats, WAF events",             "category": "Security",       "icon": "Cloud"},
-    "limacharlie":      {"label": "LimaCharlie (LC)",    "description": "EDR detections and sensor status",            "category": "Security",       "icon": "ShieldAlert"},
-    "wgdashboard":      {"label": "WGDashboard",         "description": "WireGuard VPN interfaces and peers",          "category": "Network",        "icon": "Network"},
-    "unifi":            {"label": "UniFi",                "description": "WAN status, clients, IPS alerts",           "category": "Network",        "icon": "Wifi"},
-    "wan_health":       {"label": "WAN Health",           "description": "WAN/internet status via UniFi",             "category": "Network",        "icon": "Wifi"},
-    "tailscale":        {"label": "Tailscale",            "description": "VPN device status",                         "category": "Network",        "icon": "Network"},
-    "nginx_proxy":      {"label": "Nginx Proxy Manager",  "description": "Proxy hosts and cert expiry",               "category": "Network",        "icon": "Globe"},
-    "adguard":          {"label": "AdGuard · DNS1",      "description": "AdGuard Home DNS1 stats",                       "category": "Security",       "icon": "Shield"},
-    "adguard2":         {"label": "AdGuard · DNS2",      "description": "AdGuard Home DNS2 stats",                       "category": "Security",       "icon": "Shield"},
-    "qnap":             {"label": "NAS Storage",          "description": "QNAP NAS volumes, disks, temps",            "category": "Storage",        "icon": "Database"},
-    "plex":             {"label": "Plex",                 "description": "Active streams, library counts",            "category": "Media",          "icon": "Play"},
-    "tautulli":         {"label": "Tautulli",             "description": "Plex streams, plays today, top user",       "category": "Media",          "icon": "BarChart2"},
-    "sonarr":           {"label": "Sonarr",               "description": "TV series, queue, missing",                 "category": "Media",          "icon": "Tv"},
-    "radarr":           {"label": "Radarr",               "description": "Movies, queue, missing",                    "category": "Media",          "icon": "Film"},
-    "prowlarr":         {"label": "Prowlarr",             "description": "Indexer health",                            "category": "Media",          "icon": "Search"},
-    "sabnzbd":          {"label": "SABnzbd",              "description": "Download queue and speed",                  "category": "Media",          "icon": "Download"},
-    "overseerr":        {"label": "Overseerr",            "description": "Media requests",                            "category": "Media",          "icon": "List"},
-    "uptime_kuma":      {"label": "Uptime Kuma",          "description": "Monitor status, cert expiry",               "category": "Monitoring",     "icon": "HeartPulse"},
-    "custom_url":       {"label": "Custom URL",           "description": "Fetch and display custom JSON endpoint",    "category": "Monitoring",     "icon": "ExternalLink"},
-    "section_header":   {"label": "Section Header",       "description": "Visual divider / section label",            "category": "Layout",         "icon": "List"},
-}
-
-CATEGORY_ORDER = ["Infrastructure", "Security", "Network", "Storage", "Media", "Monitoring"]
-
-# ── Trend history ──────────────────────────────────────────────────────────────
-
-def load_trends():
-    STATE_DIR.mkdir(exist_ok=True)
-    if STATE_FILE.exists():
-        try:
-            with open(STATE_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
-def save_trends(trends):
-    STATE_DIR.mkdir(exist_ok=True)
-    with open(STATE_FILE, "w") as f:
-        json.dump(trends, f)
-
-
-def update_trends_for(card_type, data, now_epoch, trends):
-    """Append current value to trend series for cards that support graphs."""
-    MAX_HOURS = 48
-    cutoff = now_epoch - MAX_HOURS * 3600
-    TREND_FIELDS = {
-        "proxmox": ["cpu"],
-        "adguard": ["block_pct", "queries"],
-        "wazuh": ["alerts_24h", "high_24h"],
-    }
-    fields = TREND_FIELDS.get(card_type, [])
-    for field in fields:
-        val = data.get(field)
-        if val is None:
-            continue
-        series_key = f"{card_type}.{field}"
-        series = trends.get(series_key, [])
-        series.append([now_epoch, float(val)])
-        series = [[t, v] for t, v in series if t >= cutoff]
-        trends[series_key] = series
-    return trends
-
-
-# ── Layout persistence ─────────────────────────────────────────────────────────
-
-DEFAULT_LAYOUT = {
-    "theme": "dark-noc",
-    "autoTheme": False,  # permanently disabled — frontend ignores this, hardcoded dark-noc
-    "cards": [],
-    "sections": [],
-}
-
-# Default section definitions — mirrors NOC 1 / generate_dashboard.py structure.
-# id is stable (used as card.section foreign key). label is user-editable.
-DEFAULT_SECTIONS = [
-    {"id": "system_status",    "label": "System Status",                  "collapsed": False},
-    {"id": "security_network", "label": "Security & Network",             "collapsed": False},
-    {"id": "media_downloads",  "label": "Media & Downloads",              "collapsed": False},
-    {"id": "qnap_storage",     "label": "QNAP Storage Appliances",        "collapsed": False},
-    {"id": "proxmox_storage",  "label": "Proxmox Storage Utilization",    "collapsed": False, "panelbox": True},
-    {"id": "uptime_history",   "label": "Uptime History (last 24h)",      "collapsed": False, "panelbox": True, "historyPanel": True},
-    {"id": "certs_alerts",     "label": "Certificates & Active Alerts",   "collapsed": False, "twocol": True, "certsPanel": True},
-]
-
-# Type → section id mapping used during migration of old layouts (no card.section field)
-TYPE_TO_SECTION = {
-    "wan_health": "system_status", "wan_health_sec": "security_network",
-    "proxmox": "system_status", "home_assistant": "system_status",
-    "uptime_kuma": "system_status", "docker": "system_status",
-    "pbs": "system_status", "urbackup": "system_status",
-    "smart_health": "system_status",
-    "unifi": "security_network", "nginx_proxy": "security_network",
-    "cloudflare": "security_network", "wazuh": "security_network",
-    "crowdsec": "security_network", "limacharlie": "security_network",
-    "adguard": "security_network", "adguard2": "security_network",
-    "tailscale": "security_network", "malware_sources": "security_network",
-    "wgdashboard": "security_network", "hyperv": "system_status",
-    "plex": "media_downloads", "tautulli": "media_downloads",
-    "sonarr": "media_downloads", "radarr": "media_downloads",
-    "sabnzbd": "media_downloads", "overseerr": "media_downloads",
-    "prowlarr": "media_downloads",
-    "qnap": "qnap_storage",
-    "proxmox_storage": "proxmox_storage",
-    "uptime_kuma_detail": "uptime_history",
-    "custom_url": "certs_alerts",
-}
-
-
-
-def _is_standalone_health_card(card):
-    ctype = str((card or {}).get('type', '')).lower().replace('-', '_').replace(' ', '_')
-    title = str((card or {}).get('title', '')).lower()
-    return ctype in {'noc_health_score', 'health_score', 'noc_health', 'health'} or 'noc health score' in title
-
-
-def _migrate_layout(data):
-    """Add sections[] + card.section fields to old layouts. Returns (data, changed)."""
-    import copy
-    changed = False
-    if not data.get("sections"):
-        data["sections"] = copy.deepcopy(DEFAULT_SECTIONS)
-        changed = True
-    cards = [card for card in data.get("cards", []) if not _is_standalone_health_card(card)]
-    if len(cards) != len(data.get("cards", [])):
-        data["cards"] = cards
-        changed = True
-    for card in data.get("cards", []):
-        if not card.get("section"):
-            card["section"] = TYPE_TO_SECTION.get(card.get("type", ""), "system_status")
-            changed = True
-    return data, changed
-
-
-def load_layout():
-    STATE_DIR.mkdir(exist_ok=True)
-    if LAYOUT_FILE.exists():
-        try:
-            with open(LAYOUT_FILE) as f:
-                data = json.load(f)
-            for k, v in DEFAULT_LAYOUT.items():
-                data.setdefault(k, v)
-            data, changed = _migrate_layout(data)
-            if changed:
-                save_layout(data)
-            return data
-        except Exception:
-            pass
-    return _bootstrap_layout_from_yaml()
-
-
-# Map yaml section names → section ids (for _bootstrap_layout_from_yaml)
-YAML_SECTION_TO_ID = {
-    "System Status": "system_status",
-    "Security & Network": "security_network",
-    "Media & Downloads": "media_downloads",
-    "QNAP Storage Appliances": "qnap_storage",
-    "Proxmox Storage Utilization": "proxmox_storage",
-    "Uptime History (last 24h)": "uptime_history",
-    "Certificates & Active Alerts": "certs_alerts",
-}
-
-
-def _bootstrap_layout_from_yaml():
-    """Generate an initial layout.json from dashboard.yaml sections/cards."""
-    import copy
-    cfg = load_dashboard_config()
-    theme_cfg = cfg.get("theme", {})
-    layout = {
-        "theme": "dark-noc",   # always dark-noc; auto_switch from yaml is permanently ignored
-        "autoTheme": False,
-        "sections": copy.deepcopy(DEFAULT_SECTIONS),
-        "cards": []
-    }
-    import uuid
-    SIZE_TO_WH = {
-        "normal": (1, 2),
-        "wide": (2, 2),
-        "tall": (1, 4),
-        "large": (2, 4),
-    }
-    x, y, col = 0, 0, 0
-    COLS = 4
-    for section in cfg.get("sections", []):
-        section_id = YAML_SECTION_TO_ID.get(section.get("name", ""), "system_status")
-        for card in section.get("cards", []):
-            if _is_standalone_health_card(card):
-                continue
-            size = card.get("size", "normal")
-            w, h = SIZE_TO_WH.get(size, (1, 2))
-            if x + w > COLS:
-                x = 0
-                y += 2
-            entry = {
-                "id": str(uuid.uuid4()),
-                "type": card.get("type", ""),
-                "title": card.get("title", card.get("type", "").upper()),
-                "section": section_id,
-                "x": x, "y": y, "w": w, "h": h,
-                "config": {
-                    "graph": card.get("graph", False),
-                    "graph_type": card.get("graph_type", "sparkline"),
-                    "graph_field": card.get("graph_field", ""),
-                    "graph_color": card.get("graph_color", ""),
-                    "thresholds": card.get("thresholds", {}),
-                    "refresh_seconds": cfg.get("refresh_seconds", 60),
-                }
-            }
-            layout["cards"].append(entry)
-            x += w
-            if x >= COLS:
-                x = 0
-                y += 2
-    return layout
-
-
-def save_layout(layout):
-    STATE_DIR.mkdir(exist_ok=True)
-    with open(LAYOUT_FILE, "w") as f:
-        json.dump(layout, f, indent=2)
-
-
-# ── Card data cache (for ticker + status overview) ─────────────────────────────
-
-_card_cache: dict = {}  # card_type -> {"data": {...}, "ts": float}
-_sse_clients: set = set()  # set of asyncio.Queue
-
-
-async def _sse_broadcast(msg: str):
-    """Push a message to all connected SSE clients."""
-    dead = set()
-    for q in list(_sse_clients):
-        try:
-            q.put_nowait(msg)
-        except asyncio.QueueFull:
-            dead.add(q)
-    _sse_clients.difference_update(dead)
-
-
-def _push_sse_from_sync(card_type: str, data: dict):
-    """Schedule SSE broadcast from a sync context (runs in uvicorn's event loop)."""
+def read_state_config():
+    state = dict(DEFAULT_DASHBOARD_CONFIG)
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            msg = json.dumps({"type": "card_update", "card_type": card_type, "data": data})
-            asyncio.run_coroutine_threadsafe(_sse_broadcast(msg), loop)
+        with open(CONFIG_FILE) as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            state.update(raw)
+    except FileNotFoundError:
+        pass
     except Exception:
         pass
-
-
-# ── Ticker extraction ──────────────────────────────────────────────────────────
-
-def _extract_ticker_items(cache: dict) -> tuple:
-    """Extract alert/stats items from card cache. Returns (items_list, worst_level)."""
-    items = []
-    worst = "ok"
-    level_val = {"ok": 0, "info": 0, "warn": 1, "crit": 2}
-
-    def add(text, level):
-        nonlocal worst
-        items.append({"text": text, "level": level})
-        if level_val.get(level, 0) > level_val.get(worst, 0):
-            worst = level
-
-    now = time.time()
-    STALE = 900  # 15 min
-
-    for card_type, entry in cache.items():
-        data = entry.get("data", {})
-        ts = entry.get("ts", 0)
-        if now - ts > STALE:
-            continue
-        state = data.get("state", "ok")
-
-        if card_type == "proxmox":
-            vms_off = data.get("vms_offline", 0)
-            if vms_off:
-                add(f"Proxmox: {vms_off} VM(s) offline", "crit")
-            cpu = data.get("cpu")
-            if cpu is not None:
-                if cpu > 90:
-                    add(f"Proxmox CPU critical: {cpu:.0f}%", "crit")
-                elif cpu > 75:
-                    add(f"Proxmox CPU high: {cpu:.0f}%", "warn")
-
-        elif card_type == "proxmox_storage":
-            for pool in (data.get("pools") or []):
-                pct = pool.get("pct", 0)
-                name = pool.get("name", "storage")
-                if pct > 90:
-                    add(f"Storage {name} at {pct:.0f}%", "crit")
-                elif pct > 80:
-                    add(f"Storage {name} at {pct:.0f}%", "warn")
-
-        elif card_type == "docker":
-            for c in (data.get("unhealthy") or [])[:3]:
-                add(f"Docker unhealthy: {c}", "crit")
-            for c in (data.get("stopped") or [])[:3]:
-                add(f"Docker stopped: {c}", "warn")
-
-        elif card_type == "wazuh":
-            high = data.get("high_24h", 0)
-            alerts = data.get("alerts_24h", 0)
-            if high > 0:
-                add(f"Wazuh: {high} high-severity alert(s) in 24h", "crit")
-            elif alerts > 100:
-                add(f"Wazuh: {alerts} alerts in 24h", "warn")
-            for a in (data.get("agents") or []):
-                if a.get("status") not in ("active", "Active"):
-                    add(f"Wazuh agent offline: {a.get('name', a.get('id', '?'))}", "warn")
-
-        elif card_type == "crowdsec":
-            bans = data.get("active_bans", 0) or data.get("bans", 0)
-            if bans > 200:
-                add(f"CrowdSec: {bans} active bans", "warn")
-            d24 = data.get("decisions_24h", 0) or data.get("detections_24h", 0)
-            if d24 > 1000:
-                add(f"CrowdSec: {d24} detections in 24h", "warn")
-
-        elif card_type == "uptime_kuma":
-            for m in (data.get("down") or [])[:4]:
-                add(f"Down: {m}", "crit")
-            for m in (data.get("degraded") or [])[:2]:
-                add(f"Degraded: {m}", "warn")
-
-        elif card_type == "pbs":
-            failed = data.get("failed_tasks", 0)
-            if failed:
-                add(f"PBS: {failed} failed backup task(s) in 24h", "crit")
-
-        elif card_type == "urbackup":
-            for c in (data.get("clients_with_issues") or [])[:3]:
-                name = c if isinstance(c, str) else c.get("name", str(c))
-                add(f"URBackup: {name} has issues", "warn")
-            for c in (data.get("overdue") or [])[:2]:
-                name = c if isinstance(c, str) else c.get("name", str(c))
-                add(f"URBackup: {name} backup overdue", "warn")
-
-        elif card_type in ("unifi", "wan_health"):
-            wan_st = data.get("wan_status") or data.get("wan_state")
-            if wan_st and wan_st.lower() in ("down", "error", "offline"):
-                add("WAN: Internet connection DOWN", "crit")
-            ips = data.get("ips_alerts_24h", 0) or data.get("ips_events", 0)
-            if ips > 20:
-                add(f"UniFi IPS: {ips} alerts in 24h", "warn")
-
-        elif card_type == "cloudflare":
-            threats = data.get("threats_24h", 0) or data.get("threats", 0)
-            if threats > 2000:
-                add(f"Cloudflare: {threats} threats blocked in 24h", "warn")
-
-        elif card_type == "nginx_proxy":
-            for c in (data.get("expired_certs") or data.get("cert_invalid") or [])[:3]:
-                add(f"Cert INVALID: {c}", "crit")
-            for c in (data.get("expiring_soon") or [])[:2]:
-                add(f"Cert expiring soon: {c}", "warn")
-
-        elif card_type == "smart_health":
-            for d in (data.get("failed") or []):
-                add(f"SMART FAIL: {d}", "crit")
-            for d in (data.get("warning") or [])[:2]:
-                add(f"SMART warn: {d}", "warn")
-
-        elif card_type == "hyperv":
-            stopped = data.get("stopped", 0)
-            if data.get("state") == "error":
-                add(f"Hyper-V: {data.get('note', 'unreachable')}", "crit")
-            elif stopped > 0:
-                names = [v["name"] for v in data.get("vms", []) if v.get("state") != "Running"][:3]
-                add(f"Hyper-V: {stopped} VM(s) not running: {', '.join(names)}", "warn")
-
-        elif card_type == "malware_sources":
-            det = data.get("total_detections", 0) or data.get("detections", 0)
-            if det > 0:
-                add(f"Malware feed: {det} detection(s)", "warn")
-
-        elif card_type == "qnap":
-            for nas in (data.get("nas") or [data] if data.get("volume_pct") else []):
-                pct = nas.get("volume_pct", 0)
-                n = nas.get("name", "NAS")
-                if pct > 90:
-                    add(f"{n}: volume at {pct:.0f}%", "crit")
-                elif pct > 80:
-                    add(f"{n}: volume at {pct:.0f}%", "warn")
-
-        elif card_type == "limacharlie":
-            det = data.get("detections_24h", 0)
-            if det > 30:
-                add(f"LimaCharlie: {det} detection(s) in 24h", "warn")
-
-        elif card_type == "home_assistant":
-            alerts = data.get("alerts", 0) or data.get("persistent_notifications", 0)
-            if alerts > 5:
-                add(f"Home Assistant: {alerts} active alert(s)", "warn")
-
-        elif state in ("crit", "critical", "error"):
-            label = CARD_TYPE_META.get(card_type, {}).get("label", card_type)
-            add(f"{label}: {state.upper()}", "crit")
-        elif state == "warn":
-            label = CARD_TYPE_META.get(card_type, {}).get("label", card_type)
-            add(f"{label}: WARNING", "warn")
-
-    # Positive stats when all clear
-    if not items:
-        total = len(cache)
-        if total > 0:
-            add(f"All {total} monitored service(s) nominal", "ok")
-        prox = cache.get("proxmox", {}).get("data", {})
-        if prox.get("cpu") is not None:
-            add(f"Proxmox: CPU {prox['cpu']:.0f}% · RAM {prox.get('mem_pct', 0):.0f}%", "ok")
-        ag = cache.get("adguard", {}).get("data", {})
-        if ag.get("block_pct") is not None and ag.get("block_pct", 0) > 0:
-            add(f"AdGuard: blocking {float(ag['block_pct']):.1f}% of queries", "ok")
-        uk = cache.get("uptime_kuma", {}).get("data", {})
-        if uk.get("up_count"):
-            add(f"Uptime Kuma: {uk['up_count']} monitors UP", "ok")
-        if not items:
-            add("NOC Dashboard — MRDTech // ANTON — All Systems Nominal", "ok")
-
-    return items, worst
-
-
-
-# ── NOC Intelligence / Health Score persistence ───────────────────────────────
-
-_HEALTH_SNAPSHOT_MIN_INTERVAL = 25
-_last_health_snapshot_ts = 0
-_last_incident_state: dict[str, str] = {}
-
-
-def _db():
-    STATE_DIR.mkdir(exist_ok=True)
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS health_score_snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts INTEGER NOT NULL,
-            pct REAL NOT NULL,
-            breakdown_json TEXT NOT NULL
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_health_score_snapshots_ts ON health_score_snapshots(ts)")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS health_state_changes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts INTEGER NOT NULL,
-            source TEXT NOT NULL,
-            item TEXT NOT NULL,
-            old_state TEXT,
-            new_state TEXT NOT NULL,
-            detail TEXT
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_health_state_changes_ts ON health_state_changes(ts)")
-    return conn
-
-
-def _state_ok(state):
-    return str(state or "").lower() in ("ok", "up", "running", "active", "online", "healthy", "success")
-
-
-def _pct(good, total):
-    try:
-        good = int(good or 0); total = int(total or 0)
-    except Exception:
-        return 0
-    return 100 if total <= 0 else round(max(0, min(100, 100 * good / total)))
-
-
-def _cat(source, label, good, total, detail=None):
-    return {"source": source, "label": label, "good": int(good or 0), "total": int(total or 0), "pct": _pct(good, total), "detail": detail or []}
-
-
-def _current_data(card_type):
-    return (_card_cache.get(card_type) or {}).get("data") or {}
-
-
-def _health_breakdown_from_cache():
-    cats = []
-    prox = _current_data("proxmox")
-    if prox:
-        total = int(prox.get("vms_total") or 0)
-        good = int(prox.get("vms_running") or 0)
-        cats.append(_cat("proxmox", "Proxmox VMs", good, total, prox.get("down_vms") or []))
-
-    dock = _current_data("docker")
-    if dock:
-        total = int(dock.get("total") or 0)
-        bad = len(dock.get("bad") or dock.get("bad_containers") or dock.get("unhealthy") or [])
-        good = max(0, total - bad)
-        cats.append(_cat("docker", "Docker Containers", good, total, dock.get("bad") or []))
-
-    kuma = _current_data("uptime_kuma")
-    if kuma:
-        total = int(kuma.get("total") or 0)
-        good = int(kuma.get("up") or kuma.get("up_count") or 0)
-        detail = list(kuma.get("down") or []) + [str(x) for x in (kuma.get("other") or [])]
-        cats.append(_cat("uptime_kuma", "Uptime Kuma", good, total, detail))
-
-    pbs = _current_data("pbs")
-    if pbs:
-        ok = int(pbs.get("ok") or 0); fail = int(pbs.get("fail") or pbs.get("failed_tasks") or 0); run = int(pbs.get("run") or 0)
-        total = ok + fail + run
-        cats.append(_cat("pbs", "PBS Tasks", ok + run, total, [] if not fail else [f"{fail} failed task(s)"]))
-
-    urb = _current_data("urbackup")
-    if urb:
-        clients = urb.get("clients") or []
-        total = int(urb.get("total") or len(clients) or 0)
-        good = sum(1 for c in clients if (c.get("state") or "ok") == "ok") if clients else int(urb.get("online") or 0)
-        cats.append(_cat("urbackup", "UrBackup Clients", good, total, urb.get("problems") or []))
-
-    waz = _current_data("wazuh")
-    if waz:
-        total = int(waz.get("total") or 0)
-        good = int(waz.get("active") or 0)
-        cats.append(_cat("wazuh", "Wazuh Agents", good, total, waz.get("down") or []))
-
-    total_checks = sum(c["total"] for c in cats)
-    good_checks = sum(c["good"] for c in cats)
-    pct = _pct(good_checks, total_checks)
-    state = "ok" if pct >= 95 else "warn" if pct >= 90 else "crit"
-    return {"pct": pct, "state": state, "good": good_checks, "total": total_checks, "categories": cats, "ts": int(time.time())}
-
-
-def _incident_items_for_health(health):
-    items = []
-    for c in health.get("categories", []):
-        state = "ok" if c["good"] >= c["total"] else "crit" if c["pct"] < 90 else "warn"
-        items.append((c["source"], "__category__", state, f"{c['label']}: {c['good']}/{c['total']}"))
-        for detail in c.get("detail") or []:
-            items.append((c["source"], str(detail), "crit" if state == "crit" else "warn", str(detail)))
-    return items
-
-
-def _maybe_record_health_snapshot(force=False):
-    global _last_health_snapshot_ts, _last_incident_state
-    now = int(time.time())
-    health = _health_breakdown_from_cache()
-    if health.get("total", 0) <= 0:
-        return health
-    with _db() as conn:
-        if force or now - _last_health_snapshot_ts >= _HEALTH_SNAPSHOT_MIN_INTERVAL:
-            conn.execute(
-                "INSERT INTO health_score_snapshots(ts, pct, breakdown_json) VALUES (?, ?, ?)",
-                (now, float(health["pct"]), json.dumps(health["categories"])),
-            )
-            conn.execute("DELETE FROM health_score_snapshots WHERE ts < ?", (now - 31 * 86400,))
-            _last_health_snapshot_ts = now
-        for source, item, state, detail in _incident_items_for_health(health):
-            key = f"{source}:{item}"
-            old = _last_incident_state.get(key)
-            if old is None:
-                _last_incident_state[key] = state
-            elif old != state:
-                conn.execute(
-                    "INSERT INTO health_state_changes(ts, source, item, old_state, new_state, detail) VALUES (?, ?, ?, ?, ?, ?)",
-                    (now, source, item, old, state, detail),
-                )
-                _last_incident_state[key] = state
-    return health
-
-
-def _health_history(range_name="24h"):
-    seconds = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}.get(range_name, 86400)
-    since = int(time.time()) - seconds
-    with _db() as conn:
-        rows = conn.execute(
-            "SELECT ts, pct FROM health_score_snapshots WHERE ts >= ? ORDER BY ts ASC",
-            (since,),
-        ).fetchall()
-    return [{"ts": int(r["ts"]), "pct": round(float(r["pct"]), 1)} for r in rows]
-
-
-def _health_incidents(limit=20):
-    with _db() as conn:
-        rows = conn.execute(
-            "SELECT ts, source, item, old_state, new_state, detail FROM health_state_changes ORDER BY ts DESC LIMIT ?",
-            (int(limit),),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def _backup_coverage_from_cache():
-    data = _current_data("urbackup")
-    clients = data.get("clients") or []
-    now = time.time()
-    file_good = image_good = 0
-    out_clients = []
-    for c in clients:
-        file_recent = bool(c.get("file_recent", (c.get("state") or "ok") == "ok"))
-        image_days = c.get("image_days")
-        image_recent = bool(c.get("image_recent", image_days is not None and image_days <= 8))
-        file_good += 1 if file_recent else 0
-        image_good += 1 if image_recent else 0
-        status = "ok" if file_recent and image_recent else "warn" if file_recent or image_recent else "crit"
-        out_clients.append({
-            "name": c.get("name", "?"), "last_file_backup": c.get("last_file_backup") or c.get("ago") or "?",
-            "days_since_image_backup": image_days, "status": status,
-        })
-    total = len(clients) or int(data.get("total") or 0)
-    return {"file_pct": _pct(file_good, total), "image_pct": _pct(image_good, total), "file_good": file_good, "image_good": image_good, "total": total, "clients": out_clients}
-
-
-def _security_posture_from_cache():
-    waz = _current_data("wazuh"); cs = _current_data("crowdsec"); lc = _current_data("limacharlie")
-    waz_high = int(waz.get("high_24h") or waz.get("high_alerts") or 0)
-    bans = int(cs.get("bans") or cs.get("active_bans") or 0)
-    lc_det = int(lc.get("detections_24h") or 0)
-    score = max(0, 100 - (waz_high * 25) - min(25, bans // 25) - min(25, lc_det * 5))
-    state = "crit" if waz_high > 0 else "ok" if score >= 95 else "warn" if score >= 90 else "crit"
-    return {"pct": score, "state": state, "breakdown": {"wazuh_high_crit_24h": waz_high, "crowdsec_active_bans": bans, "limacharlie_detections_24h": lc_det}}
-
-
-def _storage_health_from_cache():
-    volumes = []
-    qnap = _current_data("qnap")
-    for unit in qnap.get("units") or []:
-        label = unit.get("label") or unit.get("host") or "QNAP"
-        for v in unit.get("volumes") or []:
-            pct = float(v.get("pct") or 0)
-            volumes.append({"name": f"{label} {v.get('name','volume')}", "pct": pct, "used": v.get("used_t"), "total": v.get("total_t"), "source": "qnap"})
-    pbs = _current_data("pbs")
-    for ds in pbs.get("datastores") or []:
-        volumes.append({"name": f"PBS {ds.get('name','datastore')}", "pct": float(ds.get("pct") or 0), "source": "pbs"})
-    total_pct = round(sum(v["pct"] for v in volumes) / len(volumes), 1) if volumes else 0
-    return {"aggregate_pct": total_pct, "volumes": volumes}
-
-
-def _cert_expiry_from_cache():
-    certs = []
-    npm = _current_data("nginx_proxy")
-    for c in npm.get("cert_list") or []:
-        certs.append({"name": c.get("name", "?"), "days": c.get("days"), "valid": c.get("valid", True), "source": "npm"})
-    # Keep Kuma cert validity as supplemental visibility; it catches externally invalid certs.
-    for c in (_current_data("uptime_kuma").get("certs") or []):
-        name = c.get("name", "?")
-        if not any(x["name"] == name for x in certs):
-            certs.append({"name": name, "days": c.get("days"), "valid": c.get("valid", True), "source": "uptime_kuma"})
-    certs.sort(key=lambda c: (c.get("valid", True), 9999 if c.get("days") is None else c.get("days")))
-    flagged = [c for c in certs if ("portainer" in c.get("name", "").lower()) and (not c.get("valid", True) or (c.get("days") is not None and c.get("days") < 0))]
-    return {"certs": certs, "flagged": flagged}
-
-
-def _intelligence_payload():
-    health = _maybe_record_health_snapshot()
-    return {
-        "health": health,
-        "history": {"24h": _health_history("24h"), "7d": _health_history("7d"), "30d": _health_history("30d")},
-        "incidents": _health_incidents(20),
-        "backup": _backup_coverage_from_cache(),
-        "security": _security_posture_from_cache(),
-        "storage": _storage_health_from_cache(),
-        "certificates": _cert_expiry_from_cache(),
-        "ts": int(time.time()),
-    }
-
-# ── FastAPI app ────────────────────────────────────────────────────────────────
-
-app = FastAPI(title="NOC Dashboard API", docs_url="/api/docs")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-_collector_map = None
-
-
-def get_collectors():
-    global _collector_map
-    if _collector_map is None:
-        try:
-            _collector_map = get_collector_map()
-        except Exception as e:
-            print(f"WARNING: collector import error: {e}", file=sys.stderr)
-            _collector_map = {}
-    return _collector_map
-
-
-
-PUBLIC_API_PATHS = {
-    "/api/auth/status",
-    "/api/auth/setup",
-    "/api/auth/login",
-}
-
-
-@app.middleware("http")
-async def require_auth_for_api(request: Request, call_next):
-    path = request.url.path
-    if path.startswith("/api/") and path not in PUBLIC_API_PATHS:
-        cfg_json = load_config_json()
-        if not _verify_session_token(cfg_json, request.cookies.get(SESSION_COOKIE)):
-            return JSONResponse({"detail": "authentication required"}, status_code=401)
-    return await call_next(request)
-
-
-@app.get("/api/auth/status")
-def api_auth_status(request: Request):
-    cfg_json = load_config_json()
-    admin = _get_admin(cfg_json)
-    authenticated = _verify_session_token(cfg_json, request.cookies.get(SESSION_COOKIE))
-    return {
-        "authenticated": authenticated,
-        "needs_setup": admin is None,
-        "username": admin.get("username") if admin and authenticated else None,
-        "role": admin.get("role", "Administrator") if admin and authenticated else None,
-    }
-
-
-@app.post("/api/auth/setup")
-async def api_auth_setup(request: Request):
-    cfg_json = load_config_json()
-    if _get_admin(cfg_json):
-        raise HTTPException(status_code=409, detail="admin user already exists")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
-    username = str(body.get("username", "")).strip()
-    password = str(body.get("password", ""))
-    confirm = str(body.get("confirm_password", ""))
-    remember = body.get("remember", True) is not False
-    if not username:
-        raise HTTPException(status_code=400, detail="username is required")
-    if not _password_ok(password):
-        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
-    if not hmac.compare_digest(password, confirm):
-        raise HTTPException(status_code=400, detail="passwords do not match")
-    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    cfg_json["admin"] = {"username": username, "password_hash": password_hash}
-    cfg_json["sessions"] = {}
-    token = _create_session(cfg_json)
-    return _auth_response({"ok": True, "username": username}, token, remember)
-
-
-@app.post("/api/auth/login")
-async def api_auth_login(request: Request):
-    cfg_json = load_config_json()
-    admin = _get_admin(cfg_json)
-    if not admin:
-        raise HTTPException(status_code=409, detail="admin setup required")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
-    username = str(body.get("username", "")).strip()
-    password = str(body.get("password", ""))
-    remember = body.get("remember", True) is not False
-    valid_user = hmac.compare_digest(username, str(admin.get("username", "")))
-    valid_pass = bcrypt.checkpw(password.encode("utf-8"), str(admin.get("password_hash", "")).encode("utf-8"))
-    if not (valid_user and valid_pass):
-        raise HTTPException(status_code=401, detail="invalid username or password")
-    token = _create_session(cfg_json)
-    return _auth_response({"ok": True, "username": admin.get("username")}, token, remember)
-
-
-@app.post("/api/auth/logout")
-def api_auth_logout(request: Request):
-    cfg_json = load_config_json()
-    _clear_session_token(cfg_json, request.cookies.get(SESSION_COOKIE))
-    resp = JSONResponse({"ok": True})
-    resp.delete_cookie(SESSION_COOKIE, path="/")
-    return resp
-
-
-@app.post("/api/auth/change-password")
-async def api_auth_change_password(request: Request):
-    cfg_json = load_config_json()
-    admin = _get_admin(cfg_json)
-    if not admin:
-        raise HTTPException(status_code=409, detail="admin setup required")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
-    current = str(body.get("current_password", ""))
-    new_password = str(body.get("new_password", ""))
-    confirm = str(body.get("confirm_password", ""))
-    if not bcrypt.checkpw(current.encode("utf-8"), str(admin.get("password_hash", "")).encode("utf-8")):
-        raise HTTPException(status_code=401, detail="current password is incorrect")
-    if not _password_ok(new_password):
-        raise HTTPException(status_code=400, detail="new password must be at least 8 characters")
-    if not hmac.compare_digest(new_password, confirm):
-        raise HTTPException(status_code=400, detail="new passwords do not match")
-    admin["password_hash"] = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    # Changing passwords invalidates every other session. Basic hygiene. Apparently necessary.
-    current_hash = _hash_token(request.cookies.get(SESSION_COOKIE, ""))
-    current_session = cfg_json.get("sessions", {}).get(current_hash)
-    cfg_json["sessions"] = {current_hash: current_session} if current_session else {}
-    save_config_json(cfg_json)
-    return {"ok": True}
-
-# ── API routes ─────────────────────────────────────────────────────────────────
-
-@app.get("/api/card-types")
-def api_card_types():
-    return {k: v for k, v in CARD_TYPE_META.items()}
-
-
-@app.get("/api/themes")
-def api_themes():
-    return load_all_themes()
-
-
-@app.get("/api/layout")
-def api_get_layout():
-    return load_layout()
-
-
-@app.post("/api/layout")
-async def api_save_layout(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON")
-    save_layout(body)
-    return {"ok": True}
-
-
-@app.get("/api/config")
-def api_config():
-    cfg = load_dashboard_config()
-    top_bar = cfg.get("top_bar", {})
-    return {
-        "title": top_bar.get("title", "NOC Dashboard"),
-        "subtitle": top_bar.get("subtitle", ""),
-        "show_updated": top_bar.get("show_updated", True),
-        "show_overall_status": top_bar.get("show_overall_status", True),
-        "overall_status_logic": top_bar.get("overall_status_logic", "worst"),
-    }
-
-
-@app.get("/api/data/{card_type}")
-def api_data(card_type: str, request: Request):
-    """Run collector and return live data."""
-    collectors = get_collectors()
-    fn = collectors.get(card_type)
-    if fn is None:
-        raise HTTPException(status_code=404, detail=f"no collector for '{card_type}'")
-
-    card_cfg = {"type": card_type}
-    qp = dict(request.query_params)
-    if "thresholds" in qp:
-        try:
-            card_cfg["thresholds"] = json.loads(qp["thresholds"])
-        except Exception:
-            pass
-    for k in ("graph_field", "graph_type", "graph_color"):
-        if k in qp:
-            card_cfg[k] = qp[k]
-
-    now = time.time()
-    try:
-        t0 = time.time()
-        data = fn(E, card_cfg)
-        elapsed = round(time.time() - t0, 3)
-    except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[{card_type}] ERROR: {e}\n{tb}", file=sys.stderr)
-        data = {"state": "error", "note": str(e)[:200]}
-        elapsed = 0
-
-    # Cache for ticker + status overview
-    _card_cache[card_type] = {"data": data, "ts": now}
-
-    # Update trends
-    try:
-        trends = load_trends()
-        if data.get("state") not in ("error",):
-            trends = update_trends_for(card_type, data, int(now), trends)
-            save_trends(trends)
-    except Exception:
-        pass
-
-    # Include trend data in response
-    try:
-        trend_data = {}
-        trends = load_trends()
-        for k, v in trends.items():
-            if k.startswith(card_type + "."):
-                trend_data[k.split(".", 1)[1]] = [val for _, val in v[-60:]]
-        if trend_data:
-            data["_trends"] = trend_data
-    except Exception:
-        pass
-
-    data["_elapsed"] = elapsed
-    data["_ts"] = int(now)
-
-    # Push to SSE clients (non-blocking)
-    _push_sse_from_sync(card_type, data)
-
-    # Record alert events to persistent history
-    try:
-        _record_alert_events(card_type, data)
-    except Exception:
-        pass
-
-    # Health Score snapshots/incidents live in SQLite. Record at most once per poll cycle.
-    try:
-        _maybe_record_health_snapshot()
-    except Exception:
-        pass
-
-    return data
-
-
-@app.get("/api/data/uptime_kuma_detail")
-def api_uptime_kuma_detail():
-    """
-    Uptime Kuma history hbar data.
-    Builds 24-cell arrays from the kuma trend data stored in trends.json.
-    Falls back to current status_map if no trend history yet.
-    """
-    import time as _time
-    now = int(_time.time())
-    hours = 24
-
-    # Try to get trend data from trends.json
-    try:
-        trends = load_trends()
-    except Exception:
-        trends = {}
-
-    monitors_out = []
-
-    # Check if we have kuma history trends
-    kuma_trends = {k.split(".", 1)[1]: v for k, v in trends.items()
-                   if k.startswith("uptime_kuma.")}
-
-    if kuma_trends:
-        start = now - hours * 3600
-        for name, series in sorted(kuma_trends.items()):
-            buckets: list = [None] * hours
-            for ts, val in series:
-                idx = int((ts - start) // 3600)
-                if 0 <= idx < hours:
-                    # val: 1=up, 0=down, 0.5=other — map to our codes
-                    sev = 3 if val == 0 else 2 if (0 < val < 1) else 1
-                    cur_sev = {None: 0, 1: 1, 2: 2, 0: 3}.get(buckets[idx], 0)
-                    if sev >= cur_sev:
-                        buckets[idx] = 0 if sev == 3 else (2 if sev == 2 else 1)
-            cells = [b if b is not None else -1 for b in buckets]
-            monitors_out.append({"name": name, "cells": cells})
+    state["users"] = state.get("users") if isinstance(state.get("users"), list) else []
+    state["sessions"] = state.get("sessions") if isinstance(state.get("sessions"), list) else []
+    state["login_audit"] = state.get("login_audit") if isinstance(state.get("login_audit"), list) else []
+    state["api_tokens"] = state.get("api_tokens") if isinstance(state.get("api_tokens"), list) else []
+    if not isinstance(state.get("security_settings"), dict):
+        state["security_settings"] = {"password_expiry_enabled": False, "password_expiry_days": 90}
     else:
-        # Fall back to current status_map from cache
-        uk_cache = _card_cache.get("uptime_kuma", {}).get("data", {})
-        status_map = uk_cache.get("status_map", {})
-        for name, val in sorted(status_map.items()):
-            # Show only current status in last cell
-            cells = [-1] * (hours - 1) + [val]
-            monitors_out.append({"name": name, "cells": cells})
+        state["security_settings"].setdefault("password_expiry_enabled", False)
+        state["security_settings"].setdefault("password_expiry_days", 90)
+    return state
 
-    return {
-        "state": "ok",
-        "history_monitors": monitors_out,
-        "_ts": now,
-    }
+def write_state_config(state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = CONFIG_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, indent=2)
+        f.write(chr(10))
+    os.replace(tmp, CONFIG_FILE)
 
+def public_dashboard_config():
+    return read_dashboard_config()
 
-@app.get("/api/ticker")
-def api_ticker():
-    """Aggregated alerts and stats for the scrolling ticker bar."""
-    items, worst = _extract_ticker_items(_card_cache)
-    return {"items": items, "worst": worst, "ts": int(time.time())}
+def password_error(password):
+    if not isinstance(password, str) or len(password) < 8:
+        return "Password must be at least 8 characters."
+    if not re.search(r"[A-Z]", password):
+        return "Password must include at least one uppercase letter."
+    if not re.search(r"[a-z]", password):
+        return "Password must include at least one lowercase letter."
+    if not (re.search(r"[0-9]", password) or re.search(r"[^A-Za-z0-9]", password)):
+        return "Password must include at least one number or symbol."
+    return ""
 
+def normalize_username(username):
+    return str(username or "").strip()[:64]
 
-@app.get("/api/status-overview")
-def api_status_overview():
-    """Counts of ok/warn/crit across all recently-seen cards."""
-    now = time.time()
-    STALE = 900
-    counts = {"ok": 0, "warn": 0, "crit": 0, "error": 0, "unknown": 0}
-    for card_type, entry in _card_cache.items():
-        if now - entry.get("ts", 0) > STALE:
-            continue
-        state = entry.get("data", {}).get("state", "unknown")
-        if state in ("crit", "critical"):
-            counts["crit"] += 1
-        elif state == "warn":
-            counts["warn"] += 1
-        elif state == "ok":
-            counts["ok"] += 1
-        elif state == "error":
-            counts["error"] += 1
-        else:
-            counts["unknown"] += 1
-    worst = "ok"
-    if counts["crit"] + counts["error"] > 0:
-        worst = "crit"
-    elif counts["warn"] > 0:
-        worst = "warn"
-    return {**counts, "worst": worst, "total": sum(counts.values()), "ts": int(time.time())}
+def users_exist():
+    return bool(read_state_config().get("users"))
 
+def find_user(state, username):
+    username = normalize_username(username).lower()
+    for user in state.get("users", []):
+        if normalize_username(user.get("username")).lower() == username:
+            return user
+    return None
 
-@app.get("/api/intelligence")
-def api_intelligence():
-    """NOC Intelligence sidebar payload: health score, trends, incidents, backups, security, storage, and certs."""
-    return _intelligence_payload()
+def hash_password(password):
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
 
-
-@app.get("/api/events")
-async def api_sse():
-    """Server-Sent Events stream for live card data updates."""
-    q: asyncio.Queue = asyncio.Queue(maxsize=200)
-    _sse_clients.add(q)
-
-    async def stream():
-        try:
-            yield f"data: {json.dumps({'type': 'connected', 'ts': int(time.time())})}\n\n"
-            while True:
-                try:
-                    msg = await asyncio.wait_for(q.get(), timeout=25)
-                    yield f"data: {msg}\n\n"
-                except asyncio.TimeoutError:
-                    yield f"data: {json.dumps({'type': 'heartbeat', 'ts': int(time.time())})}\n\n"
-        except Exception:
-            pass
-        finally:
-            _sse_clients.discard(q)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        }
-    )
-
-
-@app.get("/api/health")
-def api_health():
-    return {"ok": True, "ts": int(time.time())}
-
-
-
-# ── Alert history persistence ──────────────────────────────────────────────────
-
-ALERT_HISTORY_FILE = STATE_DIR / "alert_history.json"
-MAX_ALERT_HISTORY = 500  # keep last 500 events
-
-
-def load_alert_history() -> list:
-    STATE_DIR.mkdir(exist_ok=True)
-    if ALERT_HISTORY_FILE.exists():
-        try:
-            with open(ALERT_HISTORY_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return []
-
-
-def save_alert_history(events: list):
-    STATE_DIR.mkdir(exist_ok=True)
-    with open(ALERT_HISTORY_FILE, "w") as f:
-        json.dump(events, f)
-
-
-def _extract_alert_events(card_type: str, data: dict) -> list:
-    """Extract named alert events from a card data payload.
-    Returns list of {text, level} dicts.
-    """
-    events = []
-    label = CARD_TYPE_META.get(card_type, {}).get("label", card_type)
-    state = data.get("state", "ok")
-
-    if card_type == "proxmox":
-        vms_off = data.get("vms_offline", 0)
-        if vms_off:
-            events.append({"text": f"{label}: {vms_off} VM(s) offline", "level": "crit"})
-        for vm in (data.get("down_vms") or []):
-            events.append({"text": f"{label}: VM offline — {vm}", "level": "crit"})
-        cpu = data.get("cpu_pct") or data.get("cpu")
-        if cpu is not None:
-            if cpu > 90:
-                events.append({"text": f"{label}: CPU critical {cpu:.0f}%", "level": "crit"})
-            elif cpu > 75:
-                events.append({"text": f"{label}: CPU high {cpu:.0f}%", "level": "warn"})
-
-    elif card_type == "proxmox_storage":
-        for pool in (data.get("pools") or []):
-            pct = pool.get("pct", 0)
-            name = pool.get("name", "storage")
-            if pct > 90:
-                events.append({"text": f"{label}: {name} at {pct:.0f}%", "level": "crit"})
-            elif pct > 80:
-                events.append({"text": f"{label}: {name} at {pct:.0f}%", "level": "warn"})
-        for sname, sdata in (data.get("storage") or {}).items():
-            pct = sdata.get("used_pct") or sdata.get("pct") or 0
-            if pct > 90:
-                events.append({"text": f"{label}: {sname} at {pct:.0f}%", "level": "crit"})
-            elif pct > 80:
-                events.append({"text": f"{label}: {sname} at {pct:.0f}%", "level": "warn"})
-
-    elif card_type == "docker":
-        for c in (data.get("bad_containers") or data.get("unhealthy") or [])[:10]:
-            name = c if isinstance(c, str) else c.get("name", str(c))
-            st = (f" ({c.get('state', c.get('status', '?'))})" if isinstance(c, dict) else "")
-            events.append({"text": f"Docker: {name}{st} unhealthy", "level": "crit"})
-        for c in (data.get("stopped") or [])[:5]:
-            name = c if isinstance(c, str) else c.get("name", str(c))
-            events.append({"text": f"Docker: {name} stopped", "level": "warn"})
-
-    elif card_type == "wazuh":
-        high = data.get("high_alerts") or data.get("high_24h", 0)
-        alerts = data.get("alerts_24h", 0)
-        if high > 0:
-            events.append({"text": f"Wazuh: {high} high-severity alert(s) in 24h", "level": "crit"})
-        elif alerts > 100:
-            events.append({"text": f"Wazuh: {alerts} total alerts in 24h", "level": "warn"})
-        for a in (data.get("down_agents") or data.get("agents") or []):
-            if isinstance(a, dict):
-                status = a.get("status", "")
-                if status and status.lower() not in ("active",):
-                    name = a.get("name", a.get("id", str(a)))
-                    events.append({"text": f"Wazuh: agent offline — {name}", "level": "warn"})
-
-    elif card_type == "crowdsec":
-        bans = data.get("active_bans", 0) or data.get("bans", 0)
-        if bans > 200:
-            events.append({"text": f"CrowdSec: {bans} active bans", "level": "warn"})
-        d24 = data.get("decisions_24h", 0) or data.get("detections_24h", 0)
-        if d24 > 1000:
-            events.append({"text": f"CrowdSec: {d24} detections in 24h", "level": "warn"})
-
-    elif card_type == "uptime_kuma":
-        for m in (data.get("down") or [])[:10]:
-            name = m if isinstance(m, str) else m.get("name", str(m))
-            events.append({"text": f"Down: {name}", "level": "crit"})
-        for m in (data.get("degraded") or [])[:5]:
-            name = m if isinstance(m, str) else m.get("name", str(m))
-            events.append({"text": f"Degraded: {name}", "level": "warn"})
-
-    elif card_type == "pbs":
-        failed = data.get("failed_tasks", 0)
-        if failed:
-            events.append({"text": f"PBS: {failed} failed backup task(s) in 24h", "level": "crit"})
-
-    elif card_type == "urbackup":
-        for c in (data.get("clients_with_issues") or [])[:5]:
-            name = c if isinstance(c, str) else c.get("name", str(c))
-            events.append({"text": f"URBackup: {name} has issues", "level": "warn"})
-        for c in (data.get("overdue") or [])[:3]:
-            name = c if isinstance(c, str) else c.get("name", str(c))
-            events.append({"text": f"URBackup: {name} backup overdue", "level": "warn"})
-
-    elif card_type in ("unifi", "wan_health"):
-        wan_st = data.get("wan_status") or data.get("wan_state", "")
-        if wan_st and wan_st.lower() in ("down", "error", "offline"):
-            events.append({"text": "WAN: Internet connection DOWN", "level": "crit"})
-        ips = data.get("ips_alerts_24h", 0) or data.get("ips_events", 0)
-        if ips > 20:
-            events.append({"text": f"UniFi IPS: {ips} alerts in 24h", "level": "warn"})
-
-    elif card_type == "cloudflare":
-        threats = data.get("threats_24h", 0) or data.get("threats", 0)
-        if threats > 2000:
-            events.append({"text": f"Cloudflare: {threats} threats blocked in 24h", "level": "warn"})
-
-    elif card_type == "nginx_proxy":
-        for c in (data.get("expired_certs") or data.get("cert_invalid") or [])[:5]:
-            events.append({"text": f"Cert INVALID: {c}", "level": "crit"})
-        for c in (data.get("expiring_soon") or [])[:3]:
-            events.append({"text": f"Cert expiring soon: {c}", "level": "warn"})
-
-    elif card_type == "smart_health":
-        for d in (data.get("failed") or []):
-            events.append({"text": f"SMART FAIL: {d}", "level": "crit"})
-        for d in (data.get("warning") or [])[:3]:
-            events.append({"text": f"SMART warning: {d}", "level": "warn"})
-
-    elif card_type == "hyperv":
-        stopped = data.get("stopped", 0)
-        if data.get("state") == "error":
-            events.append({"text": f"Hyper-V: {data.get('note', 'unreachable')}", "level": "crit"})
-        elif stopped > 0:
-            names = [v["name"] for v in data.get("vms", []) if v.get("state") != "Running"][:3]
-            events.append({"text": f"Hyper-V: {stopped} VM(s) not running: {', '.join(names)}", "level": "warn"})
-
-    elif card_type == "malware_sources":
-        det = data.get("total_detections", 0) or data.get("detections", 0)
-        if det > 0:
-            events.append({"text": f"Malware feed: {det} detection(s)", "level": "warn"})
-
-    elif card_type == "qnap":
-        for nas in (data.get("nas") or ([data] if data.get("volume_pct") else [])):
-            pct = nas.get("volume_pct", 0)
-            n = nas.get("name", "NAS")
-            if pct > 90:
-                events.append({"text": f"{n}: volume at {pct:.0f}%", "level": "crit"})
-            elif pct > 80:
-                events.append({"text": f"{n}: volume at {pct:.0f}%", "level": "warn"})
-            for disk in (nas.get("disks") or []):
-                st = disk.get("health") or disk.get("status", "")
-                if st and st.lower() not in ("good", "ok", "normal"):
-                    events.append({"text": f"{n}: disk {disk.get('id','?')} — {st}", "level": "warn"})
-
-    elif card_type == "limacharlie":
-        det = data.get("detections_24h", 0)
-        if det > 30:
-            events.append({"text": f"LimaCharlie: {det} detection(s) in 24h", "level": "warn"})
-        for s in (data.get("offline_sensors") or [])[:3]:
-            events.append({"text": f"LimaCharlie: sensor offline — {s}", "level": "warn"})
-
-    elif card_type == "home_assistant":
-        for n in (data.get("notifications") or [])[:5]:
-            text = n if isinstance(n, str) else n.get("message", n.get("title", str(n)))
-            events.append({"text": f"HA: {text}", "level": "warn"})
-        for e in (data.get("entity_unavailable") or [])[:3]:
-            events.append({"text": f"HA: entity unavailable — {e}", "level": "warn"})
-
-    elif card_type == "tailscale":
-        for d in (data.get("offline_devices") or [])[:5]:
-            name = d if isinstance(d, str) else d.get("name", d.get("hostname", str(d)))
-            events.append({"text": f"Tailscale: {name} offline", "level": "warn"})
-
-    # Fallback for unhandled card types in error/crit state
-    if not events and state in ("crit", "critical", "error"):
-        note = data.get("note", "")
-        events.append({"text": f"{label}: {state.upper()}{' — ' + note if note else ''}", "level": "crit"})
-    elif not events and state == "warn":
-        events.append({"text": f"{label}: WARNING", "level": "warn"})
-
-    return events
-
-
-@app.get("/api/alert-history")
-def api_get_alert_history():
-    """Return persisted alert event history."""
-    return {"events": load_alert_history(), "ts": int(time.time())}
-
-
-@app.post("/api/alert-history/clear")
-async def api_clear_alert_history():
-    """Clear the alert history file."""
-    save_alert_history([])
-    return {"ok": True}
-
-
-def _record_alert_events(card_type: str, data: dict):
-    """Extract and append new alert events to persistent history.
-    Deduplicates within the same minute to prevent log spam on fast refresh.
-    """
-    events = _extract_alert_events(card_type, data)
-    if not events:
-        return
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
-    history = load_alert_history()
-    existing_texts_this_minute = {
-        e["text"] for e in history
-        if e.get("ts", "")[:16] == now_iso[:16]
-    }
-    new_entries = []
-    for ev in events:
-        if ev["text"] not in existing_texts_this_minute:
-            new_entries.append({
-                "text": ev["text"],
-                "level": ev["level"],
-                "card_type": card_type,
-                "ts": now_iso,
-            })
-            existing_texts_this_minute.add(ev["text"])
-
-    if not new_entries:
-        return
-    merged = new_entries + history
-    merged = merged[:MAX_ALERT_HISTORY]
-    save_alert_history(merged)
-
-    # Broadcast new events to all open SSE clients
+def verify_password(password, password_hash):
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            msg = json.dumps({"type": "alert_history_update", "new_events": new_entries})
-            asyncio.run_coroutine_threadsafe(_sse_broadcast(msg), loop)
+        return bcrypt.checkpw(password.encode("utf-8"), str(password_hash or "").encode("utf-8"))
     except Exception:
-        pass
+        return False
 
+def new_session(state, username, ip="", user_agent=""):
+    token = secrets.token_urlsafe(48)
+    now = int(time.time())
+    exp = now + SESSION_DAYS * 86400
+    state["sessions"] = [s for s in state.get("sessions", []) if int(s.get("expires", 0)) > now]
+    state["sessions"].append({
+        "id": uuid.uuid4().hex,
+        "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+        "username": username,
+        "created": now,
+        "last_activity": now,
+        "ip": ip,
+        "user_agent": str(user_agent or "")[:240],
+        "expires": exp,
+    })
+    write_state_config(state)
+    return token, exp
 
-# ── Integration config management ─────────────────────────────────────────────
-# state/config.json stores all integration credentials.
-# Structure: {"integrations": {"proxmox": {"url": ..., "token_id": ..., ...}, ...}}
-# .env is the fallback; config.json values win.
+def cookie_header(token, expires):
+    # Max-Age is enough by spec, but Expires makes browser/proxy behavior explicit.
+    exp_http = formatdate(int(expires), usegmt=True)
+    return f"{AUTH_COOKIE}={token}; Max-Age={SESSION_DAYS*86400}; Expires={exp_http}; Path=/; HttpOnly; SameSite=Lax"
 
-# Maps integration type -> env var names for each field
-# Fields are in order: url, then auth fields
-INTEGRATION_FIELDS = {
-    "proxmox": [
-        {"key": "PROXMOX_HOST", "label": "Host URL", "placeholder": "https://10.10.10.251:8006", "type": "text"},
-        {"key": "PROXMOX_TOKEN_ID", "label": "Token ID", "placeholder": "root@pam!hermes", "type": "text"},
-        {"key": "PROXMOX_TOKEN_SECRET", "label": "Token Secret", "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "type": "password"},
-    ],
-    "pbs": [
-        {"key": "PBS_URL", "label": "URL", "placeholder": "https://10.10.10.77:8007", "type": "text"},
-        {"key": "PBS_USERNAME", "label": "Username", "placeholder": "root@pam", "type": "text"},
-        {"key": "PBS_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "docker": [
-        {"key": "PORTAINER_URL", "label": "Portainer URL", "placeholder": "https://10.10.10.237:9005", "type": "text"},
-        {"key": "PORTAINER_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
-        {"key": "PORTAINER_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "urbackup": [
-        {"key": "URBACKUP_URL", "label": "URL", "placeholder": "http://10.10.10.76:55414", "type": "text"},
-        {"key": "URBACKUP_USERNAME", "label": "Username", "placeholder": "michaeld", "type": "text"},
-        {"key": "URBACKUP_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "home_assistant": [
-        {"key": "HASS_URL", "label": "URL", "placeholder": "http://10.10.10.105:8123", "type": "text"},
-        {"key": "HASS_TOKEN", "label": "Long-Lived Access Token", "placeholder": "", "type": "password"},
-    ],
-    "wazuh": [
-        {"key": "WAZUH_API_URL", "label": "API URL", "placeholder": "https://10.10.10.233:55000", "type": "text"},
-        {"key": "WAZUH_API_USER", "label": "Username", "placeholder": "hermes", "type": "text"},
-        {"key": "WAZUH_API_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "crowdsec": [
-        {"key": "CROWDSEC_API_URL", "label": "API URL", "placeholder": "http://10.10.10.237:18080", "type": "text"},
-        {"key": "CROWDSEC_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-        {"key": "CROWDSEC_MACHINE_USER", "label": "Machine User (optional)", "placeholder": "hermes-reader", "type": "text"},
-        {"key": "CROWDSEC_MACHINE_PASS", "label": "Machine Pass (optional)", "placeholder": "", "type": "password"},
-    ],
-    "cloudflare": [
-        {"key": "CLOUDFLARE_TOKEN", "label": "API Token", "placeholder": "", "type": "password"},
-        {"key": "CLOUDFLARE_ZONE_ID", "label": "Zone ID", "placeholder": "", "type": "text"},
-    ],
-    "limacharlie": [
-        {"key": "LIMACHARLIE_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-        {"key": "LIMACHARLIE_OID", "label": "Organization ID (OID)", "placeholder": "", "type": "text"},
-    ],
-    "unifi": [
-        {"key": "UNIFI_URL", "label": "URL", "placeholder": "https://10.10.10.1", "type": "text"},
-        {"key": "UNIFI_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
-        {"key": "UNIFI_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "tailscale": [
-        {"key": "TAILSCALE_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-    ],
-    "nginx_proxy": [
-        {"key": "NPM_URL", "label": "URL", "placeholder": "http://10.10.10.237:81", "type": "text"},
-        {"key": "NPM_EMAIL", "label": "Email", "placeholder": "admin@example.com", "type": "text"},
-        {"key": "NPM_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "adguard": [
-        {"key": "ADGUARD_URL", "label": "URL", "placeholder": "http://10.10.10.21", "type": "text"},
-        {"key": "ADGUARD_USERNAME", "label": "Username", "placeholder": "mdziegiel", "type": "text"},
-        {"key": "ADGUARD_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "adguard2": [
-        {"key": "ADGUARD2_URL", "label": "URL", "placeholder": "http://10.10.10.x:3000", "type": "text"},
-        {"key": "ADGUARD2_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
-        {"key": "ADGUARD2_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "wgdashboard": [
-        {"key": "WG_URL", "label": "URL", "placeholder": "http://10.10.10.x:10086", "type": "text"},
-        {"key": "WG_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
-        {"key": "WG_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "uptime_kuma": [
-        {"key": "UPTIME_KUMA_URL", "label": "URL", "placeholder": "http://10.10.10.237:3661", "type": "text"},
-        {"key": "UPTIME_KUMA_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-    ],
-    "qnap": [
-        {"key": "QNAP1_HOST", "label": "QNAP1 Host", "placeholder": "http://10.10.10.x:8080", "type": "text"},
-        {"key": "QNAP2_HOST", "label": "QNAP2 Host (optional)", "placeholder": "http://10.10.10.x:8080", "type": "text"},
-        {"key": "QNAP3_HOST", "label": "QNAP3 Host (optional)", "placeholder": "http://10.10.10.x:8080", "type": "text"},
-        {"key": "QNAP_USERNAME", "label": "Username", "placeholder": "admin", "type": "text"},
-        {"key": "QNAP_PASSWORD", "label": "Password", "placeholder": "", "type": "password"},
-    ],
-    "plex": [
-        {"key": "PLEX_URL", "label": "URL", "placeholder": "http://10.10.10.101:32400", "type": "text"},
-        {"key": "PLEX_TOKEN", "label": "X-Plex-Token", "placeholder": "", "type": "password"},
-    ],
-    "tautulli": [
-        {"key": "TAUTULLI_URL", "label": "URL", "placeholder": "http://10.10.10.101:8181", "type": "text"},
-        {"key": "TAUTULLI_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-    ],
-    "sonarr": [
-        {"key": "SONARR_URL", "label": "URL", "placeholder": "http://10.10.10.x:8989", "type": "text"},
-        {"key": "SONARR_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-    ],
-    "radarr": [
-        {"key": "RADARR_URL", "label": "URL", "placeholder": "http://10.10.10.x:7878", "type": "text"},
-        {"key": "RADARR_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-    ],
-    "prowlarr": [
-        {"key": "PROWLARR_URL", "label": "URL", "placeholder": "http://10.10.10.x:9696", "type": "text"},
-        {"key": "PROWLARR_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-    ],
-    "sabnzbd": [
-        {"key": "SABNZBD_URL", "label": "URL", "placeholder": "http://10.10.10.x:8080", "type": "text"},
-        {"key": "SABNZBD_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-    ],
-    "overseerr": [
-        {"key": "OVERSEERR_URL", "label": "URL", "placeholder": "http://10.10.10.x:5055", "type": "text"},
-        {"key": "OVERSEERR_API_KEY", "label": "API Key", "placeholder": "", "type": "password"},
-    ],
-    "smart_health": [
-        # Smart health re-uses Proxmox connection — no separate fields, just informational
-    ],
-    "hyperv": [
-        {"key": "HYPERV_HOST",     "label": "Host",     "placeholder": "10.10.10.90",  "type": "text"},
-        {"key": "HYPERV_USERNAME", "label": "Username", "placeholder": "administrator", "type": "text"},
-        {"key": "HYPERV_PASSWORD", "label": "Password", "placeholder": "",              "type": "password"},
-    ],
-    "malware_sources": [
-        # No credentials needed — public feeds
-    ],
+def clear_cookie_header():
+    return f"{AUTH_COOKIE}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly; SameSite=Lax"
+
+def parse_cookies(header):
+    out = {}
+    for part in str(header or "").split(';'):
+        if '=' in part:
+            k, v = part.strip().split('=', 1)
+            out[k] = urllib.parse.unquote(v)
+    return out
+
+def cookie_values(header, name):
+    vals = []
+    for part in str(header or "").split(';'):
+        if '=' in part:
+            k, v = part.strip().split('=', 1)
+            if k == name:
+                vals.append(urllib.parse.unquote(v))
+    return vals
+
+def client_ip_from_headers(headers, fallback=""):
+    xf = str(headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+    return xf or fallback or ""
+
+def public_user(user):
+    return {
+        "username": user.get("username"),
+        "role": user.get("role", "viewer"),
+        "locked_until": int(user.get("locked_until", 0) or 0),
+        "totp_enabled": bool(user.get("totp_enabled")),
+        "force_password_change": bool(user.get("force_password_change")),
+        "password_changed_at": int(user.get("password_changed_at", 0) or 0),
+    }
+
+def audit_login(state, username, ok, ip, reason=""):
+    entries = state.setdefault("login_audit", [])
+    entries.append({
+        "ts": int(time.time()),
+        "ip": str(ip or "")[:80],
+        "username": normalize_username(username),
+        "success": bool(ok),
+        "reason": str(reason or "")[:120],
+    })
+    state["login_audit"] = entries[-100:]
+
+def minutes_until(ts):
+    return max(1, int((int(ts or 0) - int(time.time()) + 59) // 60))
+
+def password_expiry_state(state, user):
+    settings = state.get("security_settings", {}) if isinstance(state.get("security_settings"), dict) else {}
+    if not settings.get("password_expiry_enabled"):
+        return {"enabled": False, "expired": False, "warning_days": None}
+    days = int(settings.get("password_expiry_days") or 90)
+    changed = int(user.get("password_changed_at", 0) or 0)
+    if not changed:
+        changed = int(time.time())
+        user["password_changed_at"] = changed
+    expires = changed + days * 86400
+    remaining_days = int((expires - int(time.time())) // 86400)
+    expired = expires <= int(time.time()) or bool(user.get("force_password_change"))
+    return {"enabled": True, "expired": expired, "warning_days": remaining_days if remaining_days <= 7 else None, "expires": expires, "days": days}
+
+def _totp_secret():
+    return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+def _totp_code(secret, for_time=None, step=30, digits=6):
+    if for_time is None:
+        for_time = int(time.time())
+    key = base64.b32decode(str(secret).upper() + "=" * ((8 - len(str(secret)) % 8) % 8))
+    msg = struct.pack(">Q", int(for_time // step))
+    digest = hmac.new(key, msg, hashlib.sha1).digest()
+    off = digest[-1] & 0x0F
+    code = (struct.unpack(">I", digest[off:off+4])[0] & 0x7fffffff) % (10 ** digits)
+    return str(code).zfill(digits)
+
+def verify_totp(secret, code):
+    code = re.sub(r"\s+", "", str(code or ""))
+    if not re.fullmatch(r"\d{6}", code):
+        return False
+    now = int(time.time())
+    return any(hmac.compare_digest(_totp_code(secret, now + offset * 30), code) for offset in (-1, 0, 1))
+
+def otpauth_uri(username, secret):
+    issuer = "MRDTech NOC"
+    label = urllib.parse.quote(f"{issuer}:{username}")
+    qs = urllib.parse.urlencode({"secret": secret, "issuer": issuer, "algorithm": "SHA1", "digits": "6", "period": "30"})
+    return f"otpauth://totp/{label}?{qs}"
+
+def qr_url_for(uri):
+    # External QR rendering avoids adding fat image dependencies to a tiny container. Manual key is also shown.
+    return "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + urllib.parse.quote(uri)
+
+def user_from_api_token(state, headers):
+    auth = str(headers.get("Authorization", "") or "")
+    if not auth.lower().startswith("bearer "):
+        return None
+    raw = auth.split(None, 1)[1].strip()
+    if not raw:
+        return None
+    th = hashlib.sha256(raw.encode()).hexdigest()
+    now = int(time.time())
+    for tok in state.get("api_tokens", []):
+        if tok.get("token_hash") == th and (not int(tok.get("expires", 0) or 0) or int(tok.get("expires", 0) or 0) > now):
+            rec = find_user(state, tok.get("username"))
+            if rec:
+                tok["last_used"] = now
+                write_state_config(state)
+                pub = public_user(rec)
+                pub["api_token"] = True
+                return pub
+    return None
+
+def current_user_from_headers(headers, ip=""):
+    tokens = [t for t in cookie_values(headers.get("Cookie"), AUTH_COOKIE) if t]
+    state = read_state_config()
+    if not tokens:
+        return user_from_api_token(state, headers)
+    token_hashes = {hashlib.sha256(t.encode()).hexdigest() for t in tokens}
+    now = int(time.time())
+    valid_sessions = []
+    found = None
+    changed = False
+    for sess in state.get("sessions", []):
+        if int(sess.get("expires", 0)) <= now:
+            changed = True
+            continue
+        if sess.get("token_hash") in token_hashes:
+            user = find_user(state, sess.get("username"))
+            if user:
+                sess["last_activity"] = now
+                if ip and not sess.get("ip"):
+                    sess["ip"] = ip
+                changed = True
+                pub = public_user(user)
+                exp = password_expiry_state(state, user)
+                pub.update({"password_expired": exp.get("expired"), "password_warning_days": exp.get("warning_days")})
+                found = pub
+        valid_sessions.append(sess)
+    if changed:
+        state["sessions"] = valid_sessions
+        write_state_config(state)
+    return found
+
+def login_page_html(setup_required=False, error=""):
+    dashboard_title = read_dashboard_config().get("dashboard_title") or DEFAULT_DASHBOARD_CONFIG["dashboard_title"]
+    title = f"{dashboard_title} Login"
+    title_html = html.escape(title)
+    subtitle_html = "Authentication"
+    error_html = html.escape(str(error or ""))
+    if setup_required:
+        form = """<form id='auth-form'>
+          <label>Username</label><input id='username' autocomplete='username' autofocus>
+          <label>Password</label><input id='password' type='password' autocomplete='new-password'>
+          <label>Confirm Password</label><input id='confirm' type='password' autocomplete='new-password'>
+          <div class='req'>Minimum 8 characters, at least one uppercase, one lowercase, and one number OR symbol.</div>
+          <button type='submit'>Create Admin Account</button>
+        </form>"""
+        endpoint = "/api/setup-admin"
+    else:
+        form = """<form id='auth-form'>
+          <label>Username</label><input id='username' autocomplete='username' autofocus>
+          <label>Password</label><input id='password' type='password' autocomplete='current-password'>
+          <div id='totp-wrap' style='display:none'><label>Two-factor code</label><input id='totp_code' inputmode='numeric' autocomplete='one-time-code' placeholder='123456'></div>
+          <label class='remember'><input id='remember' type='checkbox' checked> Remember me</label>
+          <button type='submit'>Login</button>
+        </form>"""
+        endpoint = "/api/login"
+    return f"""<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{title_html}</title><link rel='icon' id='noc-favicon' type='image/svg+xml' href=''>
+<style>
+:root{{--bg:#050805;--panel:#0f150f;--panel2:#121a12;--line:#1c2a1c;--green:#00ff41;--warn:#ffaa00;--txt:#c8e6c8;--muted:#6f8a6f;--crit:#ff3b3b}}
+body{{margin:0;min-height:100vh;background:radial-gradient(circle at 50% 0%,#0d160d 0%,#050805 70%);color:var(--txt);font-family:'SF Mono',Menlo,Consolas,'Roboto Mono',monospace;display:flex;align-items:center;justify-content:center}}
+.box{{width:min(440px,92vw);background:linear-gradient(180deg,var(--panel),#090d09);border:1px solid var(--line);box-shadow:0 0 40px rgba(0,255,65,.08);border-radius:8px;padding:28px}}
+h1{{margin:0 0 6px;color:var(--green);letter-spacing:3px;text-transform:uppercase;font-size:18px}}
+.sub{{color:var(--muted);font-size:12px;margin-bottom:24px}}
+label{{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:12px 0 5px}}
+input{{box-sizing:border-box;width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:11px;border-radius:4px;font:inherit}}
+input:focus{{outline:none;border-color:var(--green);box-shadow:0 0 0 1px rgba(0,255,65,.18)}}
+.remember{{display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;color:var(--txt)}}
+.remember input{{width:auto;accent-color:var(--green)}}
+button{{width:100%;margin-top:18px;background:var(--green);border:1px solid var(--green);color:#000;padding:11px;border-radius:4px;font:inherit;font-weight:700;text-transform:uppercase;letter-spacing:2px;cursor:pointer}}
+.err{{display:none;background:rgba(255,59,59,.1);border:1px solid rgba(255,59,59,.5);color:var(--crit);padding:9px;border-radius:4px;font-size:12px;margin-bottom:12px}}
+.req{{color:var(--muted);font-size:11px;margin-top:8px;line-height:1.4}}
+</style></head><body><div class='box'><h1>{title_html}</h1><div class='sub'>{subtitle_html}</div><div id='err' class='err'>{error_html}</div>{form}</div>
+<script>
+function updateFavicon(){{
+  var color = getComputedStyle(document.documentElement).getPropertyValue('--green').trim() || '#00ff41';
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="' + color + '"/></svg>';
+  var el = document.getElementById('noc-favicon'); if (el) el.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}}
+updateFavicon();
+const endpoint={json.dumps(endpoint)};
+document.getElementById('auth-form').addEventListener('submit', async e=>{{
+  e.preventDefault();
+  const payload={{username:username.value.trim(), password:password.value, remember:true}};
+  const confirmEl = document.getElementById('confirm');
+  if (confirmEl) payload.confirm_password=confirmEl.value;
+  const totpEl = document.getElementById('totp_code');
+  if (totpEl && totpEl.value.trim()) payload.totp_code=totpEl.value.trim();
+  const err=document.getElementById('err'); err.style.display='none';
+  const r=await fetch(endpoint,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}});
+  const d=await r.json().catch(()=>({{error:'Authentication failed'}}));
+  if (d.totp_required) {{ var w=document.getElementById('totp-wrap'); if(w) w.style.display='block'; err.textContent=d.error||'Two-factor code required.'; err.style.display='block'; return; }}
+  if(!r.ok||!d.ok){{err.textContent=d.error||'Authentication failed';err.style.display='block';return;}}
+  location.href='/';
+}});
+</script></body></html>"""
+
+# ── regen helper ───────────────────────────────────────────────────────────────
+
+def _run_regen():
+    try:
+        subprocess.run(
+            ["python3", GENERATOR],
+            env={**os.environ,
+                 "HERMES_ENV": ENV_FILE,
+                 "NOC_OUT_DIR": OUTPUT_DIR,
+                 "NOC_OUT_FILE": os.path.join(OUTPUT_DIR, "index.html")},
+            timeout=120
+        )
+        print("Regen complete")
+    except Exception as e:
+        print(f"Regen error: {e}")
+
+# ── collector test ─────────────────────────────────────────────────────────────
+# Integration type → which collector function to call and required env keys
+
+COLLECTOR_MAP = {
+    "proxmox":      ("collect_proxmox",   ["PROXMOX_HOST", "PROXMOX_TOKEN_ID", "PROXMOX_TOKEN_SECRET"]),
+    "docker":       ("collect_docker",    ["PORTAINER_URL", "PORTAINER_USERNAME", "PORTAINER_PASSWORD"]),
+    "pbs":          ("collect_pbs",       ["PBS_URL", "PBS_USERNAME", "PBS_PASSWORD"]),
+    "kuma":         ("collect_uptime_kuma", ["UPTIME_KUMA_URL", "UPTIME_KUMA_API_KEY"]),
+    "crowdsec":     ("collect_crowdsec",  ["CROWDSEC_API_URL", "CROWDSEC_API_KEY"]),
+    "wazuh":        ("collect_wazuh",     ["WAZUH_API_URL", "WAZUH_API_USER", "WAZUH_API_PASSWORD"]),
+    "unifi":        ("collect_unifi",     ["UNIFI_URL", "UNIFI_USERNAME", "UNIFI_PASSWORD"]),
+    "adguard":      ("collect_adguard",   ["ADGUARD_URL", "ADGUARD_USERNAME", "ADGUARD_PASSWORD"]),
+    "adguard2":     ("collect_adguard2",  ["ADGUARD2_URL", "ADGUARD2_USERNAME", "ADGUARD2_PASSWORD"]),
+    "urbackup":     ("collect_urbackup",  ["URBACKUP_URL", "URBACKUP_USERNAME", "URBACKUP_PASSWORD"]),
+    "homeassistant":("collect_homeassistant", ["HASS_URL", "HASS_TOKEN"]),
+    "cloudflare":   ("collect_cloudflare",["CLOUDFLARE_TOKEN", "CLOUDFLARE_ZONE_ID"]),
+    "npm":          ("collect_npm",       ["NPM_URL", "NPM_EMAIL", "NPM_PASSWORD"]),
+    "tailscale":    ("collect_tailscale", ["TAILSCALE_API_KEY"]),
+    "limacharlie":  ("collect_limacharlie", ["LIMACHARLIE_OID", "LIMACHARLIE_API_KEY"]),
+    "plex":         ("collect_plex",      ["PLEX_URL", "PLEX_TOKEN"]),
+    "tautulli":     ("collect_tautulli",  ["TAUTULLI_URL", "TAUTULLI_API_KEY"]),
+    "sonarr":       ("collect_sonarr",    ["SONARR_URL", "SONARR_API_KEY"]),
+    "radarr":       ("collect_radarr",    ["RADARR_URL", "RADARR_API_KEY"]),
+    "lidarr":       ("collect_lidarr",    ["LIDARR_URL", "LIDARR_API_KEY"]),
+    "sabnzbd":      ("collect_sabnzbd",   ["SABNZBD_URL", "SABNZBD_API_KEY"]),
+    "seerr":        ("collect_seerr",    ["SEERR_URL", "SEERR_API_KEY"]),
+    "prowlarr":     ("collect_prowlarr",  ["PROWLARR_URL", "PROWLARR_API_KEY"]),
+    "wgdashboard":  ("collect_wgdashboard", ["WG_URL", "WG_USERNAME", "WG_PASSWORD"]),
+    "hyperv":       ("collect_hyperv",    ["HYPERV_HOST", "HYPERV_USERNAME", "HYPERV_PASSWORD"]),
+    "qnap":         ("collect_qnaps",     ["QNAP1_HOST", "QNAP_USERNAME", "QNAP_PASSWORD"]),
 }
 
-# Which card types require credentials (used to determine if an integration is "configured")
-# Types not in INTEGRATION_FIELDS or with empty fields are always-available (no creds needed)
-ALWAYS_AVAILABLE = {"malware_sources", "smart_health"}
+# Field metadata for the UI
+FIELD_DEFS = {
+    "PROXMOX_HOST":        {"label": "Host (https://ip:port)",  "type": "text"},
+    "PROXMOX_TOKEN_ID":    {"label": "Token ID (user@pam!name)","type": "text"},
+    "PROXMOX_TOKEN_SECRET":{"label": "Token Secret",            "type": "password"},
+    "PORTAINER_URL":       {"label": "URL (https://ip:port)",   "type": "text"},
+    "PORTAINER_USERNAME":  {"label": "Username",                "type": "text"},
+    "PORTAINER_PASSWORD":  {"label": "Password",                "type": "password"},
+    "PBS_URL":             {"label": "URL (https://ip:port)",   "type": "text"},
+    "PBS_USERNAME":        {"label": "Username",                "type": "text"},
+    "PBS_PASSWORD":        {"label": "Password",                "type": "password"},
+    "UPTIME_KUMA_URL":     {"label": "URL (http://ip:port)",    "type": "text"},
+    "UPTIME_KUMA_API_KEY": {"label": "API Key",                 "type": "password"},
+    "CROWDSEC_API_URL":    {"label": "API URL (http://ip:port)","type": "text"},
+    "CROWDSEC_API_KEY":    {"label": "API Key",                 "type": "password"},
+    "WAZUH_API_URL":       {"label": "API URL (https://ip:port)","type":"text"},
+    "WAZUH_API_USER":      {"label": "Username",                "type": "text"},
+    "WAZUH_API_PASSWORD":  {"label": "Password",                "type": "password"},
+    "UNIFI_URL":           {"label": "URL (https://ip)",        "type": "text"},
+    "UNIFI_USERNAME":      {"label": "Username",                "type": "text"},
+    "UNIFI_PASSWORD":      {"label": "Password",                "type": "password"},
+    "ADGUARD_URL":         {"label": "URL (http://ip:port)",    "type": "text"},
+    "ADGUARD_USERNAME":    {"label": "Username",                "type": "text"},
+    "ADGUARD_PASSWORD":    {"label": "Password",                "type": "password"},
+    "ADGUARD2_URL":        {"label": "URL (http://ip:port)",    "type": "text"},
+    "ADGUARD2_USERNAME":   {"label": "Username",                "type": "text"},
+    "ADGUARD2_PASSWORD":   {"label": "Password",                "type": "password"},
+    "URBACKUP_URL":        {"label": "URL (http://ip:port)",    "type": "text"},
+    "URBACKUP_USERNAME":   {"label": "Username",                "type": "text"},
+    "URBACKUP_PASSWORD":   {"label": "Password",                "type": "password"},
+    "HASS_URL":            {"label": "URL (http://ip:port)",    "type": "text"},
+    "HASS_TOKEN":          {"label": "Long-lived Token",        "type": "password"},
+    "CLOUDFLARE_TOKEN":    {"label": "API Token",               "type": "password"},
+    "CLOUDFLARE_ZONE_ID":  {"label": "Zone ID",                 "type": "text"},
+    "NPM_URL":             {"label": "URL (http://ip:port)",    "type": "text"},
+    "NPM_EMAIL":           {"label": "Email",                   "type": "text"},
+    "NPM_PASSWORD":        {"label": "Password",                "type": "password"},
+    "TAILSCALE_API_KEY":   {"label": "API Key",                 "type": "password"},
+    "LIMACHARLIE_OID":     {"label": "Organization ID",         "type": "text"},
+    "LIMACHARLIE_API_KEY": {"label": "API Key",                 "type": "password"},
+    "PLEX_URL":            {"label": "URL (http://ip:port)",    "type": "text"},
+    "PLEX_TOKEN":          {"label": "Token",                   "type": "password"},
+    "TAUTULLI_URL":        {"label": "URL (http://ip:port)",    "type": "text"},
+    "TAUTULLI_API_KEY":    {"label": "API Key",                 "type": "password"},
+    "SONARR_URL":          {"label": "URL (http://ip:port)",    "type": "text"},
+    "SONARR_API_KEY":      {"label": "API Key",                 "type": "password"},
+    "RADARR_URL":          {"label": "URL (http://ip:port)",    "type": "text"},
+    "RADARR_API_KEY":      {"label": "API Key",                 "type": "password"},
+    "LIDARR_URL":          {"label": "URL (http://ip:port)",    "type": "text"},
+    "LIDARR_API_KEY":      {"label": "API Key",                 "type": "password"},
+    "SABNZBD_URL":         {"label": "URL (http://ip:port)",    "type": "text"},
+    "SABNZBD_API_KEY":     {"label": "API Key",                 "type": "password"},
+    "SEERR_URL":           {"label": "URL (http://ip:port)",    "type": "text"},
+    "SEERR_API_KEY":       {"label": "API Key",                 "type": "password"},
+    "OVERSEERR_URL":       {"label": "Legacy URL alias",         "type": "text"},
+    "OVERSEERR_API_KEY":   {"label": "Legacy API Key alias",     "type": "password"},
+    "PROWLARR_URL":        {"label": "URL (http://ip:port)",    "type": "text"},
+    "PROWLARR_API_KEY":    {"label": "API Key",                 "type": "password"},
+    "WG_URL":              {"label": "URL (http://ip:port)",    "type": "text"},
+    "WG_USERNAME":         {"label": "Username",                "type": "text"},
+    "WG_PASSWORD":         {"label": "Password",                "type": "password"},
+    "HYPERV_HOST":         {"label": "Host IP",                 "type": "text"},
+    "HYPERV_USERNAME":     {"label": "Username",                "type": "text"},
+    "HYPERV_PASSWORD":     {"label": "Password",                "type": "password"},
+    "QNAP1_HOST":          {"label": "NAS1 URL (http://ip:port)","type":"text"},
+    "QNAP2_HOST":          {"label": "NAS2 URL (optional)",     "type": "text"},
+    "QNAP3_HOST":          {"label": "NAS3 URL (optional)",     "type": "text"},
+    "QNAP_USERNAME":       {"label": "Username",                "type": "text"},
+    "QNAP_PASSWORD":       {"label": "Password",                "type": "password"},
+}
+
+_gen_module = None
+
+def _load_generator():
+    global _gen_module
+    if _gen_module is not None:
+        return _gen_module
+    spec = importlib.util.spec_from_file_location("gen", GENERATOR)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _gen_module = mod
+    return mod
 
 
-def load_config_json() -> dict:
-    """Load state/config.json. Returns empty dict if not present."""
-    STATE_DIR.mkdir(exist_ok=True)
-    if CONFIG_JSON.exists():
-        try:
-            with open(CONFIG_JSON) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+class NOCHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=OUTPUT_DIR, **kwargs)
 
+    def log_message(self, fmt, *args):
+        pass
 
-def save_config_json(cfg: dict):
-    STATE_DIR.mkdir(exist_ok=True)
-    with open(CONFIG_JSON, "w") as f:
-        json.dump(cfg, f, indent=2)
+    def send_json(self, code, obj, extra_headers=None):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        if extra_headers:
+            for k, v in extra_headers.items():
+                self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
 
+    def send_html(self, code, html_text, extra_headers=None):
+        body = html_text.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        if extra_headers:
+            for k, v in extra_headers.items():
+                self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
 
-# Merge config.json into E on startup so collectors get credentials immediately
-_startup_cfg = load_config_json()
-if _startup_cfg.get("integrations"):
-    for _itype, _ifields in _startup_cfg["integrations"].items():
-        if isinstance(_ifields, dict):
-            for _k, _v in _ifields.items():
-                if _v and str(_v).strip():
-                    E[_k] = str(_v).strip()
+    def redirect(self, location):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.end_headers()
 
+    def client_ip(self):
+        return client_ip_from_headers(self.headers, self.client_address[0] if self.client_address else "")
 
-def _build_integration_env(cfg_json: dict) -> dict:
-    """Merge env vars: .env first, config.json wins. Returns merged E dict."""
-    merged = dict(E)  # start with .env values
-    integrations = cfg_json.get("integrations", {})
-    for itype, fields in integrations.items():
-        if isinstance(fields, dict):
-            for k, v in fields.items():
-                if v and v.strip():
-                    merged[k] = v.strip()
-    return merged
+    def current_user(self):
+        return current_user_from_headers(self.headers, self.client_ip())
 
+    def is_admin(self):
+        user = self.current_user()
+        return bool(user and user.get("role") == "admin")
 
-def _is_configured(itype: str, cfg_json: dict) -> bool:
-    """True if all required fields for this integration are set (via .env or config.json)."""
-    if itype in ALWAYS_AVAILABLE:
-        return True
-    fields = INTEGRATION_FIELDS.get(itype, [])
-    if not fields:
-        return True
-    merged = _build_integration_env(cfg_json)
-    # At minimum, the first non-optional field must be set
-    required_fields = [f for f in fields if "optional" not in f.get("label", "").lower()]
-    if not required_fields:
-        required_fields = fields[:1]
-    return all(bool(merged.get(f["key"], "").strip()) for f in required_fields[:1])
+    def read_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(length)) if length else {}
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
-def _get_env_for_type(itype: str, cfg_json: dict) -> dict:
-    """Get merged env dict for a specific integration type."""
-    return _build_integration_env(cfg_json)
-
-
-@app.get("/api/integrations")
-def api_get_integrations():
-    """Return all integration type definitions with field specs and current config status."""
-    cfg_json = load_config_json()
-    merged = _build_integration_env(cfg_json)
-    result = {}
-    for itype, meta in CARD_TYPE_META.items():
-        if itype in ("section_header", "wan_health", "wan_health_sec",
-                     "adguard2", "uptime_kuma_detail"):
-            continue  # aliases / virtual types
-        fields = INTEGRATION_FIELDS.get(itype, [])
-        configured = _is_configured(itype, cfg_json)
-        # Return current values (masked for passwords)
-        current_values = {}
-        for field in fields:
-            raw = merged.get(field["key"], "")
-            if field["type"] == "password" and raw:
-                current_values[field["key"]] = "••••••••"
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        user = self.current_user()
+        if path == "/login":
+            if user:
+                self.redirect("/")
             else:
-                current_values[field["key"]] = raw
-        result[itype] = {
-            "label": meta["label"],
-            "description": meta["description"],
-            "category": meta["category"],
-            "icon": meta["icon"],
-            "fields": fields,
-            "current_values": current_values,
-            "configured": configured,
-            "always_available": itype in ALWAYS_AVAILABLE or not fields,
-        }
-    return result
+                self.send_html(200, login_page_html(setup_required=not users_exist()))
+            return
+        if path == "/api/auth-status":
+            self.send_json(200, {"ok": True, "authenticated": bool(user), "user": user, "setup_required": not users_exist()})
+            return
+        if path.startswith("/api/") and not user:
+            self.send_json(401, {"error": "authentication required"})
+            return
+        if path == "/api/dashboard-config":
+            self.send_json(200, public_dashboard_config())
+            return
+        if path == "/api/integration-fields":
+            # Return field defs for the UI
+            result = {}
+            for itype, (fn_name, keys) in COLLECTOR_MAP.items():
+                result[itype] = [
+                    {"key": k, **FIELD_DEFS.get(k, {"label": k, "type": "text"})}
+                    for k in keys
+                ]
+            self.send_json(200, result)
+            return
+        if path == "/api/custom-cards":
+            # Return saved custom card configs
+            try:
+                with open(CUSTOM_CARDS_FILE) as f:
+                    data = f.read()
+            except FileNotFoundError:
+                data = "[]"
+            except Exception:
+                data = "[]"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data.encode())
+            return
+        if path == "/api/builtin-card-configs":
+            # Return saved built-in card display configs
+            try:
+                with open(BUILTIN_CARD_CONFIGS_FILE) as f:
+                    data = f.read()
+            except FileNotFoundError:
+                data = "{}"
+            except Exception:
+                data = "{}"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data.encode())
+            return
+        if path == "/api/current-config":
+            # Return current env values (masked for passwords)
+            e = read_env()
+            masked = {}
+            for k, v in e.items():
+                if any(kw in k.lower() for kw in ("password", "token", "secret", "key")):
+                    masked[k] = "••••••••" if v else ""
+                else:
+                    masked[k] = v
+            self.send_json(200, masked)
+            return
+        if path == "/" or path == "/index.html":
+            if not user:
+                self.redirect("/login")
+                return
+        super().do_GET()
 
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        user = self.current_user()
+        public_posts = {"/api/login", "/api/setup-admin", "/api/speedtest"}
+        if path not in public_posts and not user:
+            self.send_json(401, {"error": "authentication required"})
+            return
 
-@app.post("/api/integrations/{itype}")
-async def api_save_integration(itype: str, request: Request):
-    """Save integration credentials to state/config.json."""
-    if itype not in INTEGRATION_FIELDS and itype not in ALWAYS_AVAILABLE:
-        raise HTTPException(status_code=404, detail=f"Unknown integration: {itype}")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    # Validate keys are known
-    allowed_keys = {f["key"] for f in INTEGRATION_FIELDS.get(itype, [])}
-    clean = {}
-    for k, v in body.items():
-        if k in allowed_keys:
-            # Don't overwrite with masked value
-            if v and v != "••••••••":
-                clean[k] = str(v).strip()
-            elif not v:
-                clean[k] = ""
-    cfg_json = load_config_json()
-    integrations = cfg_json.setdefault("integrations", {})
-    existing = integrations.get(itype, {})
-    existing.update(clean)
-    integrations[itype] = existing
-    save_config_json(cfg_json)
-    # Rebuild the global E dict
-    global E
-    E = _build_integration_env(cfg_json)
-    return {"ok": True, "itype": itype}
-
-
-@app.delete("/api/integrations/{itype}")
-def api_delete_integration(itype: str):
-    """Remove integration config from config.json (reverts to .env fallback)."""
-    cfg_json = load_config_json()
-    cfg_json.get("integrations", {}).pop(itype, None)
-    save_config_json(cfg_json)
-    global E
-    E = _build_integration_env(cfg_json)
-    return {"ok": True}
-
-
-@app.post("/api/integrations/{itype}/test")
-async def api_test_integration(itype: str, request: Request):
-    """
-    Test an integration by running its collector with provided (or saved) credentials.
-    Returns {ok: bool, message: str, elapsed: float}.
-    Body: same as save — optional field overrides for testing before saving.
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    # Build a temporary E dict with body overrides
-    cfg_json = load_config_json()
-    tmp_E = _build_integration_env(cfg_json)
-    allowed_keys = {f["key"] for f in INTEGRATION_FIELDS.get(itype, [])}
-    for k, v in body.items():
-        if k in allowed_keys and v and v != "••••••••":
-            tmp_E[k] = str(v).strip()
-    # Run the collector
-    cmap = get_collectors()
-    # For test, wan_health -> unifi
-    effective_type = itype
-    if itype == "wan_health":
-        effective_type = "unifi"
-    fn = cmap.get(effective_type)
-    if fn is None:
-        # No collector = always available (e.g. malware_sources has a collector but
-        # smart_health uses proxmox). Try the actual key.
-        fn = cmap.get(itype)
-    if fn is None:
-        return {"ok": True, "message": "No connection test available for this type.", "elapsed": 0}
-    try:
-        t0 = time.time()
-        data = fn(tmp_E, {})
-        elapsed = round(time.time() - t0, 3)
-        state = data.get("state", "ok")
-        if state in ("error",):
-            note = data.get("note", "Collector returned error")
-            return {"ok": False, "message": note, "elapsed": elapsed}
-        return {"ok": True, "message": f"Connected — state: {state}", "elapsed": elapsed}
-    except Exception as e:
-        elapsed = round(time.time() - t0, 3)
-        return {"ok": False, "message": str(e)[:200], "elapsed": elapsed}
-
-
-_integration_status_cache: dict = {}
-_integration_status_ts: float = 0
-_INTEGRATION_STATUS_TTL = 55  # seconds
-
-
-@app.get("/api/integrations/status")
-def api_integration_status():
-    """
-    Live status of all configured integrations. Cached for 55s (UI refreshes at 60s).
-    Returns {itype: {ok: bool, error: str|null, ts: int}}.
-    """
-    global _integration_status_cache, _integration_status_ts
-    now = time.time()
-    if now - _integration_status_ts < _INTEGRATION_STATUS_TTL and _integration_status_cache:
-        return _integration_status_cache
-    cfg_json = load_config_json()
-    cmap = get_collectors()
-    result = {}
-    for itype in INTEGRATION_FIELDS:
-        if not _is_configured(itype, cfg_json):
-            continue
-        # Aliases handled by skipping them; run unique ones
-        fn = cmap.get(itype)
-        if fn is None:
-            continue
-        try:
-            t0 = time.time()
-            data = fn(_build_integration_env(cfg_json), {})
-            elapsed = round(time.time() - t0, 3)
-            state = data.get("state", "ok")
-            if state == "error":
-                result[itype] = {"ok": False, "error": data.get("note", "Error"), "elapsed": elapsed, "ts": int(now)}
+        if path == "/api/speedtest":
+            try:
+                payload = self.read_body()
+                record = {}
+                for key in ("download", "upload", "ping"):
+                    try:
+                        record[key] = float(payload.get(key))
+                    except (TypeError, ValueError):
+                        self.send_json(400, {"error": f"{key} must be numeric"})
+                        return
+                ts = payload.get("timestamp")
+                record["timestamp"] = str(ts)[:80] if ts else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                record["received_at"] = int(time.time())
+                os.makedirs(STATE_DIR, exist_ok=True)
+                latest = os.path.join(STATE_DIR, "speedtest-latest.json")
+                history = os.path.join(STATE_DIR, "speedtest-history.jsonl")
+                tmp = latest + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(record, f, indent=2)
+                    f.write("\n")
+                os.replace(tmp, latest)
+                with open(history, "a") as f:
+                    f.write(json.dumps(record, sort_keys=True) + "\n")
+                self.send_json(200, {"ok": True, "record": record})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)[:200]})
+            return
+        if path == "/api/setup-admin":
+            try:
+                if users_exist():
+                    self.send_json(409, {"error": "admin account already exists"})
+                    return
+                payload = self.read_body()
+                username = normalize_username(payload.get("username"))
+                password = payload.get("password", "")
+                confirm = payload.get("confirm_password", "")
+                if not username:
+                    self.send_json(400, {"error": "Username is required."})
+                    return
+                if password != confirm:
+                    self.send_json(400, {"error": "Passwords do not match."})
+                    return
+                err = password_error(password)
+                if err:
+                    self.send_json(400, {"error": err})
+                    return
+                state = read_state_config()
+                now = int(time.time())
+                state["users"] = [{"username": username, "password_hash": hash_password(password), "role": "admin", "password_changed_at": now, "failed_attempts": 0, "locked_until": 0}]
+                token, exp = new_session(state, username, self.client_ip(), self.headers.get("User-Agent", ""))
+                audit_login(state, username, True, self.client_ip(), "setup-admin")
+                write_state_config(state)
+                self.send_json(200, {"ok": True, "user": {"username": username, "role": "admin"}}, {"Set-Cookie": cookie_header(token, exp)})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+            return
+        if path == "/api/login":
+            try:
+                payload = self.read_body()
+                state = read_state_config()
+                username = normalize_username(payload.get("username"))
+                user_rec = find_user(state, username)
+                ip = self.client_ip()
+                now = int(time.time())
+                if not user_rec:
+                    audit_login(state, username, False, ip, "unknown user")
+                    write_state_config(state)
+                    self.send_json(401, {"error": "Invalid username or password."})
+                    return
+                locked_until = int(user_rec.get("locked_until", 0) or 0)
+                if locked_until > now:
+                    audit_login(state, username, False, ip, "locked")
+                    write_state_config(state)
+                    self.send_json(423, {"error": f"Account locked, try again in {minutes_until(locked_until)} minutes"})
+                    return
+                if not verify_password(payload.get("password", ""), user_rec.get("password_hash")):
+                    user_rec["failed_attempts"] = int(user_rec.get("failed_attempts", 0) or 0) + 1
+                    reason = "bad password"
+                    if user_rec["failed_attempts"] >= 5:
+                        user_rec["locked_until"] = now + 15 * 60
+                        reason = "locked after 5 failed attempts"
+                    audit_login(state, username, False, ip, reason)
+                    write_state_config(state)
+                    if user_rec.get("locked_until", 0) > now:
+                        self.send_json(423, {"error": "Account locked, try again in 15 minutes"})
+                    else:
+                        self.send_json(401, {"error": "Invalid username or password."})
+                    return
+                if user_rec.get("totp_enabled"):
+                    code = payload.get("totp_code", "")
+                    if not code:
+                        self.send_json(401, {"error": "Two-factor code required.", "totp_required": True})
+                        return
+                    if not verify_totp(user_rec.get("totp_secret", ""), code):
+                        audit_login(state, username, False, ip, "bad totp")
+                        write_state_config(state)
+                        self.send_json(401, {"error": "Invalid two-factor code.", "totp_required": True})
+                        return
+                user_rec["failed_attempts"] = 0
+                user_rec["locked_until"] = 0
+                exp_state = password_expiry_state(state, user_rec)
+                if exp_state.get("expired"):
+                    user_rec["force_password_change"] = True
+                token, exp = new_session(state, user_rec.get("username"), ip, self.headers.get("User-Agent", ""))
+                audit_login(state, username, True, ip, "success")
+                write_state_config(state)
+                self.send_json(200, {"ok": True, "user": {"username": user_rec.get("username"), "role": user_rec.get("role", "viewer")}, "password_expired": bool(exp_state.get("expired")), "password_warning_days": exp_state.get("warning_days")}, {"Set-Cookie": cookie_header(token, exp)})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+            return
+        if path == "/api/logout":
+            tokens = [t for t in cookie_values(self.headers.get("Cookie"), AUTH_COOKIE) if t]
+            state = read_state_config()
+            if tokens:
+                token_hashes = {hashlib.sha256(t.encode()).hexdigest() for t in tokens}
+                state["sessions"] = [s for s in state.get("sessions", []) if s.get("token_hash") not in token_hashes]
+                write_state_config(state)
+            self.send_json(200, {"ok": True}, {"Set-Cookie": clear_cookie_header()})
+            return
+        if path == "/api/change-password":
+            payload = self.read_body()
+            old_password = payload.get("old_password", "")
+            new_password = payload.get("new_password", "")
+            confirm = payload.get("confirm_password", "")
+            if new_password != confirm:
+                self.send_json(400, {"error": "Passwords do not match."})
+                return
+            err = password_error(new_password)
+            if err:
+                self.send_json(400, {"error": err})
+                return
+            state = read_state_config()
+            rec = find_user(state, user.get("username"))
+            if not rec or not verify_password(old_password, rec.get("password_hash")):
+                self.send_json(401, {"error": "Current password is incorrect."})
+                return
+            rec["password_hash"] = hash_password(new_password)
+            rec["password_changed_at"] = int(time.time())
+            rec["force_password_change"] = False
+            write_state_config(state)
+            self.send_json(200, {"ok": True})
+            return
+        if path == "/api/users":
+            if not self.is_admin():
+                self.send_json(403, {"error": "admin role required"})
+                return
+            state = read_state_config()
+            users = []
+            now = int(time.time())
+            for u in state.get("users", []):
+                users.append({"username": u.get("username"), "role": u.get("role", "viewer"), "locked": int(u.get("locked_until", 0) or 0) > now, "locked_until": int(u.get("locked_until", 0) or 0), "totp_enabled": bool(u.get("totp_enabled")), "force_password_change": bool(u.get("force_password_change"))})
+            self.send_json(200, {"ok": True, "users": users})
+            return
+        if path in ("/api/users/create", "/api/users/reset-password", "/api/users/delete", "/api/users/unlock", "/api/users/reset-2fa"):
+            if not self.is_admin():
+                self.send_json(403, {"error": "admin role required"})
+                return
+            payload = self.read_body()
+            state = read_state_config()
+            username = normalize_username(payload.get("username"))
+            if not username:
+                self.send_json(400, {"error": "Username is required."})
+                return
+            if path == "/api/users/create":
+                if find_user(state, username):
+                    self.send_json(409, {"error": "User already exists."})
+                    return
+                role = payload.get("role", "viewer") if payload.get("role") in ("admin", "viewer") else "viewer"
+                err = password_error(payload.get("password", ""))
+                if err:
+                    self.send_json(400, {"error": err})
+                    return
+                state["users"].append({"username": username, "password_hash": hash_password(payload.get("password", "")), "role": role, "password_changed_at": int(time.time()), "failed_attempts": 0, "locked_until": 0})
+            elif path == "/api/users/reset-password":
+                rec = find_user(state, username)
+                if not rec:
+                    self.send_json(404, {"error": "User not found."})
+                    return
+                err = password_error(payload.get("password", ""))
+                if err:
+                    self.send_json(400, {"error": err})
+                    return
+                rec["password_hash"] = hash_password(payload.get("password", ""))
+                rec["password_changed_at"] = int(time.time())
+                rec["force_password_change"] = False
+                rec["failed_attempts"] = 0
+                rec["locked_until"] = 0
+            elif path == "/api/users/unlock":
+                rec = find_user(state, username)
+                if not rec:
+                    self.send_json(404, {"error": "User not found."})
+                    return
+                rec["failed_attempts"] = 0
+                rec["locked_until"] = 0
+            elif path == "/api/users/reset-2fa":
+                rec = find_user(state, username)
+                if not rec:
+                    self.send_json(404, {"error": "User not found."})
+                    return
+                rec.pop("totp_secret", None)
+                rec["totp_enabled"] = False
+            elif path == "/api/users/delete":
+                if normalize_username(user.get("username")).lower() == username.lower():
+                    self.send_json(400, {"error": "You cannot delete your own account."})
+                    return
+                before = len(state.get("users", []))
+                state["users"] = [u for u in state.get("users", []) if normalize_username(u.get("username")).lower() != username.lower()]
+                if len(state["users"]) == before:
+                    self.send_json(404, {"error": "User not found."})
+                    return
+                state["sessions"] = [sess for sess in state.get("sessions", []) if normalize_username(sess.get("username")).lower() != username.lower()]
+                state["api_tokens"] = [tok for tok in state.get("api_tokens", []) if normalize_username(tok.get("username")).lower() != username.lower()]
+            write_state_config(state)
+            self.send_json(200, {"ok": True})
+            return
+        if path in ("/api/login-history", "/api/security-settings"):
+            if not self.is_admin():
+                self.send_json(403, {"error": "admin role required"})
+                return
+            state = read_state_config()
+            if path == "/api/login-history":
+                self.send_json(200, {"ok": True, "entries": list(reversed(state.get("login_audit", [])[-100:]))})
             else:
-                result[itype] = {"ok": True, "error": None, "elapsed": elapsed, "ts": int(now)}
-        except Exception as e:
-            result[itype] = {"ok": False, "error": str(e)[:120], "elapsed": 0, "ts": int(now)}
-    _integration_status_cache = result
-    _integration_status_ts = now
-    return result
+                payload = self.read_body()
+                settings = state.get("security_settings", {})
+                if payload:
+                    settings["password_expiry_enabled"] = bool(payload.get("password_expiry_enabled"))
+                    days = int(payload.get("password_expiry_days") or 90)
+                    settings["password_expiry_days"] = days if days in (30, 60, 90, 180) else 90
+                    state["security_settings"] = settings
+                    write_state_config(state)
+                self.send_json(200, {"ok": True, "settings": settings})
+            return
+        if path == "/api/sessions":
+            state = read_state_config()
+            current_hashes = {hashlib.sha256(t.encode()).hexdigest() for t in cookie_values(self.headers.get("Cookie"), AUTH_COOKIE) if t}
+            sessions = []
+            for sess in state.get("sessions", []):
+                if user.get("role") == "admin" or normalize_username(sess.get("username")).lower() == normalize_username(user.get("username")).lower():
+                    sessions.append({"id": sess.get("id") or sess.get("token_hash", "")[:12], "username": sess.get("username"), "created": sess.get("created"), "last_activity": sess.get("last_activity"), "ip": sess.get("ip"), "user_agent": sess.get("user_agent"), "current": sess.get("token_hash") in current_hashes})
+            self.send_json(200, {"ok": True, "sessions": sessions})
+            return
+        if path == "/api/sessions/revoke":
+            payload = self.read_body()
+            sid = str(payload.get("id", ""))
+            state = read_state_config()
+            kept=[]; removed=False
+            for sess in state.get("sessions", []):
+                match = (sess.get("id") == sid or str(sess.get("token_hash", "")).startswith(sid))
+                allowed = user.get("role") == "admin" or normalize_username(sess.get("username")).lower() == normalize_username(user.get("username")).lower()
+                if match and allowed:
+                    removed=True
+                    continue
+                kept.append(sess)
+            state["sessions"] = kept
+            write_state_config(state)
+            self.send_json(200, {"ok": removed})
+            return
+        if path in ("/api/2fa/setup", "/api/2fa/enable", "/api/2fa/disable"):
+            state = read_state_config()
+            rec = find_user(state, user.get("username"))
+            if not rec:
+                self.send_json(404, {"error": "User not found."})
+                return
+            if path == "/api/2fa/setup":
+                secret = _totp_secret()
+                rec["totp_pending_secret"] = secret
+                write_state_config(state)
+                uri = otpauth_uri(rec.get("username"), secret)
+                self.send_json(200, {"ok": True, "secret": secret, "otpauth_uri": uri, "qr_url": qr_url_for(uri)})
+                return
+            payload = self.read_body()
+            if path == "/api/2fa/enable":
+                secret = rec.get("totp_pending_secret") or rec.get("totp_secret")
+                if not secret or not verify_totp(secret, payload.get("code", "")):
+                    self.send_json(400, {"error": "Invalid two-factor code."})
+                    return
+                rec["totp_secret"] = secret
+                rec["totp_enabled"] = True
+                rec.pop("totp_pending_secret", None)
+            else:
+                if not verify_password(payload.get("password", ""), rec.get("password_hash")):
+                    self.send_json(401, {"error": "Current password is incorrect."})
+                    return
+                rec.pop("totp_secret", None)
+                rec.pop("totp_pending_secret", None)
+                rec["totp_enabled"] = False
+            write_state_config(state)
+            self.send_json(200, {"ok": True})
+            return
+        if path in ("/api/api-tokens", "/api/api-tokens/create", "/api/api-tokens/revoke"):
+            state = read_state_config()
+            now = int(time.time())
+            if path == "/api/api-tokens":
+                toks = []
+                for tok in state.get("api_tokens", []):
+                    if normalize_username(tok.get("username")).lower() == normalize_username(user.get("username")).lower():
+                        toks.append({k: tok.get(k) for k in ("id", "name", "created", "expires", "last_used")})
+                self.send_json(200, {"ok": True, "tokens": toks})
+                return
+            payload = self.read_body()
+            if path == "/api/api-tokens/create":
+                raw = "noc_" + secrets.token_urlsafe(32)
+                days = int(payload.get("expiry_days") or 0)
+                rec = {"id": uuid.uuid4().hex, "username": user.get("username"), "name": str(payload.get("name") or "API Token")[:80], "token_hash": hashlib.sha256(raw.encode()).hexdigest(), "created": now, "expires": now + days*86400 if days > 0 else 0, "last_used": 0}
+                state.setdefault("api_tokens", []).append(rec)
+                write_state_config(state)
+                self.send_json(200, {"ok": True, "token": raw, "record": {k: rec.get(k) for k in ("id", "name", "created", "expires")}})
+                return
+            tid = str(payload.get("id", ""))
+            before = len(state.get("api_tokens", []))
+            state["api_tokens"] = [tok for tok in state.get("api_tokens", []) if not (tok.get("id") == tid and normalize_username(tok.get("username")).lower() == normalize_username(user.get("username")).lower())]
+            write_state_config(state)
+            self.send_json(200, {"ok": len(state.get("api_tokens", [])) < before})
+            return
+        if path in ("/save-layout", "/save-config", "/save-dashboard-config", "/test-connection", "/save-custom-cards", "/save-builtin-card-configs", "/regenerate") and not self.is_admin():
+            if not (path == "/regenerate" and not users_exist()):
+                self.send_json(403, {"error": "admin role required"})
+                return
+        if path == "/save-layout":
+            try:
+                layout = self.read_body()
+                with open(LAYOUT_FILE, "w") as f:
+                    json.dump(layout, f, indent=2)
+                self.send_json(200, {"ok": True})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif path == "/regenerate":
+            threading.Thread(target=_run_regen, daemon=True).start()
+            self.send_json(202, {"ok": True, "msg": "regenerating"})
+
+        elif path == "/save-config":
+            # Receive {key: value} pairs, merge into .env, trigger regen
+            try:
+                payload = self.read_body()
+                if not isinstance(payload, dict):
+                    self.send_json(400, {"error": "expected object"})
+                    return
+                e = read_env()
+                changed = []
+                for k, v in payload.items():
+                    if k and isinstance(k, str) and k.replace('_','').isalnum():
+                        if str(v).strip():  # only set non-empty values
+                            e[k] = str(v).strip()
+                            changed.append(k)
+                write_env(e)
+                print(f"Config saved: {changed}")
+                threading.Thread(target=_run_regen, daemon=True).start()
+                self.send_json(200, {"ok": True, "saved": changed, "regen": True})
+            except Exception as e2:
+                self.send_json(500, {"error": str(e2)})
+
+        elif path == "/save-dashboard-config":
+            try:
+                cfg = write_dashboard_config(self.read_body())
+                print(f"Dashboard config saved: {CONFIG_FILE}")
+                threading.Thread(target=_run_regen, daemon=True).start()
+                self.send_json(200, {"ok": True, "config": cfg, "regen": True})
+            except Exception as e2:
+                self.send_json(500, {"error": str(e2)})
+
+        elif path == "/test-connection":
+            # Run collector with provided creds, return result
+            try:
+                payload = self.read_body()
+                itype = payload.get("type", "")
+                creds = payload.get("creds", {})  # {ENV_KEY: value, ...}
+
+                if itype not in COLLECTOR_MAP:
+                    self.send_json(400, {"error": f"unknown integration: {itype}"})
+                    return
+
+                fn_name, required_keys = COLLECTOR_MAP[itype]
+
+                # Build temp env: current .env + provided creds
+                e = read_env()
+                e.update({k: v for k, v in creds.items() if v})
+
+                # Load generator and call the collector
+                try:
+                    gen = _load_generator()
+                    # Patch gen.E with our temp env for this call
+                    orig_E = gen.E.copy()
+                    gen.E.update(e)
+                    try:
+                        fn = getattr(gen, fn_name)
+                        result = fn()
+                    finally:
+                        gen.E.clear()
+                        gen.E.update(orig_E)
+
+                    ok = result.get("state") == "ok"
+                    self.send_json(200, {
+                        "ok": ok,
+                        "state": result.get("state"),
+                        "note": result.get("note") or result.get("error") or "",
+                        "detail": {k: v for k, v in result.items()
+                                   if k not in ("state", "note", "error") and not isinstance(v, (list, dict))}
+                    })
+                except Exception as ce:
+                    self.send_json(200, {"ok": False, "state": "error", "note": str(ce)[:200]})
+
+            except Exception as e2:
+                self.send_json(500, {"error": str(e2)})
+
+        elif path == "/save-custom-cards":
+            # Receive list of custom card configs, persist to disk
+            try:
+                payload = self.read_body()
+                if not isinstance(payload, list):
+                    self.send_json(400, {"error": "expected array"})
+                    return
+                import json as _json
+                with open(CUSTOM_CARDS_FILE, "w") as f:
+                    _json.dump(payload, f, indent=2)
+                self.send_json(200, {"ok": True, "count": len(payload)})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif path == "/save-builtin-card-configs":
+            # Receive object of built-in card display configs, persist to disk
+            try:
+                payload = self.read_body()
+                if not isinstance(payload, dict):
+                    self.send_json(400, {"error": "expected object"})
+                    return
+                import json as _json
+                with open(BUILTIN_CARD_CONFIGS_FILE, "w") as f:
+                    _json.dump(payload, f, indent=2)
+                self.send_json(200, {"ok": True, "count": len(payload)})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        elif path == "/api/fetch-custom":
+            # Proxy fetch for custom cards — runs server-side so no CORS issues
+            import urllib.request as _ureq
+            import base64 as _b64mod
+            try:
+                payload = self.read_body()
+                url        = payload.get("url", "")
+                auth_type  = payload.get("auth_type", "none")
+                auth_value = payload.get("auth_value", "")
+                auth_key_header = payload.get("auth_key_header", "X-API-Key")
+                auth_user  = payload.get("auth_user", "")
+                auth_pass  = payload.get("auth_pass", "")
+                oauth_token_url     = payload.get("oauth_token_url", "")
+                oauth_client_id     = payload.get("oauth_client_id", "")
+                oauth_client_secret = payload.get("oauth_client_secret", "")
+                oauth_scope         = payload.get("oauth_scope", "")
+
+                if not url:
+                    self.send_json(400, {"ok": False, "error": "no url"})
+                    return
+
+                headers = {}
+                if auth_type == "bearer" and auth_value:
+                    headers["Authorization"] = "Bearer " + auth_value
+                elif auth_type == "apikey" and auth_value:
+                    headers[auth_key_header or "X-API-Key"] = auth_value
+                elif auth_type == "basic":
+                    creds = _b64mod.b64encode((auth_user + ":" + auth_pass).encode()).decode()
+                    headers["Authorization"] = "Basic " + creds
+                elif auth_type == "oauth" and oauth_token_url:
+                    # Client credentials grant
+                    try:
+                        import urllib.parse as _uparse
+                        token_data = _uparse.urlencode({
+                            "grant_type": "client_credentials",
+                            "client_id": oauth_client_id,
+                            "client_secret": oauth_client_secret,
+                            "scope": oauth_scope,
+                        }).encode()
+                        token_req = _ureq.Request(
+                            oauth_token_url,
+                            data=token_data,
+                            headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        )
+                        with _ureq.urlopen(token_req, timeout=10, context=CTX) as tr:
+                            token_resp = json.loads(tr.read().decode("utf-8", "replace"))
+                        access_token = token_resp.get("access_token", "")
+                        if access_token:
+                            headers["Authorization"] = "Bearer " + access_token
+                    except Exception as oe:
+                        self.send_json(200, {"ok": False, "error": "OAuth token error: " + str(oe)[:120]})
+                        return
+
+                req = _ureq.Request(url, headers=headers)
+                try:
+                    with _ureq.urlopen(req, timeout=15, context=CTX) as resp:
+                        raw = resp.read().decode("utf-8", "replace")
+                except Exception as fe:
+                    self.send_json(200, {"ok": False, "error": str(fe)[:200]})
+                    return
+
+                parsed = None
+                try:
+                    parsed = json.loads(raw)
+                except Exception:
+                    pass
+
+                self.send_json(200, {"ok": True, "raw": raw[:500], "json": parsed})
+            except Exception as e:
+                self.send_json(500, {"error": str(e)})
+
+        else:
+            self.send_response(404)
+            self.end_headers()
 
 
-@app.get("/api/first-launch")
-def api_first_launch():
-    """Return whether this is a first-launch (no integrations configured yet)."""
-    cfg_json = load_config_json()
-    integrations = cfg_json.get("integrations", {})
-    # Count actually-configured integrations
-    count = sum(1 for itype in INTEGRATION_FIELDS if _is_configured(itype, cfg_json)
-                and itype not in ALWAYS_AVAILABLE)
-    return {"first_launch": count == 0, "configured_count": count}
-
-
-
-# ── Static file serving (React app) ───────────────────────────────────────────
-
-if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
-
-    @app.get("/")
-    def serve_index():
-        return FileResponse(str(FRONTEND_DIST / "index.html"))
-
-    @app.get("/{path:path}")
-    def serve_spa(path: str):
-        if path.startswith("api/"):
-            raise HTTPException(status_code=404)
-        file_path = FRONTEND_DIST / path
-        if file_path.exists() and file_path.is_file():
-            return FileResponse(str(file_path))
-        return FileResponse(str(FRONTEND_DIST / "index.html"))
-else:
-    @app.get("/")
-    def serve_no_frontend():
-        return JSONResponse(
-            {"error": "Frontend not built. Run: cd frontend && npm run build"},
-            status_code=503
-        )
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8081))
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), NOCHandler)
+    print(f"NOC2 HTTP server on port {port}")
+    server.serve_forever()

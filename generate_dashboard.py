@@ -17,7 +17,7 @@ try:
 except Exception:
     pass
 
-ENV_PATH = os.environ.get("HERMES_ENV", os.path.expanduser("~/.hermes/.env"))
+ENV_PATH = os.environ.get("HERMES_ENV", os.path.expanduser("~/.noc-dashboard/.env"))
 OUT_DIR = os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard"))
 OUT_FILE = os.environ.get("NOC_OUT_FILE", os.path.join(OUT_DIR, "index.html"))
 TIMEOUT = 15
@@ -143,7 +143,7 @@ def jget(url, headers=None, data=None, method=None, cookiejar=None):
 
 
 def collect_system_tools_suite():
-    base = E.get("SYSTEM_TOOLS_URL", "http://10.10.10.237:10233").strip().rstrip("/")
+    base = E.get("SYSTEM_TOOLS_URL", "http://192.0.2.237:10233").strip().rstrip("/")
     d = {"state": "error", "status": "unknown", "app": "System Tools Suite",
          "version": "?", "tool_count": 23, "url": base}
     if not base:
@@ -264,7 +264,7 @@ def collect_proxmox():
          "mem_used": 0.0, "mem_total": 0.0, "node": "?", "uptime_d": 0,
          "down_vms": [], "storage": []}
     auth = _pmox_auth()
-    base = _service_base_url(E.get("PROXMOX_HOST", "10.10.10.251"), "https", 8006) + "/api2/json"
+    base = _service_base_url(E.get("PROXMOX_HOST", "192.0.2.251"), "https", 8006) + "/api2/json"
     nodes = jget(f"{base}/nodes", auth)["data"]
     node = None
     for n in nodes:
@@ -334,7 +334,7 @@ def collect_smart_health():
     d = {"state": "ok", "checked": 0, "passed": 0, "warn": 0, "fail": 0,
          "prefail": 0, "problems": [], "disks": [], "vm_disks": 0, "vm_note": ""}
     auth = _pmox_auth()
-    base = _service_base_url(E.get("PROXMOX_HOST", "10.10.10.251"), "https", 8006) + "/api2/json"
+    base = _service_base_url(E.get("PROXMOX_HOST", "192.0.2.251"), "https", 8006) + "/api2/json"
     nodes = jget(f"{base}/nodes", auth).get("data", [])
     if not nodes:
         return {"state": "degraded", "note": "no Proxmox nodes visible", "checked": 0,
@@ -532,7 +532,7 @@ def collect_docker():
 
 def collect_pbs():
     d = {"state": "ok", "ok": 0, "fail": 0, "run": 0, "last_backup": "?", "datastores": []}
-    tk = jget("https://10.10.10.77:8007/api2/json/access/ticket",
+    tk = jget("https://192.0.2.77:8007/api2/json/access/ticket",
               data=urllib.parse.urlencode({
                   "username": E.get("PBS_USERNAME", "root@pam"),
                   "password": E.get("PBS_PASSWORD", "")}),
@@ -540,7 +540,7 @@ def collect_pbs():
               method="POST")["data"]["ticket"]
     cookie = {"Cookie": f"PBSAuthCookie={urllib.parse.quote(tk, safe='')}"}
     since = int(time.time()) - 86400
-    tasks = jget(f"https://10.10.10.77:8007/api2/json/nodes/localhost/tasks"
+    tasks = jget(f"https://192.0.2.77:8007/api2/json/nodes/localhost/tasks"
                  f"?since={since}&limit=500", cookie)["data"]
     last_backup_epoch = 0
     for t in tasks:
@@ -567,7 +567,7 @@ def collect_pbs():
         d["state"] = "crit"
     # datastore usage
     try:
-        dss = jget("https://10.10.10.77:8007/api2/json/status/datastore-usage", cookie)["data"]
+        dss = jget("https://192.0.2.77:8007/api2/json/status/datastore-usage", cookie)["data"]
         for ds in dss:
             tot = ds.get("total", 0) or 0
             used = ds.get("used", 0) or 0
@@ -705,7 +705,7 @@ def collect_uptime_kuma():
 def collect_crowdsec():
     d = {"state": "ok", "bans": 0, "local_bans": 0, "detections_24h": None, "top": []}
     apikey = E.get("CROWDSEC_API_KEY", "")
-    dec = jget("http://10.10.10.237:18080/v1/decisions", {"X-Api-Key": apikey})
+    dec = jget("http://192.0.2.237:18080/v1/decisions", {"X-Api-Key": apikey})
     if isinstance(dec, list):
         d["bans"] = len(dec)
         local = [x for x in dec if x.get("origin") not in ("lists", "CAPI")]
@@ -717,10 +717,10 @@ def collect_crowdsec():
     mp = E.get("CROWDSEC_MACHINE_PASS", "")
     if mu and mp:
         try:
-            tok = jget("http://10.10.10.237:18080/v1/watchers/login",
+            tok = jget("http://192.0.2.237:18080/v1/watchers/login",
                        {"Content-Type": "application/json"},
                        json.dumps({"machine_id": mu, "password": mp}).encode(), "POST")["token"]
-            alerts = jget("http://10.10.10.237:18080/v1/alerts?since=24h&limit=500",
+            alerts = jget("http://192.0.2.237:18080/v1/alerts?since=24h&limit=500",
                           {"Authorization": "Bearer " + tok})
             if isinstance(alerts, list):
                 def is_local(a):
@@ -735,10 +735,10 @@ def collect_crowdsec():
 
 def collect_wazuh():
     d = {"state": "ok", "active": 0, "total": 0, "down": []}
-    jwt = req("https://10.10.10.233:55000/security/user/authenticate?raw=true",
+    jwt = req("https://192.0.2.233:55000/security/user/authenticate?raw=true",
               {"Authorization": "Basic " + _b64(
-                  f"{E.get('WAZUH_API_USER','hermes')}:{E.get('WAZUH_API_PASSWORD','')}")}).strip()
-    ag = jget("https://10.10.10.233:55000/agents?limit=500",
+                  f"{E.get('WAZUH_API_USER','wazuh')}:{E.get('WAZUH_API_PASSWORD','')}")}).strip()
+    ag = jget("https://192.0.2.233:55000/agents?limit=500",
               {"Authorization": f"Bearer {jwt}"})["data"]["affected_items"]
     d["total"] = len(ag)
     d["active"] = sum(1 for a in ag if a.get("status") == "active")
@@ -751,7 +751,7 @@ def collect_wazuh():
     iu = E.get("WAZUH_INDEXER_USER", "").strip()
     ip = E.get("WAZUH_INDEXER_PASS", "").strip()
     if iu and ip:
-        ix = E.get("WAZUH_INDEXER_HOST", "https://10.10.10.233:9200").rstrip("/")
+        ix = E.get("WAZUH_INDEXER_HOST", "https://192.0.2.233:9200").rstrip("/")
         try:
             q = {"size": 0,
                  "query": {"bool": {"filter": [
@@ -807,7 +807,7 @@ def collect_malware_sources():
         d["state"] = "degraded"
         d["note"] = "indexer creds not set"
         return d
-    ix = E.get("WAZUH_INDEXER_HOST", "https://10.10.10.233:9200").rstrip("/")
+    ix = E.get("WAZUH_INDEXER_HOST", "https://192.0.2.233:9200").rstrip("/")
     auth = {"Authorization": "Basic " + _b64(f"{iu}:{ip}")}
 
     def cnt(extra):
@@ -838,7 +838,7 @@ def collect_unifi():
          "latency": None, "down_mbps": None, "up_mbps": None, "devices": [],
          "ssids": [], "month_rx": None, "month_tx": None, "month_total": None,
          "pia": None}
-    GW = "https://10.10.10.1"
+    GW = "https://192.0.2.1"
     NET = GW + "/proxy/network/api/s/default"
     cj = http.cookiejar.CookieJar()
     op = urllib.request.build_opener(
@@ -984,7 +984,7 @@ def collect_unifi():
 
 def collect_adguard():
     d = {"state": "ok", "queries": 0, "blocked": 0, "block_pct": 0.0, "avg_ms": 0.0}
-    s = jget("http://10.10.10.21/control/stats",
+    s = jget("http://192.0.2.21/control/stats",
              {"Authorization": "Basic " + _b64(f"mdziegiel:{E.get('ADGUARD_PASSWORD','')}")})
     tot = s.get("num_dns_queries", 0)
     blk = s.get("num_blocked_filtering", 0)
@@ -998,7 +998,7 @@ def collect_adguard():
 def collect_urbackup():
     """URBackup web API (salt/login/status). User is michaeld (URBACKUP_USERNAME)."""
     d = {"state": "ok", "total": 0, "online": 0, "clients": [], "problems": []}
-    base = E.get("URBACKUP_URL", "http://10.10.10.76:55414").rstrip("/")
+    base = E.get("URBACKUP_URL", "http://192.0.2.76:55414").rstrip("/")
     user = E.get("URBACKUP_USERNAME", "michaeld")
     pw = E.get("URBACKUP_PASSWORD", "")
     if not pw or pw.startswith("<"):
@@ -1858,7 +1858,7 @@ def _fmt_duration(sec):
 
 def collect_wan_health():
     """Read-only WAN health from UniFi Network health endpoint."""
-    base_host = E.get("UNIFI_URL", "https://10.10.10.1").strip().rstrip("/")
+    base_host = E.get("UNIFI_URL", "https://192.0.2.1").strip().rstrip("/")
     user = E.get("UNIFI_USERNAME", "").strip()
     pw = E.get("UNIFI_PASSWORD", "").strip()
     if not base_host or not user or not pw or pw.startswith("<"):
@@ -2149,7 +2149,7 @@ def record_health_snapshot(summary):
 
 
 # ============================ TREND / HISTORY STORAGE ============================
-STATE_DIR = os.path.expanduser("~/.hermes/state")
+STATE_DIR = os.path.expanduser("~/.noc-dashboard/state")
 TRENDS_FILE = os.path.join(STATE_DIR, "dashboard_trends.json")
 KUMA_HIST_HOURS = 24
 DAILY_KEEP = 30
@@ -2858,7 +2858,6 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
                  or f'latest {esc(str(SP.get("timestamp") or SP.get("received_at") or "unknown"))}')
 
     row1 = (card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
-            + card("SPEED TEST", SP.get("state", "error"), speed_body, speed_sub)
             + card("PROXMOX", prox_state, prox_body, prox_sub)
             + card("HYPER-V", HV.get("state", "error"), hv_body, hv_sub)
             + card("HOME ASSISTANT", HA.get("state", "error"), ha_body, ha_sub)
@@ -2866,7 +2865,8 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
             + card("DOCKER / PORTAINER", D.get("state", "error"), dock_body, dock_sub)
             + card("PBS BACKUPS", B.get("state", "error"), pbs_body, pbs_sub)
             + card("URBACKUP", UB.get("state", "error"), ub_body, ub_sub)
-            + card("SMART / DISK HEALTH", SM.get("state", "error"), smart_body, smart_sub))
+            + card("SMART / DISK HEALTH", SM.get("state", "error"), smart_body, smart_sub)
+            + card("SPEED TEST", SP.get("state", "error"), speed_body, speed_sub))
 
     # ---- Row 2: security ----
     daily = trends.get("daily", {})
@@ -5031,7 +5031,11 @@ PAGE = """<!DOCTYPE html>
     padding:8px 10px; border-bottom:1px solid var(--line);
     font-size:12px; }}
   .alert-feed li:last-child {{ border-bottom:none; }}
+  .alert-feed li.resolved {{ opacity:.58; }}
   .ah-ts {{ color:var(--muted); font-size:10px; letter-spacing:0.06em; }}
+  .ah-status {{ color:var(--green); font-size:9px; letter-spacing:.08em; width:max-content;
+    border:1px solid rgba(0,255,65,.35); border-radius:999px; padding:1px 5px; }}
+  .alert-feed li:not(.resolved) .ah-status {{ color:var(--crit); border-color:rgba(255,51,51,.45); }}
   .ah-text {{ color:var(--txt); }}
   .alert-panel-empty {{ color:var(--muted); font-size:12px; text-align:center;
     padding:32px 16px; }}
@@ -5533,49 +5537,103 @@ PAGE = """<!DOCTYPE html>
 
   var ALERT_KEY = 'noc-alert-history';
   var MAX_ALERTS = 100;
-  function loadAlertHistory() {{ return JSON.parse(localStorage.getItem(ALERT_KEY) || '[]'); }}
+  function loadAlertHistory() {{
+    try {{
+      var raw = JSON.parse(localStorage.getItem(ALERT_KEY) || '[]');
+      return Array.isArray(raw) ? raw : [];
+    }} catch(e) {{
+      console.warn('Alert history parse failed; resetting corrupt localStorage', e);
+      localStorage.removeItem(ALERT_KEY);
+      return [];
+    }}
+  }}
   function saveAlertHistory(h) {{ localStorage.setItem(ALERT_KEY, JSON.stringify(h)); }}
-  function ingestCurrentAlerts() {{
-    var items = document.querySelectorAll('.alerts li');
-    if (!items.length) return;
-    var history = loadAlertHistory();
-    var existing = new Set(history.map(function(x) {{ return x.text; }}));
-    var ts = new Date().toISOString();
-    var added = false;
-    items.forEach(function(li) {{
+  function currentAlertTexts() {{
+    var active = [];
+    document.querySelectorAll('.alerts li').forEach(function(li) {{
       var text = li.textContent.trim();
-      if (!text) return;
-      if (!existing.has(text)) {{
-        history.unshift({{ text: text, ts: ts }});
-        existing.add(text);
-        added = true;
+      if (text) active.push(text);
+    }});
+    return active;
+  }}
+  function ingestCurrentAlerts() {{
+    var activeTexts = currentAlertTexts();
+    var activeSet = new Set(activeTexts);
+    var history = loadAlertHistory();
+    var byText = new Map();
+    var ts = new Date().toISOString();
+    var changed = false;
+
+    history.forEach(function(item) {{
+      if (!item || !item.text) return;
+      if (!item.status) {{ item.status = item.resolved_at ? 'resolved' : 'active'; changed = true; }}
+      if (activeSet.has(item.text)) {{
+        if (item.status !== 'active' || item.resolved_at) changed = true;
+        item.status = 'active';
+        delete item.resolved_at;
+        item.last_seen = ts;
+      }} else if (item.status === 'active') {{
+        item.status = 'resolved';
+        item.resolved_at = ts;
+        changed = true;
+      }}
+      if (!byText.has(item.text)) byText.set(item.text, item);
+    }});
+
+    activeTexts.forEach(function(text) {{
+      if (!byText.has(text)) {{
+        var item = {{ text: text, ts: ts, last_seen: ts, status: 'active' }};
+        history.unshift(item);
+        byText.set(text, item);
+        changed = true;
       }}
     }});
-    if (added) {{
-      if (history.length > MAX_ALERTS) history = history.slice(0, MAX_ALERTS);
+
+    if (changed) {{
+      history = history.filter(function(item) {{ return item && item.text; }}).slice(0, MAX_ALERTS);
       saveAlertHistory(history);
     }}
   }}
   function renderAlertHistory() {{
     var history = loadAlertHistory();
+    var activeSet = new Set(currentAlertTexts());
+    var changed = false;
+    history.forEach(function(item) {{
+      if (!item || !item.text) return;
+      if (!item.status) {{ item.status = item.resolved_at ? 'resolved' : 'active'; changed = true; }}
+      if (activeSet.has(item.text)) {{
+        if (item.status !== 'active' || item.resolved_at) changed = true;
+        item.status = 'active';
+        delete item.resolved_at;
+      }} else if (item.status === 'active') {{
+        item.status = 'resolved';
+        item.resolved_at = new Date().toISOString();
+        changed = true;
+      }}
+    }});
+    if (changed) saveAlertHistory(history);
+
+    var activeCount = history.filter(function(item) {{ return item && item.status === 'active'; }}).length;
     var feed = document.getElementById('alert-feed');
     var empty = document.getElementById('alert-empty');
     if (!feed) return;
     feed.innerHTML = '';
     if (!history.length) {{
       if (empty) empty.style.display = 'block';
-      return;
+    }} else {{
+      if (empty) empty.style.display = 'none';
+      history.forEach(function(item) {{
+        var li = document.createElement('li');
+        if (item.status === 'resolved') li.className = 'resolved';
+        var d = new Date(item.ts);
+        var ts_str = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {{hour:'2-digit',minute:'2-digit'}});
+        var status = item.status === 'active' ? 'ACTIVE' : 'RESOLVED';
+        li.innerHTML = '<span class="ah-ts">' + ts_str + '</span><span class="ah-status">' + status + '</span><span class="ah-text">' + item.text + '</span>';
+        feed.appendChild(li);
+      }});
     }}
-    if (empty) empty.style.display = 'none';
-    history.forEach(function(item) {{
-      var li = document.createElement('li');
-      var d = new Date(item.ts);
-      var ts_str = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {{hour:'2-digit',minute:'2-digit'}});
-      li.innerHTML = '<span class="ah-ts">' + ts_str + '</span><span class="ah-text">' + item.text + '</span>';
-      feed.appendChild(li);
-    }});
     var badge = document.getElementById('bell-badge');
-    if (badge) {{ badge.textContent = history.length > 9 ? '9+' : String(history.length); badge.style.display = history.length ? 'inline-block' : 'none'; }}
+    if (badge) {{ badge.textContent = activeCount > 9 ? '9+' : String(activeCount); badge.style.display = activeCount ? 'inline-block' : 'none'; }}
   }}
   window.toggleAlertPanel = function() {{
     var panel = document.getElementById('alert-panel');

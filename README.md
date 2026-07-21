@@ -207,8 +207,8 @@ The React app loads, fetches your layout from `state/layout.json` (bootstrapped 
 All service credentials. See `.env.example` for the full list. Every collector reads from this file — nothing is hardcoded.
 
 ```env
-PROXMOX_HOST=10.10.10.251
-PROXMOX_TOKEN_ID=root@pam!hermes
+PROXMOX_HOST=192.0.2.251
+PROXMOX_TOKEN_ID=root@pam!noc-api
 PROXMOX_TOKEN_SECRET=your-token-here
 # ... etc
 ```
