@@ -12,6 +12,7 @@ services:
       - noc_state:/app/state
     environment:
       - PORT=8081
+      - NOC_STATE_DIR=/app/state
       - WORKERS=2
       - ADGUARD_PASSWORD=${ADGUARD_PASSWORD}
       - ADGUARD_URL=${ADGUARD_URL}
@@ -75,7 +76,7 @@ services:
       - WAZUH_INDEXER_USER=${WAZUH_INDEXER_USER}
       - HYPERV_HOST=${HYPERV_HOST}
       - HYPERV_USERNAME=${HYPERV_USERNAME}
-            - HYPERV_PASSWORD=${HYPERV_PASSWORD}
+      - HYPERV_PASSWORD=${HYPERV_PASSWORD}
 
 volumes:
   noc_state:
