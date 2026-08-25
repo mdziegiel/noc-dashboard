@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL maintainer="MRDTech"
+LABEL maintainer="NOC Dashboard maintainers"
 LABEL description="NOC Dashboard — self-hosted homelab NOC with multi-user auth and TOTP 2FA"
 
 WORKDIR /app

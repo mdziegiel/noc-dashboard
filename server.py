@@ -279,7 +279,7 @@ def verify_totp(secret, code):
     return any(hmac.compare_digest(_totp_code(secret, now + offset * 30), code) for offset in (-1, 0, 1))
 
 def otpauth_uri(username, secret):
-    issuer = "MRDTech NOC"
+    issuer = "NOC Dashboard"
     label = urllib.parse.quote(f"{issuer}:{username}")
     qs = urllib.parse.urlencode({"secret": secret, "issuer": issuer, "algorithm": "SHA1", "digits": "6", "period": "30"})
     return f"otpauth://totp/{label}?{qs}"

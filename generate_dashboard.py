@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MRDTech Homelab NOC Dashboard generator.
+NOC Dashboard generator.
 Collects all infra sources (stdlib only, per-source isolation) and renders a
 single self-contained static HTML file (inline CSS + SVG, no external assets).
 Run every 15 min via cron; served by a tiny http.server systemd unit on :8080.
@@ -18,7 +18,7 @@ except Exception:
     pass
 
 ENV_PATH = os.environ.get("HERMES_ENV", os.path.expanduser("~/.noc-dashboard/.env"))
-OUT_DIR = os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard"))
+OUT_DIR = os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/noc-dashboard-output"))
 OUT_FILE = os.environ.get("NOC_OUT_FILE", os.path.join(OUT_DIR, "index.html"))
 TIMEOUT = 15
 CERT_WARN_DAYS = 30
@@ -934,8 +934,8 @@ def collect_unifi():
             e = c.get("essid")
             if e:
                 ssid_ct[e] += 1
-        # Always surface the three networks Michael tracks, even at 0 clients
-        WANTED = ["ZOMBIELAND5G", "ZOMBIELAND2G", "IOTNetwork"]
+        # Always surface common demo networks, even at 0 clients
+        WANTED = ["Guest-5G", "Guest-2G", "IoT-Net"]
         seen = set()
         for name in WANTED:
             d["ssids"].append({"name": name, "clients": int(ssid_ct.get(name, 0))})
@@ -984,8 +984,10 @@ def collect_unifi():
 
 def collect_adguard():
     d = {"state": "ok", "queries": 0, "blocked": 0, "block_pct": 0.0, "avg_ms": 0.0}
-    s = jget("http://192.0.2.21/control/stats",
-             {"Authorization": "Basic " + _b64(f"mdziegiel:{E.get('ADGUARD_PASSWORD','')}")})
+    base = E.get("ADGUARD_URL", "http://192.0.2.21").strip().rstrip("/")
+    user = E.get("ADGUARD_USERNAME", "admin")
+    s = jget(f"{base}/control/stats",
+             {"Authorization": "Basic " + _b64(f"{user}:{E.get('ADGUARD_PASSWORD','')}")})
     tot = s.get("num_dns_queries", 0)
     blk = s.get("num_blocked_filtering", 0)
     d["queries"] = tot
@@ -996,10 +998,10 @@ def collect_adguard():
 
 
 def collect_urbackup():
-    """URBackup web API (salt/login/status). User is michaeld (URBACKUP_USERNAME)."""
+    """URBackup web API (salt/login/status). Username comes from URBACKUP_USERNAME."""
     d = {"state": "ok", "total": 0, "online": 0, "clients": [], "problems": []}
     base = E.get("URBACKUP_URL", "http://192.0.2.76:55414").rstrip("/")
-    user = E.get("URBACKUP_USERNAME", "michaeld")
+    user = E.get("URBACKUP_USERNAME", "urbackup-user")
     pw = E.get("URBACKUP_PASSWORD", "")
     if not pw or pw.startswith("<"):
         return {"state": "degraded", "note": "URBACKUP_PASSWORD not set",
@@ -1386,7 +1388,7 @@ def collect_seerr():
     # public domain so a container/IP change still has a chance. The 403 seen
     # historically was a TRUNCATED api key, not auth scheme / Cloudflare.
     candidates = [base]
-    dom = "https://overseerr.mrdtech.me"
+    dom = E.get("OVERSEERR_PUBLIC_URL", "https://overseerr.example.com").strip().rstrip("/")
     if dom != base:
         candidates.append(dom)
     last_err = None
@@ -2495,7 +2497,7 @@ def load_monitor_status_json(filename):
     candidates = [
         os.path.join(STATE_DIR, filename),
         os.path.join(OUT_DIR, "state", filename),
-        os.path.join("/home/michaeld/scripts", filename),
+        os.path.join(E.get("SCRIPTS_DIR", "/opt/noc-dashboard/scripts"), filename),
         os.path.join("/app/output/state", filename),
     ]
     for path in candidates:
@@ -3346,7 +3348,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
 
     # Fallback so the bar is never empty
     if not ticker_items:
-        ticker_items.append(("MRDTech NOC \u2022 All data sources unavailable or collecting", "t-info"))
+        ticker_items.append(("NOC Dashboard \u2022 All data sources unavailable or collecting", "t-info"))
 
     # Build the scrolling HTML strip (content doubled for seamless loop)
     _sep = '<span class="tk-sep">\u25C6</span>'
@@ -3773,18 +3775,18 @@ _ACP_JS_TMPL = r"""
 # contain normal { } braces without escaping.
 
 CUSTOM_CARDS_FILE = os.path.join(
-    os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard")),
+    os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/noc-dashboard-output")),
     "custom_cards.json"
 )
 BUILTIN_CARD_CONFIGS_FILE = os.path.join(
-    os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard")),
+    os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/noc-dashboard-output")),
     "builtin_card_configs.json"
 )
 
 def _bcc_seed_json():
     """Load saved built-in card display configs from disk; return JSON object string for JS seed."""
     path = os.path.join(
-        os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard")),
+        os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/noc-dashboard-output")),
         "builtin_card_configs.json"
     )
     try:
@@ -3800,7 +3802,7 @@ def _cc_seed_json():
     """Load saved custom card configs from disk; return as JSON string for JS seed."""
     # Re-evaluate path at call time so NOC_OUT_DIR override (set in entrypoint) is respected
     path = os.path.join(
-        os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/mrdtech-dashboard")),
+        os.environ.get("NOC_OUT_DIR", os.path.expanduser("~/noc-dashboard-output")),
         "custom_cards.json"
     )
     try:
@@ -5337,7 +5339,7 @@ PAGE = """<!DOCTYPE html>
       </div>
     </div>
   </div>
-  <footer>MRDTECH INFRASTRUCTURE MONITORING · AUTO-REFRESH 60s · REGEN 15m</footer>
+  <footer>NOC DASHBOARD · AUTO-REFRESH 60s · REGEN 15m</footer>
 <script>
 (function() {{
   var THEMES = ['dark','light','midnight','solarized','dracula','nord','gruvbox','tokyo'];
