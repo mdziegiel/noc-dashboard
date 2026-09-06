@@ -997,83 +997,6 @@ def collect_adguard():
     return d
 
 
-def collect_urbackup():
-    """URBackup web API (salt/login/status). Username comes from URBACKUP_USERNAME."""
-    d = {"state": "ok", "total": 0, "online": 0, "clients": [], "problems": []}
-    base = E.get("URBACKUP_URL", "http://192.0.2.76:55414").rstrip("/")
-    user = E.get("URBACKUP_USERNAME", "urbackup-user")
-    pw = E.get("URBACKUP_PASSWORD", "")
-    if not pw or pw.startswith("<"):
-        return {"state": "degraded", "note": "URBACKUP_PASSWORD not set",
-                "total": 0, "online": 0, "clients": [], "problems": []}
-
-    def api(action, body=""):
-        url = base + "/x?a=" + action
-        r = urllib.request.Request(url, data=body.encode(), method="POST",
-                                   headers={"Content-Type": "application/json; charset=utf-8"})
-        return json.loads(urllib.request.urlopen(r, timeout=TIMEOUT, context=CTX).read().decode("utf-8", "replace"))
-
-    s = api("salt", "username=" + urllib.parse.quote(user))
-    if s.get("error") == 1 or not s.get("salt"):
-        raise RuntimeError("URBackup user not found")
-    salt, rnd = s.get("salt", ""), s.get("rnd", "")
-    rounds = int(s.get("pbkdf2_rounds", 0) or 0)
-    ses = s.get("ses")
-    import hashlib as _h
-    pwmd5 = _h.md5((salt + pw).encode()).hexdigest()
-    if rounds > 0:
-        pwmd5 = _h.pbkdf2_hmac("sha256", bytes.fromhex(pwmd5), salt.encode(), rounds, dklen=32).hex()
-    final = _h.md5((rnd + pwmd5).encode()).hexdigest()
-    body = "username=" + urllib.parse.quote(user) + "&password=" + final
-    if ses:
-        body += "&ses=" + ses
-    r3 = api("login", body)
-    if not r3.get("success"):
-        raise RuntimeError("URBackup login failed")
-    ses = r3.get("session") or ses
-    st = api("status", "ses=" + ses if ses else "")
-    clients = st.get("status", [])
-    d["total"] = len(clients)
-    d["online"] = sum(1 for c in clients if c.get("online"))
-    now = time.time()
-    for c in sorted(clients, key=lambda x: x.get("name", "")):
-        name = c.get("name", "?")
-        lf = c.get("lastbackup", 0) or c.get("last_filebackup", 0) or 0
-        li = c.get("lastbackup_image", 0) or c.get("last_imagebackup", 0) or c.get("last_image_backup", 0) or 0
-        issues = c.get("last_filebackup_issues", 0) or 0
-        on = bool(c.get("online"))
-        lf_h = (now - lf) / 3600.0 if lf else 1e9
-        li_h = (now - li) / 3600.0 if li else 1e9
-        ago = ("never" if not lf else
-               f"{lf_h*60:.0f}m" if lf_h < 1 else
-               f"{lf_h:.1f}h" if lf_h < 48 else f"{lf_h/24:.1f}d")
-        img_ago = ("never" if not li else
-                   f"{li_h*60:.0f}m" if li_h < 1 else
-                   f"{li_h:.1f}h" if li_h < 48 else f"{li_h/24:.1f}d")
-        cstate = "ok"
-        if lf == 0:
-            d["problems"].append(f"{name}: no file backup on record"); cstate = "crit"
-        elif lf_h > 26:
-            d["problems"].append(f"{name}: last backup {ago} ago (>26h)"); cstate = "warn"
-        if issues:
-            d["problems"].append(f"{name}: {issues} backup issue(s) last run")
-            cstate = "warn" if cstate == "ok" else cstate
-        if not on:
-            d["problems"].append(f"{name}: client OFFLINE")
-            cstate = "warn" if cstate == "ok" else cstate
-        d["clients"].append({"name": name, "ago": ago, "online": on,
-                             "issues": issues, "state": cstate,
-                             "last_file_backup": ago, "last_image_backup": img_ago,
-                             "file_recent": bool(lf and lf_h <= 26 and not issues),
-                             "image_recent": bool(li and li_h <= 24 * 8),
-                             "image_days": (round(li_h / 24, 1) if li else None)})
-    if any(c["state"] == "crit" for c in d["clients"]):
-        d["state"] = "crit"
-    elif d["problems"]:
-        d["state"] = "warn"
-    return d
-
-
 def _qnap_text(el):
     return (el.text or "").strip() if el is not None else ""
 
@@ -1920,7 +1843,6 @@ SOURCES = [
     ("unifi", collect_unifi),
     ("wan", collect_wan_health),
     ("adguard", collect_adguard),
-    ("urbackup", collect_urbackup),
     ("qnap", collect_qnaps),
     ("homeassistant", collect_homeassistant),
     ("adguard2", collect_adguard2),
@@ -1956,7 +1878,7 @@ def gather():
 HEALTH_LABELS = {
     "proxmox": "Proxmox", "hyperv": "Hyper-V", "smart": "SMART / Disk Health",
     "docker": "Docker / Portainer", "pbs": "PBS Backups", "kuma": "Uptime Kuma",
-    "urbackup": "URBackup", "homeassistant": "Home Assistant", "qnap": "QNAP Storage",
+    "homeassistant": "Home Assistant", "qnap": "QNAP Storage",
     "crowdsec": "CrowdSec", "wazuh": "Wazuh SIEM", "malware_sources": "Malware Detect",
     "unifi": "UniFi UDM-SE", "wan": "WAN / Internet", "adguard": "AdGuard DNS1",
     "adguard2": "AdGuard DNS2", "cloudflare": "Cloudflare", "npm": "Nginx Proxy Manager",
@@ -1968,7 +1890,7 @@ HEALTH_LABELS = {
 HEALTH_CATEGORIES = {
     "proxmox": "Infrastructure", "hyperv": "Infrastructure", "smart": "Infrastructure",
     "docker": "Infrastructure", "pbs": "Infrastructure", "kuma": "Infrastructure",
-    "urbackup": "Infrastructure", "homeassistant": "Infrastructure",
+    "homeassistant": "Infrastructure",
     "crowdsec": "Security", "wazuh": "Security", "malware_sources": "Security",
     "adguard": "Security", "adguard2": "Security", "limacharlie": "Security",
     "unifi": "Network", "wan": "Network", "cloudflare": "Network", "npm": "Network",
@@ -1991,8 +1913,6 @@ def _health_value(key, d):
             return f'{d.get("up", 0)}/{d.get("total", 0)} monitors up'
         if key == "pbs":
             return f'{d.get("ok", 0)} ok / {d.get("fail", 0)} fail tasks'
-        if key == "urbackup":
-            return f'{d.get("online", 0)}/{d.get("total", 0)} clients online'
         if key == "smart":
             return f'{d.get("passed", 0)}/{d.get("checked", 0)} disks passed'
         if key == "proxmox":
@@ -2062,11 +1982,6 @@ def build_health_summary(data, now_epoch):
     B = data.get("pbs", {})
     pbs_ok = int(B.get("ok", 0) or 0); pbs_fail = int(B.get("fail", 0) or 0); pbs_run = int(B.get("run", 0) or 0)
     add("pbs", "PBS Tasks", "Backup", pbs_ok + pbs_run, pbs_ok + pbs_fail + pbs_run, f"{pbs_fail} failed task(s)" if pbs_fail else "")
-    U = data.get("urbackup", {})
-    clients = U.get("clients", []) or []
-    ub_total = int(U.get("total", 0) or len(clients) or 0)
-    ub_good = sum(1 for c in clients if c.get("state") == "ok") if clients else int(U.get("online", 0) or 0)
-    add("urbackup", "UrBackup Clients", "Backup", ub_good, ub_total, "; ".join(U.get("problems", [])[:6]))
     W = data.get("wazuh", {})
     add("wazuh", "Wazuh Agents", "Security", W.get("active", 0), W.get("total", 0), ", ".join(W.get("down", [])[:6]))
     checks.sort(key=lambda x: x["service"])
@@ -2367,19 +2282,29 @@ def _pct(good, total):
 
 
 def backup_coverage(data):
-    U = data.get("urbackup", {})
-    clients = U.get("clients", []) or []
-    total = len(clients) or int(U.get("total", 0) or 0)
-    file_good = sum(1 for c in clients if c.get("file_recent", c.get("state") == "ok"))
-    img_good = sum(1 for c in clients if c.get("image_recent"))
-    rows = "".join(f'<div class="intel-list-row"><span>{esc(c.get("name","?"))}</span><em>file {esc(c.get("last_file_backup", c.get("ago", "?")))} · image {esc(c.get("image_days", "never"))}d</em><b class="q-{("ok" if c.get("file_recent") and c.get("image_recent") else "warn")}">●</b></div>' for c in clients)
-    return _pct(file_good, total), _pct(img_good, total), rows or '<div class="empty">No UrBackup clients.</div>'
+    B = data.get("pbs", {})
+    ok = int(B.get("ok", 0) or 0)
+    fail = int(B.get("fail", 0) or 0)
+    run = int(B.get("run", 0) or 0)
+    total = ok + fail + run
+    task_pct = _pct(ok + run, total)
+    ds_rows = "".join(
+        f'<div class="intel-list-row"><span>{esc(ds.get("name","datastore"))}</span>'
+        f'<em>{float(ds.get("pct", 0) or 0):.0f}% used</em>'
+        f'<b class="q-{("crit" if float(ds.get("pct", 0) or 0)>85 else "warn" if float(ds.get("pct", 0) or 0)>=70 else "ok")}">●</b></div>'
+        for ds in B.get("datastores", []) or [])
+    if not ds_rows:
+        ds_rows = '<div class="empty">No backup datastore data.</div>'
+    status_rows = (f'<div class="intel-list-row"><span>24h tasks</span><em>{ok} ok / {fail} fail / {run} running</em>'
+                   f'<b class="q-{("crit" if fail else "ok")}">●</b></div>'
+                   f'<div class="intel-list-row"><span>Last backup</span><em>{esc(B.get("last_backup", "?"))}</em><b class="q-ok">●</b></div>')
+    return task_pct, 100 if B.get("datastores") else 0, status_rows + ds_rows
 
 
 def intelligence_panel_html(data, summary):
     score = int(summary.get("score", 0))
     health_body = health_score_body(summary)
-    file_pct, img_pct, backup_rows = backup_coverage(data)
+    task_pct, datastore_pct, backup_rows = backup_coverage(data)
     W, C, LC = data.get("wazuh", {}), data.get("crowdsec", {}), data.get("limacharlie", {})
     waz_high = int(W.get("high_24h", 0) or 0); bans = int(C.get("bans", 0) or 0); lc_det = int(LC.get("detections_24h", 0) or 0)
     sec_score = max(0, 100 - waz_high * 25 - min(25, bans // 25) - min(25, lc_det * 5)); sec_state = "crit" if waz_high else health_state_for_score(sec_score)
@@ -2401,7 +2326,7 @@ def intelligence_panel_html(data, summary):
     cert_rows = ''.join(f'<div class="intel-list-row"><span>{esc(n)}</span><em>{src}</em><b class="q-{("crit" if (v is False or (d is not None and d<15)) else "warn" if (d is not None and d<=30) else "ok")}">{"INVALID" if v is False else str(d) + "d" if d is not None else "?"}</b></div>' for n,d,v,src in sorted(certs, key=lambda x: (x[2] is not False, 9999 if x[1] is None else x[1]))) or '<div class="empty">No certificate data.</div>'
     return f"""<div id="intel-overlay" class="intel-overlay" onclick="intelOverlayClick(event)"></div><aside id="intel-panel" class="intel-panel"><div class="intel-panel-hdr"><div class="intel-panel-title"><svg class="intel-title-svg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span>NOC INTELLIGENCE</span></div><button onclick="toggleIntel(false)">&times;</button></div><div class="intel-panel-scroll">
       <div class="intel-card intel-health-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Health Score</span><b>−</b></button><div class="intel-card-body health-card-body" onclick="openHealthModal(event)">{health_body}</div></div>
-      <div class="intel-card intel-backup-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Backup Coverage</span><b>−</b></button><div class="intel-card-body"><div class="intel-dual-score"><span>File <b class="q-{health_state_for_score(file_pct)}">{file_pct}%</b></span><span>Image <b class="q-{health_state_for_score(img_pct)}">{img_pct}%</b></span></div>{backup_rows}</div></div>
+      <div class="intel-card intel-backup-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Backup Coverage</span><b>−</b></button><div class="intel-card-body"><div class="intel-dual-score"><span>Tasks <b class="q-{health_state_for_score(task_pct)}">{task_pct}%</b></span><span>Datastores <b class="q-{health_state_for_score(datastore_pct)}">{datastore_pct}%</b></span></div>{backup_rows}</div></div>
       <div class="intel-card intel-security-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Security Posture</span><b>−</b></button><div class="intel-card-body"><div class="intel-big-score q-{sec_state}">{sec_score}%</div><div class="hs-row"><span>Wazuh high/crit 24h</span><b>{waz_high}</b></div><div class="hs-row"><span>CrowdSec active bans</span><b>{bans}</b></div><div class="hs-row"><span>LimaCharlie detections 24h</span><b>{lc_det}</b></div></div></div>
       <div class="intel-card intel-storage-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Storage Health</span><b>−</b></button><div class="intel-card-body"><div class="hs-row"><span>Total aggregate</span><b>{agg}% used</b></div>{vol_rows}</div></div>
       <div class="intel-card intel-cert-card"><button class="intel-card-title" onclick="this.parentNode.classList.toggle('closed')"><span>Certificate Expiry</span><b>−</b></button><div class="intel-card-body">{flag_html}{cert_rows}</div></div>
@@ -2634,7 +2559,6 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
     MW = data.get("malware_sources", {})
     U = data.get("unifi", {})
     A = data.get("adguard", {})
-    UB = data.get("urbackup", {})
     Q = data.get("qnap", {})
     HA = data.get("homeassistant", {})
     A2 = data.get("adguard2", {})
@@ -2775,22 +2699,6 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
     wan_sub = (WAN.get("note") or WAN.get("error")
                or f'{esc(WAN.get("wan_ip","?"))} · uptime {_fmt_duration(WAN.get("uptime"))} · down/up Mbps from UniFi speedtest history')
 
-    # URBackup card
-    ub_clients = UB.get("clients", [])
-    ub_body = (metric("Clients", f'{UB.get("online",0)}/{UB.get("total",0)} online',
-                     "warn" if UB.get("problems") else "ok"))
-    if ub_clients:
-        rows = []
-        for c in ub_clients:
-            mc = {"crit": "m-crit", "warn": "m-warn"}.get(c["state"], "")
-            badge = "" if c["online"] else " (offline)"
-            iss = f' · {c["issues"]} issue(s)' if c.get("issues") else ""
-            rows.append(f'<div class="ubrow {mc}"><span class="ub-n">{esc(c["name"])}{badge}</span>'
-                        f'<span class="ub-a">{esc(c["ago"])}{iss}</span></div>')
-        ub_body += '<div class="ublist">' + "".join(rows) + "</div>"
-    ub_sub = (UB.get("note") or UB.get("error")
-              or (UB["problems"][0] if UB.get("problems") else "all clients backed up"))
-
     # Home Assistant card
     ha_body = (metric("Entities", HA.get("entities", 0))
                + metric("Alerts", HA.get("alerts_on", 0),
@@ -2866,7 +2774,6 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
             + card("UPTIME KUMA", K.get("state", "error"), kuma_body, kuma_sub)
             + card("DOCKER / PORTAINER", D.get("state", "error"), dock_body, dock_sub)
             + card("PBS BACKUPS", B.get("state", "error"), pbs_body, pbs_sub)
-            + card("URBACKUP", UB.get("state", "error"), ub_body, ub_sub)
             + card("SMART / DISK HEALTH", SM.get("state", "error"), smart_body, smart_sub)
             + card("SPEED TEST", SP.get("state", "error"), speed_body, speed_sub))
 
@@ -3233,9 +3140,6 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
             alerts.append(f'{key} collector error: {v.get("error","")}')
         elif v.get("state") == "degraded" and v.get("note"):
             alerts.append(f'{key}: {v.get("note")}')
-    # URBackup problems
-    for p in UB.get("problems", []):
-        alerts.append(f"URBackup: {p}")
     # QNAP problems
     for u in Q.get("units", []):
         nm = u.get("host", u.get("label", "QNAP"))
@@ -3269,7 +3173,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         # Determine per-alert severity class for coloring
         _crit_kws = ("crit","down","failed","failed","invalid","offline","smart","error",
                      "unifi device offline","proxmox vm down","monitor down","alert active")
-        _warn_kws = ("warn","expiring","urbackup","pbs:","qnap","waf:")
+        _warn_kws = ("warn","expiring","pbs:","qnap","waf:")
         for a in alerts:
             al = a.lower()
             if any(kw in al for kw in _crit_kws):
@@ -3442,7 +3346,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         "docker": "Docker/Portainer", "pbs": "PBS Backups", "kuma": "Uptime Kuma",
         "crowdsec": "CrowdSec", "wazuh": "Wazuh SIEM", "malware_sources": "Malware Detect",
         "unifi": "UniFi UDM-SE", "wan": "WAN/Internet", "adguard": "AdGuard · DNS1",
-        "adguard2": "AdGuard · DNS2", "urbackup": "URBackup", "qnap": "QNAP NAS",
+        "adguard2": "AdGuard · DNS2", "qnap": "QNAP NAS",
         "homeassistant": "Home Assistant", "cloudflare": "Cloudflare",
         "npm": "Nginx Proxy Mgr", "tailscale": "Tailscale", "wgdashboard": "WGDashboard",
         "limacharlie": "LimaCharlie (LC)", "plex": "Plex", "tautulli": "Tautulli",
@@ -3579,7 +3483,6 @@ _ACP_CARD_TYPES = [
     {"key":"docker",         "label":"Docker/Portainer",  "cat":"Infrastructure", "integ":"docker"},
     {"key":"pbs",            "label":"PBS Backups",        "cat":"Infrastructure", "integ":"pbs"},
     {"key":"kuma",           "label":"Uptime Kuma",        "cat":"Infrastructure", "integ":"kuma"},
-    {"key":"urbackup",       "label":"URBackup",           "cat":"Infrastructure", "integ":"urbackup"},
     {"key":"hyperv",         "label":"Hyper-V",            "cat":"Infrastructure", "integ":"hyperv"},
     {"key":"smart",          "label":"SMART/Disk Health",  "cat":"Infrastructure", "integ":None},
     {"key":"wazuh",          "label":"Wazuh SIEM",         "cat":"Security",       "integ":"wazuh"},
@@ -4905,7 +4808,6 @@ PAGE = """<!DOCTYPE html>
   .dv-kind {{ color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:1px; width:88px; text-align:right; }}
   .dv-up {{ color:var(--green-dim); font-size:10px; width:64px; text-align:right; }}
   .dv-off .dv-up {{ color:var(--crit); }}
-  /* URBackup client list */
   .ublist {{ width:100%; margin-top:10px; padding-top:9px; border-top:1px dashed var(--line); }}
   .ubrow {{ display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:11px; align-items:baseline; }}
   .ubrow .ub-n {{ color:var(--txt); white-space:nowrap; flex:0 0 auto; }}
@@ -6009,7 +5911,7 @@ PAGE = """<!DOCTYPE html>
     {{ id:'account',    label:'Account', keys:['account_change_password','account_sessions','account_2fa','account_api_tokens','account_manage_users','account_login_history','account_password_expiry'] }},
     {{ id:'general',    label:'General', keys:['general_dashboard', 'datetime_settings', 'reports', 'toggle_alerts'] }},
     {{ id:'infra',      label:'Infrastructure',
-      keys:['proxmox','docker','pbs','kuma','urbackup','hyperv','smart'] }},
+      keys:['proxmox','docker','pbs','kuma','hyperv','smart'] }},
     {{ id:'security',   label:'Security',
       keys:['wazuh','crowdsec','limacharlie','cloudflare','malware_sources','sophos','meraki'] }},
     {{ id:'network',    label:'Network',

@@ -21,7 +21,7 @@ standard library.
 
 **Monitoring integrations** — Proxmox VE, Proxmox Backup Server, UniFi,
 AdGuard Home, CrowdSec, Wazuh (manager + indexer), LimaCharlie, Portainer /
-Docker, UrBackup, Uptime Kuma, QNAP, Hyper-V, Cloudflare, Tailscale,
+Docker, Uptime Kuma, QNAP, Hyper-V, Cloudflare, Tailscale,
 WireGuard (WGDashboard), Nginx Proxy Manager, Home Assistant, SMART health,
 media stack (Plex, Tautulli, Sonarr, Radarr, Prowlarr, SABnzbd, Overseerr),
 malware-source intel, speed tests, and custom URL checks. Each integration
