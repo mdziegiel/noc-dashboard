@@ -11,6 +11,12 @@ standard library.
 
 ![Dashboard](screenshots/dark-noc.png)
 
+### MRDTech Proxmox template reference
+
+- Ubuntu-Server template reference: VMID `112` on `proxmox2`.
+- Built 2026-09-06 by full-cloning original template VMID `110` to shared storage `NFS-QNAP2`, migrating the clone to `proxmox2`, then marking the clone as a template.
+- Original VMID `110` and its linked clones on `proxmox` were intentionally left untouched.
+
 ## Features
 
 **Monitoring integrations** — Proxmox VE, Proxmox Backup Server, UniFi,
