@@ -261,55 +261,97 @@ def _pmox_auth():
 
 def collect_proxmox():
     d = {"state": "ok", "vms_running": 0, "vms_total": 0, "cpu": 0.0,
-         "mem_used": 0.0, "mem_total": 0.0, "node": "?", "uptime_d": 0,
-         "down_vms": [], "storage": []}
+         "mem_used": 0.0, "mem_total": 0.0, "node": "cluster", "uptime_d": 0,
+         "node_count": 0, "nodes": [], "down_vms": [], "storage": []}
     auth = _pmox_auth()
     base = _service_base_url(E.get("PROXMOX_HOST", "192.0.2.251"), "https", 8006) + "/api2/json"
-    nodes = jget(f"{base}/nodes", auth)["data"]
-    node = None
-    for n in nodes:
-        node = n["node"]
-        d["node"] = node
-        d["cpu"] = round(n.get("cpu", 0) * 100, 1)
-        d["mem_used"] = round(n.get("mem", 0) / 1e9, 1)
-        d["mem_total"] = round(n.get("maxmem", 1) / 1e9, 1)
-        d["uptime_d"] = int(n.get("uptime", 0)) // 86400
-    vms = jget(f"{base}/nodes/{node}/qemu", auth)["data"]
-    if vms:
-        vms = [v for v in vms if str(v.get("template", 0)) not in ("1", "true", "True")]
-        run = [v for v in vms if v.get("status") == "running"]
-        d["vms_running"] = len(run)
-        d["vms_total"] = len(vms)
-        d["down_vms"] = sorted(
-            f"{v['vmid']} {v.get('name','')}".strip()
-            for v in vms if v.get("status") != "running")
-        if d["down_vms"]:
+    nodes = jget(f"{base}/nodes", auth).get("data", [])
+    if not nodes:
+        return {**d, "state": "degraded", "note": "no Proxmox nodes visible"}
+
+    qnap_overrides = qnap_storage_overrides()
+    cpu_weighted = 0.0
+    cpu_weight = 0.0
+    node_names = []
+    storage_by_name = {}
+
+    for n in sorted(nodes, key=lambda x: x.get("node", "")):
+        node = n.get("node")
+        if not node:
+            continue
+        node_names.append(node)
+        maxcpu = float(n.get("maxcpu", 0) or 0)
+        cpu_pct = round(float(n.get("cpu", 0) or 0) * 100, 1)
+        mem_used_g = round(float(n.get("mem", 0) or 0) / 1e9, 1)
+        mem_total_g = round(float(n.get("maxmem", 0) or 0) / 1e9, 1)
+        uptime_d = int(n.get("uptime", 0) or 0) // 86400
+        status = n.get("status", "unknown")
+        node_rec = {"name": node, "status": status, "cpu": cpu_pct,
+                    "mem_used": mem_used_g, "mem_total": mem_total_g,
+                    "uptime_d": uptime_d, "vms_running": 0, "vms_total": 0}
+        d["mem_used"] += mem_used_g
+        d["mem_total"] += mem_total_g
+        d["uptime_d"] = uptime_d if not d["uptime_d"] else min(d["uptime_d"], uptime_d)
+        if maxcpu > 0:
+            cpu_weighted += float(n.get("cpu", 0) or 0) * maxcpu
+            cpu_weight += maxcpu
+        elif n.get("cpu") is not None:
+            cpu_weighted += float(n.get("cpu", 0) or 0)
+            cpu_weight += 1
+        if status != "online" and d["state"] == "ok":
             d["state"] = "warn"
-        elif d["vms_total"] >= 0 and d["vms_running"] == d["vms_total"]:
-            d["state"] = "ok"
-    else:
+
+        node_q = urllib.parse.quote(node, safe="")
+        try:
+            vms = jget(f"{base}/nodes/{node_q}/qemu", auth).get("data", [])
+            visible = [v for v in vms if str(v.get("template", 0)).lower() not in ("1", "true")]
+            running = [v for v in visible if v.get("status") == "running"]
+            node_rec["vms_running"] = len(running)
+            node_rec["vms_total"] = len(visible)
+            d["vms_running"] += len(running)
+            d["vms_total"] += len(visible)
+            d["down_vms"].extend(sorted(
+                f"{node}:{v.get('vmid')} {v.get('name','')}".strip()
+                for v in visible if v.get("status") != "running"))
+        except Exception as e:
+            node_rec["vm_error"] = f"{type(e).__name__}: {str(e)[:80]}"
+            d["state"] = "warn" if d["state"] == "ok" else d["state"]
+
+        try:
+            for s in jget(f"{base}/nodes/{node_q}/storage", auth).get("data", []):
+                if not s.get("total"):
+                    continue
+                name = s["storage"]
+                used, tot = s.get("used", 0), s.get("total", 1)
+                source = "proxmox"
+                # Proxmox reports the NFS mount backing share, not the NAS volume.
+                # For the QNAP-backed stores, replace it with direct QNAP volume usage.
+                if name in qnap_overrides:
+                    used, tot = qnap_overrides[name]
+                    source = "qnap"
+                pct = round(100 * used / tot, 1) if tot else 0
+                rec = {"name": name, "node": node, "pct": pct,
+                       "used_g": round(used / 1e9, 1),
+                       "total_g": round(tot / 1e9, 1), "source": source}
+                cur = storage_by_name.get(name)
+                if cur is None or rec["pct"] > cur["pct"]:
+                    storage_by_name[name] = rec
+        except Exception as e:
+            node_rec["storage_error"] = f"{type(e).__name__}: {str(e)[:80]}"
+
+        d["nodes"].append(node_rec)
+
+    d["node_count"] = len(d["nodes"])
+    d["node"] = ", ".join(node_names) if node_names else "cluster"
+    d["cpu"] = round((cpu_weighted / cpu_weight) * 100, 1) if cpu_weight else 0.0
+    d["mem_used"] = round(d["mem_used"], 1)
+    d["mem_total"] = round(d["mem_total"], 1)
+    d["storage"] = sorted(storage_by_name.values(), key=lambda x: -x["pct"])
+    if d["down_vms"]:
+        d["state"] = "warn" if d["state"] == "ok" else d["state"]
+    elif d["vms_total"] == 0:
         d["state"] = "degraded"
         d["note"] = "token has no ACL grant (0 VMs visible)"
-    # storage
-    st = jget(f"{base}/nodes/{node}/storage", auth)["data"]
-    qnap_overrides = qnap_storage_overrides()
-    for s in st:
-        if not s.get("total"):
-            continue
-        name = s["storage"]
-        used, tot = s.get("used", 0), s.get("total", 1)
-        source = "proxmox"
-        # Proxmox reports the NFS mount backing share, not the NAS volume.
-        # For the QNAP-backed stores, replace it with direct QNAP volume usage.
-        if name in qnap_overrides:
-            used, tot = qnap_overrides[name]
-            source = "qnap"
-        pct = round(100 * used / tot, 1) if tot else 0
-        d["storage"].append({"name": name, "pct": pct,
-                             "used_g": round(used / 1e9, 1),
-                             "total_g": round(tot / 1e9, 1),
-                             "source": source})
-    d["storage"].sort(key=lambda x: -x["pct"])
     if any(s["pct"] > 85 for s in d["storage"]):
         d["state"] = "crit" if d["state"] != "degraded" else d["state"]
     return d
@@ -2631,10 +2673,20 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
         prox_state = "ok"
     prox_body = (metric("VMs", f'{prox_running}/{prox_total}',
                         "crit" if prox_down else "ok")
+                 + metric("Nodes", P.get("node_count", len(P.get("nodes", [])) or "?"))
                  + metric("CPU", f'{P.get("cpu",0):.0f}%')
                  + metric("RAM", f'{P.get("mem_used",0):.0f}/{P.get("mem_total",0):.0f}G'))
+    node_rows = []
+    for n in P.get("nodes", []) or []:
+        st_cls = "m-crit" if n.get("status") != "online" else ""
+        vm_txt = f'{n.get("vms_running",0)}/{n.get("vms_total",0)} VMs'
+        node_rows.append(
+            f'<div class="ubrow {st_cls}"><span class="ub-n">{esc(n.get("name","?"))}</span>'
+            f'<span class="ub-a">{esc(vm_txt)} · CPU {float(n.get("cpu",0) or 0):.0f}% · RAM {float(n.get("mem_used",0) or 0):.0f}/{float(n.get("mem_total",0) or 0):.0f}G</span></div>')
+    if node_rows:
+        prox_body += '<div class="ublist">' + "".join(node_rows) + "</div>"
     prox_sub = P.get("note") or (("DOWN: " + ", ".join(prox_down)) if prox_down
-                                 else f'node {P.get("node","?")} up {P.get("uptime_d",0)}d')
+                                 else f'cluster {P.get("node_count", len(P.get("nodes", [])) or 0)} node(s): {esc(P.get("node","?"))}')
     if P.get("state") == "error":
         prox_sub = P.get("error", "error")
 
@@ -2768,7 +2820,7 @@ def render(data, gen_epoch, errors, trends=None, health_summary=None):
                  or f'latest {esc(str(SP.get("timestamp") or SP.get("received_at") or "unknown"))}')
 
     row1 = (card("WAN / INTERNET", WAN.get("state", "error"), wan_body, wan_sub)
-            + card("PROXMOX", prox_state, prox_body, prox_sub)
+            + card("PROXMOX CLUSTER", prox_state, prox_body, prox_sub)
             + card("HYPER-V", HV.get("state", "error"), hv_body, hv_sub)
             + card("HOME ASSISTANT", HA.get("state", "error"), ha_body, ha_sub)
             + card("UPTIME KUMA", K.get("state", "error"), kuma_body, kuma_sub)
